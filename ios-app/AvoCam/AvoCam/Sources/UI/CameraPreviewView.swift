@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import UIKit
 
 struct CameraPreviewView: UIViewRepresentable {
     let captureSession: AVCaptureSession?
@@ -38,14 +39,36 @@ class PreviewUIView: UIView {
         previewLayer.videoGravity = .resizeAspectFill
         previewLayer.session = captureSession
 
-        // Lock preview orientation to portrait
-        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
-        }
+        // Lock preview orientation to landscapeRight (matches video output)
+        // This prevents the camera view from rotating with device orientation
+        lockOrientation()
+
+        // Observe device orientation changes to re-lock if needed
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(deviceOrientationDidChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func deviceOrientationDidChange() {
+        // Re-lock orientation when device rotates
+        lockOrientation()
+    }
+
+    private func lockOrientation() {
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .landscapeRight
+        }
     }
 
     func updateSession(_ session: AVCaptureSession?) {
@@ -54,9 +77,7 @@ class PreviewUIView: UIView {
             previewLayer.session = session
 
             // Ensure orientation is locked when session changes
-            if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+            lockOrientation()
         }
     }
 }
