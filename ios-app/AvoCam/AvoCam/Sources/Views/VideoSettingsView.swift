@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 struct VideoSettingsView: View {
     @StateObject private var viewModel = VideoSettingsViewModel()
@@ -158,14 +159,15 @@ class VideoSettingsViewModel: ObservableObject {
     }
 
     init() {
-        self.settings = VideoSettingsManager.load()
+        let loadedSettings = VideoSettingsManager.load()
+        self.settings = loadedSettings
 
         // Initialize custom settings
-        self.useCustomSettings = settings.customResolution != nil
-        self.customResolution = settings.customResolution ?? "1920x1080"
-        self.customFps = settings.customFps ?? 30
-        self.customCodec = settings.customCodec ?? .h264
-        self.customBitrate = settings.customBitrate ?? 10_000_000
+        self.useCustomSettings = loadedSettings.customResolution != nil
+        self.customResolution = loadedSettings.customResolution ?? "1920x1080"
+        self.customFps = loadedSettings.customFps ?? 30
+        self.customCodec = loadedSettings.customCodec ?? .h264
+        self.customBitrate = loadedSettings.customBitrate ?? 10_000_000
     }
 
     func selectPreset(_ preset: VideoPreset) {

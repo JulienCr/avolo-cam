@@ -12,7 +12,8 @@
       "Bash(sips:*)",
       "Bash(iconutil -c icns:*)",
       "Bash(/bin/rm:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

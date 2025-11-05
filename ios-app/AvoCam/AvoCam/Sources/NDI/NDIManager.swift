@@ -150,8 +150,14 @@ class NDIManager {
     func sendMetadata(xml: String) {
         guard isActive, let sender = ndiSender else { return }
 
-        xml.withCString { xmlPtr in
-            NDIlib_send_send_metadata(sender, xmlPtr)
+        var xmlCopy = xml
+        xmlCopy.withUTF8 { buffer in
+            buffer.withMemoryRebound(to: CChar.self) { cchars in
+                var metadata = NDIlib_metadata_frame_t()
+                metadata.p_data = UnsafeMutablePointer(mutating: cchars.baseAddress)
+                metadata.length = Int32(buffer.count)
+                NDIlib_send_send_metadata(sender, &metadata)
+            }
         }
     }
 
