@@ -4,11 +4,28 @@
 .LSOverride
 ._*
 
-# Xcode
-*.xcodeproj
-*.xcworkspace
-!*.xcworkspace/contents.xcworkspacedata
+# ✅ Garder les fichiers de projet Xcode dans Git
+!*.xcodeproj
+!*.xcworkspace
+!*.xcodeproj/**
+!*.xcworkspace/**
+
+# ❌ Ignorer les fichiers générés/personnels dans ces dossiers
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+
+# Xcode build products
 /*.gcno
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.moved-aside
+
+# User-specific / local files
 *.mode1v3
 *.mode2v3
 *.perspectivev3
@@ -17,13 +34,8 @@
 !default.mode2v3
 !default.perspectivev3
 !default.pbxuser
-xcuserdata/
-*.moved-aside
-DerivedData/
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
+
+# Other Xcode noise
 timeline.xctimeline
 playground.xcworkspace
 
