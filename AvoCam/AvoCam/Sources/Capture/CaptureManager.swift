@@ -93,10 +93,15 @@ actor CaptureManager: NSObject {
         session.addOutput(output)
         videoOutput = output
 
-        // Configure color space (Rec.709 Full)
+        // Configure color space (Rec.709 Full) and orientation
         if let connection = output.connection(with: .video) {
             if connection.isVideoStabilizationSupported {
                 connection.preferredVideoStabilizationMode = .off // For lowest latency
+            }
+
+            // Lock video orientation to portrait
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
             }
         }
 

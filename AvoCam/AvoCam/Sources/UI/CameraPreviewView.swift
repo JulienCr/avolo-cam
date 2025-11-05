@@ -37,6 +37,11 @@ class PreviewUIView: UIView {
 
         previewLayer.videoGravity = .resizeAspectFill
         previewLayer.session = captureSession
+
+        // Lock preview orientation to portrait
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -47,6 +52,11 @@ class PreviewUIView: UIView {
         if captureSession !== session {
             captureSession = session
             previewLayer.session = session
+
+            // Ensure orientation is locked when session changes
+            if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
         }
     }
 }
