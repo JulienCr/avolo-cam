@@ -21,6 +21,8 @@ class AppCoordinator: ObservableObject {
     @Published var captureSession: AVCaptureSession?
     @Published var isScreenDimmed: Bool = false
     @Published var localIPAddress: String?
+    @Published var bearerTokenForDisplay: String = ""
+    @Published var isAuthenticationEnabled: Bool = false
 
     // MARK: - Components
 
@@ -52,12 +54,19 @@ class AppCoordinator: ObservableObject {
         // Save if newly generated
         UserDefaults.standard.set(cameraAlias, forKey: "camera_alias")
         UserDefaults.standard.set(bearerToken, forKey: "bearer_token")
+        
+        // Set display token
+        self.bearerTokenForDisplay = bearerToken
+        
+        // Load authentication setting (default: disabled)
+        self.isAuthenticationEnabled = UserDefaults.standard.bool(forKey: "authentication_enabled")
     }
 
     // MARK: - Lifecycle
 
     func start() {
         print("🚀 Starting AvoCam with alias: \(cameraAlias)")
+        print("🔑 Bearer Token: \(bearerToken)")
 
         // Initialize components
         captureManager = CaptureManager()
@@ -217,6 +226,15 @@ class AppCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - Authentication Control
+    
+    func toggleAuthentication() {
+        isAuthenticationEnabled.toggle()
+        UserDefaults.standard.set(isAuthenticationEnabled, forKey: "authentication_enabled")
+        networkServer?.setAuthenticationEnabled(isAuthenticationEnabled)
+        print("🔐 Authentication \(isAuthenticationEnabled ? "enabled" : "disabled")")
+    }
+    
     // MARK: - Screen Brightness Control
 
     func toggleScreenBrightness() {
@@ -245,10 +263,14 @@ class AppCoordinator: ObservableObject {
             bearerToken: bearerToken,
             requestHandler: self
         )
+        
+        // Set authentication state
+        networkServer?.setAuthenticationEnabled(isAuthenticationEnabled)
 
         do {
             try networkServer?.start()
             print("✅ Network server started on port \(serverPort)")
+            print("🔐 Authentication: \(isAuthenticationEnabled ? "enabled" : "disabled")")
         } catch {
             self.error = "Failed to start network server: \(error.localizedDescription)"
             print("❌ Failed to start network server: \(error)")

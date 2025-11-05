@@ -9,7 +9,6 @@ import Foundation
 import NIO
 import NIOHTTP1
 import NIOWebSocket
-import CommonCrypto
 
 // MARK: - Request Handler Protocol
 
@@ -33,6 +32,7 @@ class NetworkServer {
     private let port: Int
     private let bearerToken: String
     private weak var requestHandler: NetworkRequestHandler?
+    private var isAuthenticationEnabled: Bool = false
 
     private var group: MultiThreadedEventLoopGroup?
     private var bootstrap: ServerBootstrap?
@@ -52,6 +52,11 @@ class NetworkServer {
         self.port = port
         self.bearerToken = bearerToken
         self.requestHandler = requestHandler
+        self.isAuthenticationEnabled = false
+    }
+    
+    func setAuthenticationEnabled(_ enabled: Bool) {
+        self.isAuthenticationEnabled = enabled
     }
 
     // MARK: - Server Control
@@ -73,7 +78,35 @@ class NetworkServer {
                     return channel.eventLoop.makeFailedFuture(NetworkError.serverStartFailed)
                 }
 
-                return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
+                // Configure HTTP pipeline with WebSocket upgrade support
+                let upgrader = NIOWebSocketServerUpgrader(
+                    shouldUpgrade: { (channel: Channel, head: HTTPRequestHead) in
+                        // Check for WebSocket upgrade request
+                        guard head.headers["upgrade"].first?.lowercased() == "websocket" else {
+                            return channel.eventLoop.makeSucceededFuture(nil)
+                        }
+
+                        // Validate bearer token if authentication is enabled
+                        if self.isAuthenticationEnabled {
+                            guard let authHeader = head.headers["authorization"].first,
+                                  authHeader.hasPrefix("Bearer "),
+                                  authHeader.dropFirst("Bearer ".count) == self.bearerToken else {
+                                return channel.eventLoop.makeSucceededFuture(nil)
+                            }
+                        }
+
+                        return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
+                    },
+                    upgradePipelineHandler: { (channel: Channel, _: HTTPRequestHead) in
+                        let wsHandler = WebSocketServerHandler(server: self)
+                        return channel.pipeline.addHandler(wsHandler)
+                    }
+                )
+
+                return channel.pipeline.configureHTTPServerPipeline(
+                    withPipeliningAssistance: false,
+                    withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
+                ).flatMap {
                     channel.pipeline.addHandler(HTTPServerHandler(server: self))
                 }
             }
@@ -157,13 +190,15 @@ class NetworkServer {
     // MARK: - Request Handling
 
     func handleHTTPRequest(path: String, method: String, headers: [String: String], body: Data?) async -> HTTPResponse {
-        // Authenticate
-        guard let authHeader = headers["Authorization"],
-              authHeader == "Bearer \(bearerToken)" else {
-            return HTTPResponse(
-                status: 401,
-                body: errorJSON(code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
-            )
+        // Authenticate if enabled
+        if isAuthenticationEnabled {
+            guard let authHeader = headers["Authorization"],
+                  authHeader == "Bearer \(bearerToken)" else {
+                return HTTPResponse(
+                    status: 401,
+                    body: errorJSON(code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
+                )
+            }
         }
 
         // Rate limiting for camera settings
@@ -453,7 +488,8 @@ enum NetworkError: LocalizedError {
 
 // MARK: - HTTP Server Handler
 
-final class HTTPServerHandler: ChannelInboundHandler {
+@preconcurrency
+final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
@@ -478,11 +514,7 @@ final class HTTPServerHandler: ChannelInboundHandler {
             self.method = head.method
             self.headers = head.headers
 
-            // Check for WebSocket upgrade
-            if isWebSocketUpgrade(headers: head.headers) {
-                handleWebSocketUpgrade(context: context, head: head)
-                return
-            }
+            // WebSocket upgrades are now handled automatically by NIOWebSocketServerUpgrader
 
         case .body(var buffer):
             if bodyBuffer == nil {
@@ -498,49 +530,6 @@ final class HTTPServerHandler: ChannelInboundHandler {
         }
     }
 
-    private func isWebSocketUpgrade(headers: HTTPHeaders) -> Bool {
-        guard let upgrade = headers.first(name: "upgrade"),
-              upgrade.lowercased() == "websocket" else {
-            return false
-        }
-        return true
-    }
-
-    private func handleWebSocketUpgrade(context: ChannelHandlerContext, head: HTTPRequestHead) {
-        // Extract WebSocket key
-        guard let key = headers.first(name: "sec-websocket-key") else {
-            sendHTTPResponse(context: context, response: HTTPResponse(status: 400, body: Data()))
-            return
-        }
-
-        // Calculate accept key
-        let acceptKey = calculateWebSocketAcceptKey(key: key)
-
-        // Send upgrade response
-        var upgradeHeaders = HTTPHeaders()
-        upgradeHeaders.add(name: "Upgrade", value: "websocket")
-        upgradeHeaders.add(name: "Connection", value: "Upgrade")
-        upgradeHeaders.add(name: "Sec-WebSocket-Accept", value: acceptKey)
-
-        let responseHead = HTTPResponseHead(
-            version: head.version,
-            status: .switchingProtocols,
-            headers: upgradeHeaders
-        )
-
-        context.write(self.wrapOutboundOut(.head(responseHead)), promise: nil)
-        context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
-
-        // Remove HTTP handlers and add WebSocket handlers
-        context.pipeline.removeHandler(self, promise: nil)
-
-        let wsHandler = WebSocketServerHandler(server: server)
-        _ = context.pipeline.addHandler(WebSocketFrameEncoder())
-        _ = context.pipeline.addHandler(WebSocketFrameDecoder())
-        _ = context.pipeline.addHandler(wsHandler)
-
-        print("🔌 WebSocket upgrade complete")
-    }
 
     private func processHTTPRequest(context: ChannelHandlerContext) {
         // Convert headers to dictionary
@@ -563,7 +552,10 @@ final class HTTPServerHandler: ChannelInboundHandler {
                 headers: headersDict,
                 body: bodyData
             )
-            self.sendHTTPResponse(context: context, response: response)
+            // Send response on the channel's event loop
+            context.eventLoop.execute {
+                self.sendHTTPResponse(context: context, response: response)
+            }
         }
     }
 
@@ -601,21 +593,6 @@ final class HTTPServerHandler: ChannelInboundHandler {
         bodyBuffer = nil
     }
 
-    private func calculateWebSocketAcceptKey(key: String) -> String {
-        let magicString = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-        let combined = key + magicString
-        guard let data = combined.data(using: .utf8) else {
-            return ""
-        }
-
-        // Calculate SHA-1 hash
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
-        data.withUnsafeBytes {
-            _ = CC_SHA1($0.baseAddress, CC_LONG(data.count), &hash)
-        }
-
-        return Data(hash).base64EncodedString()
-    }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         print("❌ HTTP handler error: \(error)")
@@ -625,7 +602,8 @@ final class HTTPServerHandler: ChannelInboundHandler {
 
 // MARK: - WebSocket Server Handler
 
-final class WebSocketServerHandler: ChannelInboundHandler {
+@preconcurrency
+final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
     typealias OutboundOut = WebSocketFrame
 

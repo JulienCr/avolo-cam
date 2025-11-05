@@ -60,6 +60,63 @@ struct TelemetryMenuView: View {
                             .background(Color(.systemGray5))
                             .cornerRadius(12)
                         }
+                        
+                        // Authentication Settings - Full width
+                        VStack(spacing: 12) {
+                            HStack {
+                                Image(systemName: "lock.shield.fill")
+                                    .foregroundColor(coordinator.isAuthenticationEnabled ? .green : .gray)
+                                Text("Authentication")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                
+                                Spacer()
+                                
+                                Toggle("", isOn: Binding(
+                                    get: { coordinator.isAuthenticationEnabled },
+                                    set: { _ in coordinator.toggleAuthentication() }
+                                ))
+                                .labelsHidden()
+                            }
+                            
+                            if coordinator.isAuthenticationEnabled {
+                                VStack(spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "key.fill")
+                                            .foregroundColor(.orange)
+                                            .font(.caption2)
+                                        Text("Bearer Token")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                    }
+
+                                    Text(coordinator.bearerTokenForDisplay)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundColor(.orange)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                        .background(Color(.systemGray6))
+                                        .cornerRadius(6)
+                                }
+                            } else {
+                                HStack {
+                                    Image(systemName: "lock.open.fill")
+                                        .foregroundColor(.gray)
+                                        .font(.caption2)
+                                    Text("No authentication required")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                }
+                                .padding(8)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(6)
+                            }
+                        }
+                        .padding()
+                        .background(Color(.systemGray5))
+                        .cornerRadius(12)
 
                         // Telemetry Grid
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
