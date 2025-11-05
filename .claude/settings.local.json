@@ -13,7 +13,8 @@
       "Bash(iconutil -c icns:*)",
       "Bash(/bin/rm:*)",
       "Bash(git add:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(plutil:*)"
     ],
     "deny": [],
     "ask": []
