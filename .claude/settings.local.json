@@ -14,7 +14,10 @@
       "Bash(/bin/rm:*)",
       "Bash(git add:*)",
       "Bash(cat:*)",
-      "Bash(plutil:*)"
+      "Bash(plutil:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd git fetch and merge to allowed commands in settings\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
