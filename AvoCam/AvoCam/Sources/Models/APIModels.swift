@@ -174,6 +174,51 @@ struct WebSocketCommandMessage: Codable {
     let camera: CameraSettingsRequest?
 }
 
+// MARK: - Video Settings
+
+struct VideoPresetResponse: Codable {
+    let id: String
+    let name: String
+    let resolution: String
+    let fps: Int
+    let codec: String
+    let bitrate: Int
+}
+
+struct VideoSettingsResponse: Codable {
+    let selectedPresetId: String?
+    let customResolution: String?
+    let customFps: Int?
+    let customCodec: String?
+    let customBitrate: Int?
+    let availablePresets: [VideoPresetResponse]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedPresetId = "selected_preset_id"
+        case customResolution = "custom_resolution"
+        case customFps = "custom_fps"
+        case customCodec = "custom_codec"
+        case customBitrate = "custom_bitrate"
+        case availablePresets = "available_presets"
+    }
+}
+
+struct VideoSettingsUpdateRequest: Codable {
+    let selectedPresetId: String?
+    let customResolution: String?
+    let customFps: Int?
+    let customCodec: String?
+    let customBitrate: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case selectedPresetId = "selected_preset_id"
+        case customResolution = "custom_resolution"
+        case customFps = "custom_fps"
+        case customCodec = "custom_codec"
+        case customBitrate = "custom_bitrate"
+    }
+}
+
 // MARK: - Error Response
 
 struct ErrorResponse: Codable {

@@ -388,4 +388,45 @@ extension AppCoordinator: NetworkRequestHandler {
     func handleGetCapabilities() async -> [Capability] {
         return await getCapabilities()
     }
+
+    func handleGetVideoSettings() async -> VideoSettingsResponse {
+        let settings = VideoSettingsManager.load()
+        let presets = VideoPreset.allPresets.map { preset in
+            VideoPresetResponse(
+                id: preset.id,
+                name: preset.name,
+                resolution: preset.resolution,
+                fps: preset.fps,
+                codec: preset.codec.rawValue,
+                bitrate: preset.bitrate
+            )
+        }
+
+        return VideoSettingsResponse(
+            selectedPresetId: settings.selectedPresetId,
+            customResolution: settings.customResolution,
+            customFps: settings.customFps,
+            customCodec: settings.customCodec?.rawValue,
+            customBitrate: settings.customBitrate,
+            availablePresets: presets
+        )
+    }
+
+    func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws {
+        var settings = VideoSettingsManager.load()
+
+        // Update settings from request
+        settings.selectedPresetId = request.selectedPresetId
+        settings.customResolution = request.customResolution
+        settings.customFps = request.customFps
+        if let codecStr = request.customCodec {
+            settings.customCodec = VideoCodec(rawValue: codecStr)
+        }
+        settings.customBitrate = request.customBitrate
+
+        // Save settings
+        VideoSettingsManager.save(settings)
+
+        print("✅ Video settings updated and saved")
+    }
 }

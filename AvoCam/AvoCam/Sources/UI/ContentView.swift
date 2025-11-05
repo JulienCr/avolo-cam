@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var coordinator: AppCoordinator
+    @State private var showingVideoSettings = false
 
     var body: some View {
         NavigationView {
@@ -40,6 +41,18 @@ struct ContentView: View {
             }
             .navigationTitle("AvoCam")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        showingVideoSettings = true
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingVideoSettings) {
+                VideoSettingsView()
+            }
         }
     }
 
@@ -241,12 +254,9 @@ struct ContentView: View {
 
     private func startStream() {
         Task {
-            let request = StreamStartRequest(
-                resolution: "1920x1080",
-                framerate: 30,
-                bitrate: 10_000_000,
-                codec: "h264"
-            )
+            // Load saved video settings
+            let config = VideoSettingsManager.getEffectiveConfiguration()
+            let request = config.toStreamStartRequest()
 
             do {
                 try await coordinator.startStreaming(request: request)

@@ -22,6 +22,8 @@ protocol NetworkRequestHandler: AnyObject {
     func handleForceKeyframe()
     func handleGetStatus() async -> StatusResponse
     func handleGetCapabilities() async -> [Capability]
+    func handleGetVideoSettings() async -> VideoSettingsResponse
+    func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws
 }
 
 // MARK: - Network Server
@@ -185,6 +187,12 @@ class NetworkServer {
         case ("GET", "/api/v1/capabilities"):
             return await handleGetCapabilities()
 
+        case ("GET", "/api/v1/video/settings"):
+            return await handleGetVideoSettings()
+
+        case ("PUT", "/api/v1/video/settings"):
+            return await handlePutVideoSettings(body: body)
+
         case ("POST", "/api/v1/stream/start"):
             return await handleStreamStart(body: body)
 
@@ -295,6 +303,37 @@ class NetworkServer {
 
         handler.handleForceKeyframe()
         return HTTPResponse(status: 200, body: successJSON(message: "Keyframe forced"))
+    }
+
+    private func handleGetVideoSettings() async -> HTTPResponse {
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        let settings = await handler.handleGetVideoSettings()
+        guard let jsonData = try? JSONEncoder().encode(settings) else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode video settings"))
+        }
+
+        return HTTPResponse(status: 200, body: jsonData)
+    }
+
+    private func handlePutVideoSettings(body: Data?) async -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(VideoSettingsUpdateRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid video settings request"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        do {
+            try await handler.handleUpdateVideoSettings(request)
+            return HTTPResponse(status: 200, body: successJSON(message: "Video settings updated"))
+        } catch {
+            return HTTPResponse(status: 500, body: errorJSON(code: "VIDEO_SETTINGS_UPDATE_FAILED", message: error.localizedDescription))
+        }
     }
 
     private func handleLogsDownload() -> HTTPResponse {
