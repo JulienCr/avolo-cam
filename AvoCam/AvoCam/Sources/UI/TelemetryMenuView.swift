@@ -35,8 +35,35 @@ struct TelemetryMenuView: View {
             // Telemetry content
             if let telemetry = coordinator.telemetry {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        telemetryCard(
+                    VStack(spacing: 16) {
+                        // API Endpoint - Full width
+                        if let ip = coordinator.localIPAddress {
+                            VStack(spacing: 8) {
+                                HStack {
+                                    Image(systemName: "network")
+                                        .foregroundColor(.blue)
+                                    Text("API Endpoint")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                }
+
+                                Text("http://\(ip):8888")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.blue)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(6)
+                            }
+                            .padding()
+                            .background(Color(.systemGray5))
+                            .cornerRadius(12)
+                        }
+
+                        // Telemetry Grid
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            telemetryCard(
                             title: "FPS",
                             value: String(format: "%.1f", telemetry.fps),
                             icon: "speedometer",
@@ -98,7 +125,8 @@ struct TelemetryMenuView: View {
                             )
                         }
                     }
-                    .padding()
+                }
+                .padding()
                 }
             } else {
                 VStack(spacing: 16) {
