@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import UIKit
+import AVFoundation
 
 @MainActor
 class AppCoordinator: ObservableObject {
@@ -17,6 +18,9 @@ class AppCoordinator: ObservableObject {
     @Published var currentSettings: CurrentSettings?
     @Published var telemetry: Telemetry?
     @Published var error: String?
+    @Published var captureSession: AVCaptureSession?
+    @Published var isScreenDimmed: Bool = false
+    @Published var localIPAddress: String?
 
     // MARK: - Components
 
@@ -60,6 +64,9 @@ class AppCoordinator: ObservableObject {
         encoderManager = EncoderManager()
         ndiManager = NDIManager(alias: cameraAlias)
 
+        // Detect local IP address
+        detectLocalIPAddress()
+
         // Start network server
         startNetworkServer()
 
@@ -71,6 +78,94 @@ class AppCoordinator: ObservableObject {
 
         // Start telemetry collection
         startTelemetryCollection()
+
+        // Initialize preview session early
+        Task {
+            await initializePreviewSession()
+        }
+    }
+
+    // MARK: - Network Detection
+
+    private func detectLocalIPAddress() {
+        var address: String?
+
+        // Get list of all interfaces on the local machine
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else {
+            print("⚠️ Failed to get network interfaces")
+            return
+        }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr = ifaddr
+        while ptr != nil {
+            defer { ptr = ptr?.pointee.ifa_next }
+
+            guard let interface = ptr else { continue }
+            let addrFamily = interface.pointee.ifa_addr.pointee.sa_family
+
+            // Check for IPv4 or IPv6 interface
+            if addrFamily == UInt8(AF_INET) || addrFamily == UInt8(AF_INET6) {
+                // Get interface name
+                let name = String(cString: interface.pointee.ifa_name)
+
+                // We're interested in en0 (Wi-Fi) or en1 (Ethernet)
+                if name == "en0" || name == "en1" || name.hasPrefix("en") {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+
+                    if getnameinfo(
+                        interface.pointee.ifa_addr,
+                        socklen_t(interface.pointee.ifa_addr.pointee.sa_len),
+                        &hostname,
+                        socklen_t(hostname.count),
+                        nil,
+                        socklen_t(0),
+                        NI_NUMERICHOST
+                    ) == 0 {
+                        address = String(cString: hostname)
+                        // Prefer IPv4 over IPv6
+                        if addrFamily == UInt8(AF_INET) {
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        self.localIPAddress = address
+        if let ip = address {
+            print("📡 Local IP Address: \(ip)")
+        } else {
+            print("⚠️ Could not determine local IP address")
+        }
+    }
+
+    // MARK: - Preview Session
+
+    private func initializePreviewSession() async {
+        // Configure capture with default settings to enable preview
+        // This allows camera preview to show even when not streaming
+        do {
+            try await captureManager?.configure(
+                resolution: "1920x1080",
+                framerate: 30
+            )
+
+            // Get the session for preview
+            if let session = captureManager?.getSession() {
+                self.captureSession = session
+
+                // Start the session for preview (but not streaming yet)
+                if !session.isRunning {
+                    session.startRunning()
+                }
+
+                print("✅ Preview session initialized and running")
+            }
+        } catch {
+            print("⚠️ Failed to initialize preview session: \(error)")
+        }
     }
 
     func stop() {
@@ -83,12 +178,63 @@ class AppCoordinator: ObservableObject {
             }
         }
 
+        // Stop preview session
+        Task {
+            await stopPreviewSession()
+        }
+
         // Stop all services
         bonjourService?.stop()
         networkServer?.stop()
 
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    private func stopPreviewSession() async {
+        // Stop the capture session completely when app is closing
+        captureSession?.stopRunning()
+        captureSession = nil
+        print("⏹ Preview session stopped")
+    }
+
+    func pausePreview() async {
+        // Pause preview when app goes to background (unless actively streaming)
+        guard !isStreaming else {
+            print("⏸ App backgrounded but continuing capture for active stream")
+            return
+        }
+
+        captureSession?.stopRunning()
+        print("⏸ Preview paused (app in background)")
+    }
+
+    func resumePreview() async {
+        // Resume preview when app comes back to foreground
+        if let session = captureSession, !session.isRunning {
+            session.startRunning()
+            print("▶️ Preview resumed (app in foreground)")
+        }
+    }
+
+    // MARK: - Screen Brightness Control
+
+    func toggleScreenBrightness() {
+        setScreenBrightness(dimmed: !isScreenDimmed)
+    }
+
+    func setScreenBrightness(dimmed: Bool) {
+        isScreenDimmed = dimmed
+
+        if dimmed {
+            // Dim screen to minimum to save battery
+            UIScreen.main.brightness = 0.01
+            print("🔅 Screen dimmed to save battery")
+        } else {
+            // Restore to normal brightness
+            UIScreen.main.brightness = 0.5
+            print("🔆 Screen brightness restored")
+        }
     }
 
     // MARK: - Network Server
@@ -428,5 +574,9 @@ extension AppCoordinator: NetworkRequestHandler {
         VideoSettingsManager.save(settings)
 
         print("✅ Video settings updated and saved")
+    }
+  
+    func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
+        setScreenBrightness(dimmed: request.dimmed)
     }
 }

@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  AvoCam
 //
-//  Main UI view
+//  Main UI view - Camera-first layout with overlays
 //
 
 import SwiftUI
@@ -10,35 +10,34 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @State private var showingVideoSettings = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var showSettings = false
+    @State private var showTelemetry = false
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Header
-                    headerSection
+        ZStack {
+            // Camera preview (full screen background)
+            if let session = coordinator.captureSession {
+                CameraPreviewView(captureSession: session)
+                    .edgesIgnoringSafeArea(.all)
+            } else {
+                // Placeholder while camera initializes
+                Color.black
+                    .edgesIgnoringSafeArea(.all)
+                    .overlay(
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(1.5)
 
-                    // Streaming Status
-                    statusSection
-
-                    // Stream Controls
-                    streamControlsSection
-
-                    // Camera Settings
-                    cameraSettingsSection
-
-                    // Telemetry
-                    telemetrySection
-
-                    // Error Display
-                    if let error = coordinator.error {
-                        errorSection(error)
-                    }
-
-                    Spacer()
-                }
-                .padding()
+                            Text("Initializing camera...")
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                        }
+                    )
             }
+
             .navigationTitle("AvoCam")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -71,123 +70,63 @@ struct ContentView: View {
         .padding()
     }
 
-    // MARK: - Status
 
-    private var statusSection: some View {
-        HStack {
-            Circle()
-                .fill(coordinator.isStreaming ? Color.green : Color.gray)
-                .frame(width: 12, height: 12)
+            // Stream control overlay (always visible)
+            StreamControlOverlay(
+                onOpenSettings: { showSettings = true },
+                onOpenTelemetry: { showTelemetry = true }
+            )
+            .environmentObject(coordinator)
 
-            Text(coordinator.isStreaming ? "STREAMING" : "IDLE")
-                .font(.system(.body, design: .monospaced))
-                .fontWeight(.bold)
+            // Settings panel (slides in from right)
+            if showSettings {
+                HStack {
+                    Spacer()
 
-            Spacer()
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
-    }
-
-    // MARK: - Stream Controls
-
-    private var streamControlsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Stream Control")
-                .font(.headline)
-
-            HStack {
-                Button(action: startStream) {
-                    Label("Start Stream", systemImage: "play.circle.fill")
-                        .frame(maxWidth: .infinity)
+                    CameraSettingsPanel(isPresented: $showSettings)
+                        .environmentObject(coordinator)
+                        .transition(.move(edge: .trailing))
+                        .shadow(radius: 20)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(coordinator.isStreaming)
-
-                Button(action: stopStream) {
-                    Label("Stop Stream", systemImage: "stop.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!coordinator.isStreaming)
+                .background(
+                    Color.black.opacity(0.3)
+                        .edgesIgnoringSafeArea(.all)
+                        .onTapGesture {
+                            showSettings = false
+                        }
+                )
             }
 
-            if let settings = coordinator.currentSettings {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Current: \(settings.resolution) @ \(settings.fps)fps")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("Bitrate: \(formatBitrate(settings.bitrate))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            // Telemetry menu (pops up in center)
+            if showTelemetry {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .edgesIgnoringSafeArea(.all)
+                        .onTapGesture {
+                            showTelemetry = false
+                        }
+
+                    TelemetryMenuView(isPresented: $showTelemetry)
+                        .environmentObject(coordinator)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
-    }
-
-    // MARK: - Camera Settings
-
-    private var cameraSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Camera Settings")
-                .font(.headline)
-
-            Text("Use the web UI or Tauri controller for camera adjustments")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            if let settings = coordinator.currentSettings {
-                VStack(alignment: .leading, spacing: 8) {
-                    settingRow(label: "White Balance", value: "\(settings.wbMode.rawValue)")
-                    if let kelvin = settings.wbKelvin {
-                        settingRow(label: "Color Temp", value: "\(kelvin)K")
-                    }
-                    settingRow(label: "ISO", value: "\(settings.iso)")
-                    settingRow(label: "Shutter", value: String(format: "%.4fs", settings.shutterS))
-                    settingRow(label: "Zoom", value: String(format: "%.1fx", settings.zoomFactor))
-                }
-            }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showSettings)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showTelemetry)
+        .statusBar(hidden: true) // Hide status bar for full-screen camera view
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            handleScenePhaseChange(newPhase)
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
     }
 
-    // MARK: - Telemetry
+    // MARK: - Lifecycle
 
-    private var telemetrySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Telemetry")
-                .font(.headline)
-
-            if let telemetry = coordinator.telemetry {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    telemetryCard(title: "FPS", value: String(format: "%.1f", telemetry.fps), icon: "speedometer")
-                    telemetryCard(title: "Bitrate", value: formatBitrate(telemetry.bitrate), icon: "network")
-                    telemetryCard(title: "Battery", value: String(format: "%.0f%%", telemetry.battery * 100), icon: "battery.100")
-                    telemetryCard(title: "Temp", value: String(format: "%.1f°C", telemetry.tempC), icon: "thermometer")
-                    telemetryCard(title: "WiFi", value: "\(telemetry.wifiRssi) dBm", icon: "wifi")
-
-                    if let chargingState = telemetry.chargingState {
-                        telemetryCard(title: "Charging", value: chargingState.rawValue, icon: "bolt.fill")
-                    }
-
-                    if let droppedFrames = telemetry.droppedFrames {
-                        telemetryCard(title: "Dropped", value: "\(droppedFrames)", icon: "exclamationmark.triangle")
-                    }
-
-                    if let queueMs = telemetry.queueMs {
-                        telemetryCard(title: "Queue", value: "\(queueMs)ms", icon: "timer")
-                    }
-                }
-            } else {
-                Text("No telemetry available")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            Task {
+                await coordinator.resumePreview()
             }
         }
         .padding()
@@ -262,13 +201,12 @@ struct ContentView: View {
                 try await coordinator.startStreaming(request: request)
             } catch {
                 print("❌ Failed to start stream: \(error)")
+        case .background:
+            Task {
+                await coordinator.pausePreview()
             }
-        }
-    }
-
-    private func stopStream() {
-        Task {
-            await coordinator.stopStreaming()
+        default:
+            break
         }
     }
 }

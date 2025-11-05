@@ -12,7 +12,7 @@ import UIKit
 actor CaptureManager: NSObject {
     // MARK: - Properties
 
-    private var captureSession: AVCaptureSession?
+    nonisolated(unsafe) private var captureSession: AVCaptureSession?
     private var videoDevice: AVCaptureDevice?
     private var videoInput: AVCaptureDeviceInput?
     private var videoOutput: AVCaptureVideoDataOutput?
@@ -22,17 +22,44 @@ actor CaptureManager: NSObject {
     private var currentResolution: String?
     private var currentFramerate: Int?
 
+    // MARK: - Public Access
+
+    nonisolated func getSession() -> AVCaptureSession? {
+        // AVCaptureSession is thread-safe for reading to provide to preview layer
+        return captureSession
+    }
+
     // MARK: - Configuration
 
     func configure(resolution: String, framerate: Int) async throws {
         print("📷 Configuring capture: \(resolution) @ \(framerate)fps")
 
+        // Check if already configured with same settings
+        if let existingSession = captureSession,
+           currentResolution == resolution,
+           currentFramerate == framerate {
+            print("✅ Already configured with requested settings, reusing session")
+            return
+        }
+
         currentResolution = resolution
         currentFramerate = framerate
 
-        // Setup capture session
-        let session = AVCaptureSession()
+        // Stop existing session if running
+        let wasRunning = captureSession?.isRunning ?? false
+        if wasRunning {
+            captureSession?.stopRunning()
+        }
+
+        // Setup capture session (reuse existing or create new)
+        let session = captureSession ?? AVCaptureSession()
         session.sessionPreset = .inputPriority // We'll manually set format
+
+        // Remove existing inputs/outputs if reconfiguring
+        if captureSession != nil {
+            session.inputs.forEach { session.removeInput($0) }
+            session.outputs.forEach { session.removeOutput($0) }
+        }
 
         // Get video device (default wide camera)
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
@@ -66,14 +93,25 @@ actor CaptureManager: NSObject {
         session.addOutput(output)
         videoOutput = output
 
-        // Configure color space (Rec.709 Full)
+        // Configure color space (Rec.709 Full) and orientation
         if let connection = output.connection(with: .video) {
             if connection.isVideoStabilizationSupported {
                 connection.preferredVideoStabilizationMode = .off // For lowest latency
             }
+
+            // Lock video orientation to portrait
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
         }
 
         captureSession = session
+
+        // Restart session if it was running before reconfiguration
+        if wasRunning {
+            session.startRunning()
+            print("✅ Restarted capture session after reconfiguration")
+        }
     }
 
     private func configureFormat(device: AVCaptureDevice, resolution: String, framerate: Int) async throws {
@@ -126,14 +164,19 @@ actor CaptureManager: NSObject {
 
         self.frameCallback = frameCallback
 
-        session.startRunning()
-        print("▶️ Capture session started")
+        // Start session if not already running (for preview)
+        if !session.isRunning {
+            session.startRunning()
+            print("▶️ Capture session started")
+        } else {
+            print("▶️ Frame callback attached (session already running for preview)")
+        }
     }
 
     func stopCapture() async {
-        captureSession?.stopRunning()
+        // Only clear the frame callback, keep session running for preview
         frameCallback = nil
-        print("⏹ Capture session stopped")
+        print("⏹ Frame callback cleared (session still running for preview)")
     }
 
     // MARK: - Camera Settings
