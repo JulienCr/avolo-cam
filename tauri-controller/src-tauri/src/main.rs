@@ -1,0 +1,221 @@
+// Prevents additional console window on Windows in release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod models;
+mod camera_discovery;
+mod camera_client;
+mod camera_manager;
+
+use std::sync::Arc;
+use tauri::{Manager, State};
+use tokio::sync::RwLock;
+
+use camera_manager::CameraManager;
+use models::*;
+
+// MARK: - Application State
+
+struct AppState {
+    camera_manager: Arc<RwLock<CameraManager>>,
+}
+
+// MARK: - Tauri Commands
+
+#[tauri::command]
+async fn discover_cameras(
+    state: State<'_, AppState>,
+) -> Result<Vec<DiscoveredCamera>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_discovered_cameras().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn add_camera_manual(
+    state: State<'_, AppState>,
+    ip: String,
+    port: u16,
+    token: String,
+) -> Result<String, String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.add_camera_manual(ip, port, token).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn remove_camera(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.remove_camera(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_cameras(
+    state: State<'_, AppState>,
+) -> Result<Vec<CameraInfo>, String> {
+    let manager = state.camera_manager.read().await;
+    Ok(manager.get_all_cameras().await)
+}
+
+#[tauri::command]
+async fn get_camera_status(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<StatusResponse, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_camera_status(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn start_stream(
+    state: State<'_, AppState>,
+    camera_id: String,
+    resolution: String,
+    framerate: u32,
+    bitrate: u32,
+    codec: String,
+) -> Result<(), String> {
+    let manager = state.camera_manager.read().await;
+    let request = StreamStartRequest {
+        resolution,
+        framerate,
+        bitrate,
+        codec,
+    };
+    manager.start_stream(&camera_id, request).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_stream(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<(), String> {
+    let manager = state.camera_manager.read().await;
+    manager.stop_stream(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_camera_settings(
+    state: State<'_, AppState>,
+    camera_id: String,
+    settings: CameraSettingsRequest,
+) -> Result<(), String> {
+    let manager = state.camera_manager.read().await;
+    manager.update_camera_settings(&camera_id, settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn force_keyframe(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<(), String> {
+    let manager = state.camera_manager.read().await;
+    manager.force_keyframe(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
+// Group commands
+
+#[tauri::command]
+async fn group_start_stream(
+    state: State<'_, AppState>,
+    camera_ids: Vec<String>,
+    resolution: String,
+    framerate: u32,
+    bitrate: u32,
+    codec: String,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    let request = StreamStartRequest {
+        resolution,
+        framerate,
+        bitrate,
+        codec,
+    };
+    manager.group_start_stream(&camera_ids, request).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn group_stop_stream(
+    state: State<'_, AppState>,
+    camera_ids: Vec<String>,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.group_stop_stream(&camera_ids).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn group_update_settings(
+    state: State<'_, AppState>,
+    camera_ids: Vec<String>,
+    settings: CameraSettingsRequest,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.group_update_settings(&camera_ids, settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_camera_alias(
+    state: State<'_, AppState>,
+    camera_id: String,
+    alias: String,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.update_camera_alias(&camera_id, alias).await
+        .map_err(|e| e.to_string())
+}
+
+// MARK: - Main
+
+fn main() {
+    env_logger::init();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // Initialize camera manager
+            let camera_manager = Arc::new(RwLock::new(CameraManager::new()));
+
+            // Start mDNS discovery in background
+            let manager_clone = camera_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = manager_clone.write().await.start_discovery().await {
+                    log::error!("Failed to start mDNS discovery: {}", e);
+                }
+            });
+
+            // Set app state
+            app.manage(AppState {
+                camera_manager,
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            discover_cameras,
+            add_camera_manual,
+            remove_camera,
+            get_cameras,
+            get_camera_status,
+            start_stream,
+            stop_stream,
+            update_camera_settings,
+            force_keyframe,
+            group_start_stream,
+            group_stop_stream,
+            group_update_settings,
+            update_camera_alias,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

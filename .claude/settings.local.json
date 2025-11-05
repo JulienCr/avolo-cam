@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(test:*)",
+      "Bash(cargo --version:*)",
+      "Bash(cargo install:*)",
+      "Bash(tree:*)",
+      "Bash(cargo build:*)",
+      "Bash(python3:*)",
+      "Bash(convert:*)",
+      "Bash(qlmanage:*)",
+      "Bash(sips:*)",
+      "Bash(iconutil -c icns:*)",
+      "Bash(/bin/rm:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
