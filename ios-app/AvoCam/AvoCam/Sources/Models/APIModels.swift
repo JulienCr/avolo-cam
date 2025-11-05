@@ -31,16 +31,16 @@ enum NDIState: String, Codable {
 }
 
 struct CurrentSettings: Codable {
-    let resolution: String
-    let fps: Int
-    let bitrate: Int
-    let codec: String
-    let wbMode: WhiteBalanceMode
-    let wbKelvin: Int?
-    let iso: Int
-    let shutterS: Double
-    let focusMode: FocusMode
-    let zoomFactor: Double
+    var resolution: String
+    var fps: Int
+    var bitrate: Int
+    var codec: String
+    var wbMode: WhiteBalanceMode
+    var wbKelvin: Int?
+    var iso: Int
+    var shutterS: Double
+    var focusMode: FocusMode
+    var zoomFactor: Double
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -143,6 +143,12 @@ struct CameraSettingsRequest: Codable {
     }
 }
 
+// MARK: - Screen Control
+
+struct ScreenBrightnessRequest: Codable {
+    let dimmed: Bool
+}
+
 // MARK: - WebSocket Messages
 
 struct WebSocketTelemetryMessage: Codable {
@@ -172,6 +178,51 @@ struct WebSocketTelemetryMessage: Codable {
 struct WebSocketCommandMessage: Codable {
     let op: String
     let camera: CameraSettingsRequest?
+}
+
+// MARK: - Video Settings
+
+struct VideoPresetResponse: Codable {
+    let id: String
+    let name: String
+    let resolution: String
+    let fps: Int
+    let codec: String
+    let bitrate: Int
+}
+
+struct VideoSettingsResponse: Codable {
+    let selectedPresetId: String?
+    let customResolution: String?
+    let customFps: Int?
+    let customCodec: String?
+    let customBitrate: Int?
+    let availablePresets: [VideoPresetResponse]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedPresetId = "selected_preset_id"
+        case customResolution = "custom_resolution"
+        case customFps = "custom_fps"
+        case customCodec = "custom_codec"
+        case customBitrate = "custom_bitrate"
+        case availablePresets = "available_presets"
+    }
+}
+
+struct VideoSettingsUpdateRequest: Codable {
+    let selectedPresetId: String?
+    let customResolution: String?
+    let customFps: Int?
+    let customCodec: String?
+    let customBitrate: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case selectedPresetId = "selected_preset_id"
+        case customResolution = "custom_resolution"
+        case customFps = "custom_fps"
+        case customCodec = "custom_codec"
+        case customBitrate = "custom_bitrate"
+    }
 }
 
 // MARK: - Error Response

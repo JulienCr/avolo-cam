@@ -350,11 +350,13 @@ class AppCoordinator: ObservableObject {
         try await captureManager?.startCapture { [weak self] sampleBuffer in
             guard let self = self else { return }
 
-            // Encode frame
-            self.encoderManager?.encode(sampleBuffer: sampleBuffer) { encodedData in
-                // Send to NDI
-                self.ndiManager?.send(data: encodedData)
+            // Extract pixel buffer from sample buffer
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                return
             }
+
+            // Send directly to NDI (NDI handles compression internally)
+            self.ndiManager?.send(pixelBuffer: pixelBuffer)
         }
 
         isStreaming = true

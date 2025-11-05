@@ -99,9 +99,9 @@ actor CaptureManager: NSObject {
                 connection.preferredVideoStabilizationMode = .off // For lowest latency
             }
 
-            // Lock video orientation to portrait
+            // Lock video orientation to landscape
             if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
+                connection.videoOrientation = .landscapeRight
             }
         }
 

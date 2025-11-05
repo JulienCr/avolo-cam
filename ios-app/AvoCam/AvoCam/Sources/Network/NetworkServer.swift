@@ -20,8 +20,11 @@ protocol NetworkRequestHandler: AnyObject {
     func handleStreamStop() async throws
     func handleCameraSettings(_ settings: CameraSettingsRequest) async throws
     func handleForceKeyframe()
-    func handleGetStatus() -> StatusResponse
-    func handleGetCapabilities() -> [Capability]
+    func handleGetStatus() async -> StatusResponse
+    func handleGetCapabilities() async -> [Capability]
+    func handleGetVideoSettings() async -> VideoSettingsResponse
+    func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws
+    func handleScreenBrightness(_ request: ScreenBrightnessRequest)
 }
 
 // MARK: - Network Server
@@ -180,10 +183,16 @@ class NetworkServer {
         // Route request
         switch (method, path) {
         case ("GET", "/api/v1/status"):
-            return handleGetStatus()
+            return await handleGetStatus()
 
         case ("GET", "/api/v1/capabilities"):
-            return handleGetCapabilities()
+            return await handleGetCapabilities()
+
+        case ("GET", "/api/v1/video/settings"):
+            return await handleGetVideoSettings()
+
+        case ("PUT", "/api/v1/video/settings"):
+            return await handlePutVideoSettings(body: body)
 
         case ("POST", "/api/v1/stream/start"):
             return await handleStreamStart(body: body)
@@ -193,6 +202,9 @@ class NetworkServer {
 
         case ("POST", "/api/v1/camera"):
             return await handleCameraSettings(body: body)
+
+        case ("POST", "/api/v1/screen/brightness"):
+            return handleScreenBrightness(body: body)
 
         case ("POST", "/api/v1/encoder/force_keyframe"):
             return handleForceKeyframe()
@@ -213,12 +225,12 @@ class NetworkServer {
 
     // MARK: - Endpoint Handlers
 
-    private func handleGetStatus() -> HTTPResponse {
+    private func handleGetStatus() async -> HTTPResponse {
         guard let handler = requestHandler else {
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
-        let status = handler.handleGetStatus()
+        let status = await handler.handleGetStatus()
         guard let jsonData = try? JSONEncoder().encode(status) else {
             return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode status"))
         }
@@ -226,12 +238,12 @@ class NetworkServer {
         return HTTPResponse(status: 200, body: jsonData)
     }
 
-    private func handleGetCapabilities() -> HTTPResponse {
+    private func handleGetCapabilities() async -> HTTPResponse {
         guard let handler = requestHandler else {
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
-        let capabilities = handler.handleGetCapabilities()
+        let capabilities = await handler.handleGetCapabilities()
         guard let jsonData = try? JSONEncoder().encode(capabilities) else {
             return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode capabilities"))
         }
@@ -288,6 +300,20 @@ class NetworkServer {
         }
     }
 
+    private func handleScreenBrightness(body: Data?) -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(ScreenBrightnessRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid screen brightness request"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        handler.handleScreenBrightness(request)
+        return HTTPResponse(status: 200, body: successJSON(message: "Screen brightness updated"))
+    }
+
     private func handleForceKeyframe() -> HTTPResponse {
         guard let handler = requestHandler else {
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
@@ -295,6 +321,37 @@ class NetworkServer {
 
         handler.handleForceKeyframe()
         return HTTPResponse(status: 200, body: successJSON(message: "Keyframe forced"))
+    }
+
+    private func handleGetVideoSettings() async -> HTTPResponse {
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        let settings = await handler.handleGetVideoSettings()
+        guard let jsonData = try? JSONEncoder().encode(settings) else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode video settings"))
+        }
+
+        return HTTPResponse(status: 200, body: jsonData)
+    }
+
+    private func handlePutVideoSettings(body: Data?) async -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(VideoSettingsUpdateRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid video settings request"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        do {
+            try await handler.handleUpdateVideoSettings(request)
+            return HTTPResponse(status: 200, body: successJSON(message: "Video settings updated"))
+        } catch {
+            return HTTPResponse(status: 500, body: errorJSON(code: "VIDEO_SETTINGS_UPDATE_FAILED", message: error.localizedDescription))
+        }
     }
 
     private func handleLogsDownload() -> HTTPResponse {

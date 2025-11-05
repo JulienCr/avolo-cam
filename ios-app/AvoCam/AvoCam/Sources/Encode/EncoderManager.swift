@@ -14,7 +14,7 @@ class EncoderManager {
     // MARK: - Properties
 
     private var compressionSession: VTCompressionSession?
-    private var encodedCallback: ((Data) -> Void)?
+    fileprivate var encodedCallback: ((Data) -> Void)?
 
     private var currentBitrate: Int = 10_000_000
     private var currentFramerate: Int = 30
@@ -39,13 +39,24 @@ class EncoderManager {
         currentFramerate = framerate
         currentBitrate = bitrate
 
+        // Determine codec type
+        let codecType: CMVideoCodecType
+        switch codec.lowercased() {
+        case "h264":
+            codecType = kCMVideoCodecType_H264
+        case "hevc", "h265":
+            codecType = kCMVideoCodecType_HEVC
+        default:
+            throw EncoderError.unsupportedCodec(codec)
+        }
+
         // Create compression session
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: Int32(dimensions.width),
             height: Int32(dimensions.height),
-            codecType: kCMVideoCodecType_H264,
+            codecType: codecType,
             encoderSpecification: nil,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
@@ -59,7 +70,7 @@ class EncoderManager {
         }
 
         // Configure low-latency properties
-        try setLowLatencyProperties(session: session, framerate: framerate, bitrate: bitrate)
+        try setLowLatencyProperties(session: session, framerate: framerate, bitrate: bitrate, codec: codecType)
 
         // Prepare to encode
         VTCompressionSessionPrepareToEncodeFrames(session)
@@ -68,7 +79,7 @@ class EncoderManager {
         print("✅ Encoder configured successfully")
     }
 
-    private func setLowLatencyProperties(session: VTCompressionSession, framerate: Int, bitrate: Int) throws {
+    private func setLowLatencyProperties(session: VTCompressionSession, framerate: Int, bitrate: Int, codec: CMVideoCodecType) throws {
         // Real-time encoding
         VTSessionSetProperty(
             session,
@@ -76,12 +87,20 @@ class EncoderManager {
             value: kCFBooleanTrue
         )
 
-        // Profile level (H.264 High 4.2)
-        VTSessionSetProperty(
-            session,
-            key: kVTCompressionPropertyKey_ProfileLevel,
-            value: kVTProfileLevel_H264_High_4_2
-        )
+        // Profile level (codec-specific)
+        if codec == kCMVideoCodecType_H264 {
+            VTSessionSetProperty(
+                session,
+                key: kVTCompressionPropertyKey_ProfileLevel,
+                value: kVTProfileLevel_H264_High_4_2
+            )
+        } else if codec == kCMVideoCodecType_HEVC {
+            VTSessionSetProperty(
+                session,
+                key: kVTCompressionPropertyKey_ProfileLevel,
+                value: kVTProfileLevel_HEVC_Main_AutoLevel
+            )
+        }
 
         // Disable frame reordering (no B-frames)
         VTSessionSetProperty(
@@ -203,7 +222,7 @@ class EncoderManager {
         )
     }
 
-    private func updateTelemetry() {
+    fileprivate func updateTelemetry() {
         telemetryLock.lock()
         defer { telemetryLock.unlock() }
 
@@ -283,10 +302,8 @@ private let compressionOutputCallback: VTCompressionOutputCallback = { (
     encoderManager.updateTelemetry()
 
     // Check if this is a keyframe
-    let isKeyframe = !CFDictionaryContainsKey(
-        CMSampleBufferGetAttachmentsArray(sampleBuffer, attachmentMode: kCMAttachmentMode_ShouldPropagate) as? CFDictionary,
-        Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque()
-    )
+    let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]]
+    let isKeyframe = !(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
 
     // Extract H.264 elementary stream data
     guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
@@ -324,6 +341,7 @@ enum EncoderError: LocalizedError {
     case sessionCreationFailed(OSStatus)
     case invalidResolution
     case encodeFailed(OSStatus)
+    case unsupportedCodec(String)
 
     var errorDescription: String? {
         switch self {
@@ -333,6 +351,8 @@ enum EncoderError: LocalizedError {
             return "Invalid resolution format"
         case .encodeFailed(let status):
             return "Encoding failed: \(status)"
+        case .unsupportedCodec(let codec):
+            return "Unsupported codec: \(codec). Supported codecs: h264, hevc"
         }
     }
 }
