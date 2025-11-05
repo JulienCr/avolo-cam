@@ -143,6 +143,12 @@ struct CameraSettingsRequest: Codable {
     }
 }
 
+// MARK: - Screen Control
+
+struct ScreenBrightnessRequest: Codable {
+    let dimmed: Bool
+}
+
 // MARK: - WebSocket Messages
 
 struct WebSocketTelemetryMessage: Codable {

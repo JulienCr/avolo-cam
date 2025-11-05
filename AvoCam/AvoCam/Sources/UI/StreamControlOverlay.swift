@@ -33,6 +33,16 @@ struct StreamControlOverlay: View {
 
                 Spacer()
 
+                // Screen brightness toggle button
+                Button(action: { coordinator.toggleScreenBrightness() }) {
+                    Image(systemName: coordinator.isScreenDimmed ? "sun.max.fill" : "sun.min.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(.white)
+                        .frame(width: 36, height: 36)
+                        .background(coordinator.isScreenDimmed ? Color.orange.opacity(0.6) : Color.black.opacity(0.6))
+                        .clipShape(Circle())
+                }
+
                 // Telemetry button
                 Button(action: onOpenTelemetry) {
                     Image(systemName: "chart.bar.fill")

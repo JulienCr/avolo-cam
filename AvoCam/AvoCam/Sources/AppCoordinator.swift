@@ -19,6 +19,7 @@ class AppCoordinator: ObservableObject {
     @Published var telemetry: Telemetry?
     @Published var error: String?
     @Published var captureSession: AVCaptureSession?
+    @Published var isScreenDimmed: Bool = false
 
     // MARK: - Components
 
@@ -153,6 +154,26 @@ class AppCoordinator: ObservableObject {
         if let session = captureSession, !session.isRunning {
             session.startRunning()
             print("▶️ Preview resumed (app in foreground)")
+        }
+    }
+
+    // MARK: - Screen Brightness Control
+
+    func toggleScreenBrightness() {
+        setScreenBrightness(dimmed: !isScreenDimmed)
+    }
+
+    func setScreenBrightness(dimmed: Bool) {
+        isScreenDimmed = dimmed
+
+        if dimmed {
+            // Dim screen to minimum to save battery
+            UIScreen.main.brightness = 0.01
+            print("🔅 Screen dimmed to save battery")
+        } else {
+            // Restore to normal brightness
+            UIScreen.main.brightness = 0.5
+            print("🔆 Screen brightness restored")
         }
     }
 
@@ -452,5 +473,9 @@ extension AppCoordinator: NetworkRequestHandler {
 
     func handleGetCapabilities() async -> [Capability] {
         return await getCapabilities()
+    }
+
+    func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
+        setScreenBrightness(dimmed: request.dimmed)
     }
 }

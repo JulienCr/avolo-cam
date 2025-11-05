@@ -22,6 +22,7 @@ protocol NetworkRequestHandler: AnyObject {
     func handleForceKeyframe()
     func handleGetStatus() async -> StatusResponse
     func handleGetCapabilities() async -> [Capability]
+    func handleScreenBrightness(_ request: ScreenBrightnessRequest)
 }
 
 // MARK: - Network Server
@@ -194,6 +195,9 @@ class NetworkServer {
         case ("POST", "/api/v1/camera"):
             return await handleCameraSettings(body: body)
 
+        case ("POST", "/api/v1/screen/brightness"):
+            return handleScreenBrightness(body: body)
+
         case ("POST", "/api/v1/encoder/force_keyframe"):
             return handleForceKeyframe()
 
@@ -286,6 +290,20 @@ class NetworkServer {
         } catch {
             return HTTPResponse(status: 500, body: errorJSON(code: "CAMERA_UPDATE_FAILED", message: error.localizedDescription))
         }
+    }
+
+    private func handleScreenBrightness(body: Data?) -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(ScreenBrightnessRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid screen brightness request"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        handler.handleScreenBrightness(request)
+        return HTTPResponse(status: 200, body: successJSON(message: "Screen brightness updated"))
     }
 
     private func handleForceKeyframe() -> HTTPResponse {
