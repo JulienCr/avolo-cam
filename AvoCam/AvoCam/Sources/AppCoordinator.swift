@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import UIKit
+import AVFoundation
 
 @MainActor
 class AppCoordinator: ObservableObject {
@@ -17,6 +18,7 @@ class AppCoordinator: ObservableObject {
     @Published var currentSettings: CurrentSettings?
     @Published var telemetry: Telemetry?
     @Published var error: String?
+    @Published var captureSession: AVCaptureSession?
 
     // MARK: - Components
 
@@ -71,6 +73,38 @@ class AppCoordinator: ObservableObject {
 
         // Start telemetry collection
         startTelemetryCollection()
+
+        // Initialize preview session early
+        Task {
+            await initializePreviewSession()
+        }
+    }
+
+    // MARK: - Preview Session
+
+    private func initializePreviewSession() async {
+        // Configure capture with default settings to enable preview
+        // This allows camera preview to show even when not streaming
+        do {
+            try await captureManager?.configure(
+                resolution: "1920x1080",
+                framerate: 30
+            )
+
+            // Get the session for preview
+            if let session = captureManager?.getSession() {
+                self.captureSession = session
+
+                // Start the session for preview (but not streaming yet)
+                if !session.isRunning {
+                    session.startRunning()
+                }
+
+                print("✅ Preview session initialized and running")
+            }
+        } catch {
+            print("⚠️ Failed to initialize preview session: \(error)")
+        }
     }
 
     func stop() {
@@ -83,12 +117,43 @@ class AppCoordinator: ObservableObject {
             }
         }
 
+        // Stop preview session
+        Task {
+            await stopPreviewSession()
+        }
+
         // Stop all services
         bonjourService?.stop()
         networkServer?.stop()
 
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    private func stopPreviewSession() async {
+        // Stop the capture session completely when app is closing
+        captureSession?.stopRunning()
+        captureSession = nil
+        print("⏹ Preview session stopped")
+    }
+
+    func pausePreview() async {
+        // Pause preview when app goes to background (unless actively streaming)
+        guard !isStreaming else {
+            print("⏸ App backgrounded but continuing capture for active stream")
+            return
+        }
+
+        captureSession?.stopRunning()
+        print("⏸ Preview paused (app in background)")
+    }
+
+    func resumePreview() async {
+        // Resume preview when app comes back to foreground
+        if let session = captureSession, !session.isRunning {
+            session.startRunning()
+            print("▶️ Preview resumed (app in foreground)")
+        }
     }
 
     // MARK: - Network Server
