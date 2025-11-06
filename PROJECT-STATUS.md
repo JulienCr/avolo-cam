@@ -1,5 +1,22 @@
 # Project Status - AVOLO-CAM
 
+
+## UP TO DATE - 2025-11-06
+### To implement
+- Changing camera (normal, wide, tele), in both app, webui and Tauri controller
+- Use defined video codec profiles and resolution preset (already defined in the code) to switch settings quickly. For now we are blocked with 1080p only.
+- Auto camera detection in Tauri controller (mDNS browsing)
+- Profile Management in Tauri controller (save/recall camera settings)
+- Live settings editing in Tauri controller and webui (without hitting apply button)
+- Real stats (not simulated) in Tauri controller and webui (temperature, CPU usage, battery, network quality)
+- Real screen blackout on iphone (not only low brightness) to save power
+- NDI integration in the Tauri controller to receive and display NDI streams from cameras
+- Better ui/ux in Tauri controller (camera details, settings, etc)
+
+## Already implemented
+- NDI streaming from iOS app to OBS
+
+
 ## Summary
 
 **LOT A - MCP Core architecture is complete and building!** All source code, configurations, and documentation have been created for both the iOS app and Tauri controller. Both projects compile successfully:

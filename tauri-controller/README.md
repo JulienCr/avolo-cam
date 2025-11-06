@@ -339,3 +339,4 @@ For issues and questions:
 - Check logs: `RUST_LOG=debug npm run tauri:dev`
 - Review inline code comments
 - See architecture docs in [CLAUDE.md](../CLAUDE.md)
+
