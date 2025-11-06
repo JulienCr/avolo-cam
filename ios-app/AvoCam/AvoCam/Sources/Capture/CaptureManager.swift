@@ -219,15 +219,16 @@ actor CaptureManager: NSObject {
                 }
             case .manual:
                 if device.isWhiteBalanceModeSupported(.locked),
-                    let kelvin = settings.wbKelvin
+                    let sceneCCT_K = settings.wbKelvin  // API sends physical scene CCT
                 {
-                    let clampedKelvin = min(max(kelvin, uiMinKelvin), uiMaxKelvin)
+                    // Clamp to reasonable range for video
+                    let clampedCCT = min(max(sceneCCT_K, 2000), 10000)
                     let tint = settings.wbTint ?? 0.0
-                    let appleKelvin = mapUIToAppleKelvin(clampedKelvin)
 
                     // Use official Apple API to convert temperature/tint to gains
+                    // Apple expects physical scene illumination temperature (no inversion needed!)
                     let tempTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
-                        temperature: appleKelvin,
+                        temperature: Float(clampedCCT),
                         tint: Float(tint)
                     )
                     var gains = device.deviceWhiteBalanceGains(for: tempTint)
@@ -239,8 +240,9 @@ actor CaptureManager: NSObject {
 
                     // Debug round-trip to verify applied values
                     let rt = device.temperatureAndTintValues(for: gains)
-                    let uiK = mapAppleToUIKelvin(rt.temperature)
-                    print("✅ WB locked UI \(uiK)K (apple \(Int(rt.temperature))K) tint \(String(format: "%.1f", rt.tint)) | gains R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+                    print("✅ WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
+                    print("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
+                    print("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
                 }
             }
         }
@@ -329,16 +331,10 @@ actor CaptureManager: NSObject {
         let sceneCCT_K = Int(tempTint.temperature)
         let tint = Double(tempTint.tint)
 
-        // For UI display, derive UIKelvin (but don't return it - UI layer will convert)
-        let uiKelvin = mapAppleToUIKelvin(tempTint.temperature)
-
         print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
-        print("✅ Measured WB:")
-        print("   SceneCCT_K: \(sceneCCT_K)K (physical scene illumination)")
-        print("   UIKelvin: \(uiKelvin)K (UI slider value)")
-        print("   Tint: \(String(format: "%.1f", tint))")
+        print("✅ Measured WB: SceneCCT_K = \(sceneCCT_K)K (physical scene illumination), Tint = \(String(format: "%.1f", tint))")
 
-        // Return PHYSICAL scene CCT, not UI value
+        // Return physical scene CCT
         return (sceneCCT_K: sceneCCT_K, tint: tint)
     }
 
@@ -410,24 +406,6 @@ actor CaptureManager: NSObject {
     }
 
     // MARK: - White Balance Helpers
-
-    private let uiMinKelvin = 2000
-    private let uiMaxKelvin = 10000
-
-    /// Maps UI Kelvin (higher = cooler) to Apple's scene illumination Kelvin
-    private func mapUIToAppleKelvin(_ uiKelvin: Int) -> Float {
-        // UI expectation: higher K = cooler/blue
-        // Apple API: represents scene illumination temperature (opposite)
-        // Formula: AppleKelvin = (min + max) - UIKelvin
-        let inverted = uiMinKelvin + uiMaxKelvin - uiKelvin
-        return Float(min(max(inverted, uiMinKelvin), uiMaxKelvin))
-    }
-
-    /// Maps Apple's scene illumination Kelvin to UI Kelvin (higher = cooler)
-    private func mapAppleToUIKelvin(_ appleKelvin: Float) -> Int {
-        let inverted = uiMinKelvin + uiMaxKelvin - Int(appleKelvin)
-        return min(max(inverted, uiMinKelvin), uiMaxKelvin)
-    }
 
     // Clamp helper to keep gains in device-safe range
     private func clampedGains(_ gains: AVCaptureDevice.WhiteBalanceGains, for device: AVCaptureDevice) -> AVCaptureDevice.WhiteBalanceGains {
