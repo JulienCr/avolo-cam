@@ -697,6 +697,13 @@ class NetworkServer {
                         </div>
                     </div>
                     <div class="settings-row">
+                        <label for="shutter">Shutter Speed: <span id="shutter-value">1/100</span></label>
+                        <div class="slider-group">
+                            <input type="range" id="shutter-slider" value="0.01" min="0.001" max="0.1" step="0.001">
+                            <input type="number" id="shutter" value="0.01" min="0.001" max="0.1" step="0.001">
+                        </div>
+                    </div>
+                    <div class="settings-row">
                         <label for="zoom">Zoom: <span id="zoom-value">1.0</span>x</label>
                         <div class="slider-group">
                             <input type="range" id="zoom-slider" value="1.0" min="1.0" max="10.0" step="0.1">
@@ -786,6 +793,13 @@ class NetworkServer {
                                 document.getElementById('iso-value').textContent = current.iso;
                             }
 
+                            // Shutter speed
+                            if (current.shutter_s !== null && current.shutter_s !== undefined) {
+                                document.getElementById('shutter').value = current.shutter_s;
+                                document.getElementById('shutter-slider').value = current.shutter_s;
+                                document.getElementById('shutter-value').textContent = formatShutterSpeed(current.shutter_s);
+                            }
+
                             // Zoom
                             if (current.zoom_factor) {
                                 document.getElementById('zoom').value = current.zoom_factor;
@@ -834,8 +848,17 @@ class NetworkServer {
                     }
                 }
 
+                // Format shutter speed for display
+                function formatShutterSpeed(seconds) {
+                    if (seconds >= 1) {
+                        return seconds.toFixed(1) + 's';
+                    } else {
+                        return '1/' + Math.round(1.0 / seconds);
+                    }
+                }
+
                 // Slider sync functions - work directly with physical SceneCCT_K
-                function syncSlider(sliderId, inputId, valueId) {
+                function syncSlider(sliderId, inputId, valueId, formatter = null) {
                     const slider = document.getElementById(sliderId);
                     const input = document.getElementById(inputId);
                     const valueLabel = document.getElementById(valueId);
@@ -843,13 +866,13 @@ class NetworkServer {
                     slider.addEventListener('input', (e) => {
                         const val = e.target.value;
                         input.value = val;
-                        valueLabel.textContent = val;
+                        valueLabel.textContent = formatter ? formatter(val) : val;
                     });
 
                     input.addEventListener('input', (e) => {
                         const val = e.target.value;
                         slider.value = val;
-                        valueLabel.textContent = val;
+                        valueLabel.textContent = formatter ? formatter(val) : val;
                     });
                 }
 
@@ -857,6 +880,7 @@ class NetworkServer {
                 syncSlider('wb-kelvin-slider', 'wb-kelvin', 'wb-kelvin-value');
                 syncSlider('wb-tint-slider', 'wb-tint', 'wb-tint-value');
                 syncSlider('iso-slider', 'iso', 'iso-value');
+                syncSlider('shutter-slider', 'shutter', 'shutter-value', formatShutterSpeed);
                 syncSlider('zoom-slider', 'zoom', 'zoom-value');
 
                 // Event handlers
@@ -907,6 +931,7 @@ class NetworkServer {
                             wb_kelvin: sceneCCT_K,  // Send physical value
                             wb_tint: tint,
                             iso: parseInt(document.getElementById('iso').value),
+                            shutter_s: parseFloat(document.getElementById('shutter').value),
                             zoom_factor: parseFloat(document.getElementById('zoom').value)
                         });
 
@@ -923,6 +948,7 @@ class NetworkServer {
                     const settings = {
                         wb_mode: document.getElementById('wb-mode').value,
                         iso: parseInt(document.getElementById('iso').value),
+                        shutter_s: parseFloat(document.getElementById('shutter').value),
                         zoom_factor: parseFloat(document.getElementById('zoom').value)
                     };
                     if (settings.wb_mode === 'manual') {
