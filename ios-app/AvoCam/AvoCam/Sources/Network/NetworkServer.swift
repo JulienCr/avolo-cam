@@ -82,7 +82,8 @@ class NetworkServer {
                 let upgrader = NIOWebSocketServerUpgrader(
                     shouldUpgrade: { (channel: Channel, head: HTTPRequestHead) in
                         // Check for WebSocket upgrade request
-                        guard head.headers["upgrade"].first?.lowercased() == "websocket" else {
+                        guard head.uri == "/ws",
+                              head.headers["upgrade"].first?.lowercased() == "websocket" else {
                             return channel.eventLoop.makeSucceededFuture(nil)
                         }
 
@@ -98,8 +99,21 @@ class NetworkServer {
                         return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
                     },
                     upgradePipelineHandler: { (channel: Channel, _: HTTPRequestHead) in
+                        // Add WebSocket handler to the pipeline
+                        // NIO automatically removes HTTP decoder/encoder before calling this
                         let wsHandler = WebSocketServerHandler(server: self)
-                        return channel.pipeline.addHandler(wsHandler)
+                        return channel.pipeline.addHandler(wsHandler).flatMap {
+                            // After adding WS handler, try to remove HTTP handler
+                            // If it fails, mark it as upgraded so it ignores future data
+                            channel.pipeline.context(name: "HTTPHandler").flatMap { context in
+                                if let httpHandler = context.handler as? HTTPServerHandler {
+                                    httpHandler.markAsUpgraded()
+                                }
+                                return channel.eventLoop.makeSucceededFuture(())
+                            }.recover { _ in
+                                // Handler doesn't exist or can't be accessed, that's OK
+                            }
+                        }
                     }
                 )
 
@@ -107,7 +121,7 @@ class NetworkServer {
                     withPipeliningAssistance: false,
                     withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
                 ).flatMap {
-                    channel.pipeline.addHandler(HTTPServerHandler(server: self))
+                    channel.pipeline.addHandler(HTTPServerHandler(server: self), name: "HTTPHandler")
                 }
             }
 
@@ -620,7 +634,7 @@ class NetworkServer {
 
             <script>
                 let ws = null;
-                const wsUrl = `ws://\${window.location.host}/ws`;
+                const wsUrl = `ws://${window.location.host}/ws`;
 
                 // Connect to WebSocket
                 function connectWebSocket() {
@@ -736,7 +750,7 @@ class NetworkServer {
         </body>
         </html>
         """
-        return HTTPResponse(status: 200, headers: ["Content-Type": "text/html"], body: html.data(using: .utf8) ?? Data())
+        return HTTPResponse(status: 200, headers: ["Content-Type": "text/html"], body: html.data(using: String.Encoding.utf8) ?? Data())
     }
 
     // MARK: - Helpers
@@ -828,12 +842,24 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
     private var uri: String = ""
     private var method: HTTPMethod = .GET
     private var bodyBuffer: ByteBuffer?
+    private var isUpgraded: Bool = false
 
     init(server: NetworkServer) {
         self.server = server
     }
 
+    func markAsUpgraded() {
+        isUpgraded = true
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        // Ignore data if we've been upgraded to WebSocket
+        // Must check BEFORE unwrapping, as upgraded connections send IOData not HTTPServerRequestPart
+        guard !isUpgraded else {
+            context.fireChannelRead(data)
+            return
+        }
+
         let part = self.unwrapInboundIn(data)
         requestParts.append(part)
 
