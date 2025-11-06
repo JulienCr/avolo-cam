@@ -286,6 +286,45 @@ actor CaptureManager: NSObject {
         print("✅ Camera settings updated")
     }
 
+    /// Measures white balance by enabling auto mode, waiting for convergence, then returning the measured values
+    /// This is like "one-shot AWB" on professional cameras
+    func measureWhiteBalance() async throws -> (kelvin: Int, tint: Double) {
+        guard let device = videoDevice else {
+            throw CaptureError.deviceNotAvailable
+        }
+
+        print("📸 Measuring white balance (auto mode for 2 seconds)...")
+
+        // Enable auto white balance
+        try device.lockForConfiguration()
+        if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            device.whiteBalanceMode = .continuousAutoWhiteBalance
+        } else {
+            device.unlockForConfiguration()
+            throw CaptureError.whiteBalanceNotSupported
+        }
+        device.unlockForConfiguration()
+
+        // Wait for white balance to converge (typically 1-2 seconds)
+        try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+
+        // Read the converged gains
+        let gains = device.deviceWhiteBalanceGains
+
+        // Convert gains back to temperature and tint using Apple's API
+        let tempTint = device.temperatureAndTintValues(for: gains)
+
+        // UNINVERT the temperature to match our UI convention
+        // The device returns scene illumination temp, we need to invert for display
+        let invertedKelvin = Int(12000 - tempTint.temperature)
+        let clampedKelvin = min(max(invertedKelvin, 2000), 10000)
+
+        print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+        print("✅ Measured white balance: \(clampedKelvin)K, tint: \(String(format: "%.1f", tempTint.tint))")
+
+        return (kelvin: clampedKelvin, tint: Double(tempTint.tint))
+    }
+
     // MARK: - Capabilities
 
     func getCapabilities() -> [Capability] {
@@ -421,6 +460,7 @@ enum CaptureError: LocalizedError {
     case formatNotSupported
     case invalidResolution
     case invalidWhiteBalanceGains
+    case whiteBalanceNotSupported
 
     var errorDescription: String? {
         switch self {
@@ -438,6 +478,8 @@ enum CaptureError: LocalizedError {
             return "Invalid resolution format"
         case .invalidWhiteBalanceGains:
             return "White balance gains out of valid range"
+        case .whiteBalanceNotSupported:
+            return "White balance mode not supported"
         }
     }
 }

@@ -609,4 +609,12 @@ extension AppCoordinator: NetworkRequestHandler {
     func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
         setScreenBrightness(dimmed: request.dimmed)
     }
+
+    func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse {
+        let result = try await captureManager?.measureWhiteBalance()
+        guard let (kelvin, tint) = result else {
+            throw AppError.invalidConfiguration
+        }
+        return WhiteBalanceMeasureResponse(kelvin: kelvin, tint: tint)
+    }
 }

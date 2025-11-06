@@ -153,6 +153,18 @@ struct ScreenBrightnessRequest: Codable {
     let dimmed: Bool
 }
 
+// MARK: - White Balance Measure
+
+struct WhiteBalanceMeasureResponse: Codable {
+    let kelvin: Int
+    let tint: Double
+
+    enum CodingKeys: String, CodingKey {
+        case kelvin
+        case tint
+    }
+}
+
 // MARK: - WebSocket Messages
 
 struct WebSocketTelemetryMessage: Codable {
