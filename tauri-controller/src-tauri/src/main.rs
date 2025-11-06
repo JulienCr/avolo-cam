@@ -121,6 +121,16 @@ async fn force_keyframe(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn get_capabilities(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<Vec<Capability>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_capabilities(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
 // Group commands
 
 #[tauri::command]
@@ -207,6 +217,7 @@ fn main() {
             remove_camera,
             get_cameras,
             get_camera_status,
+            get_capabilities,
             start_stream,
             stop_stream,
             update_camera_settings,

@@ -82,7 +82,8 @@ class NetworkServer {
                 let upgrader = NIOWebSocketServerUpgrader(
                     shouldUpgrade: { (channel: Channel, head: HTTPRequestHead) in
                         // Check for WebSocket upgrade request
-                        guard head.headers["upgrade"].first?.lowercased() == "websocket" else {
+                        guard head.uri == "/ws",
+                              head.headers["upgrade"].first?.lowercased() == "websocket" else {
                             return channel.eventLoop.makeSucceededFuture(nil)
                         }
 
@@ -98,8 +99,21 @@ class NetworkServer {
                         return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
                     },
                     upgradePipelineHandler: { (channel: Channel, _: HTTPRequestHead) in
+                        // Add WebSocket handler to the pipeline
+                        // NIO automatically removes HTTP decoder/encoder before calling this
                         let wsHandler = WebSocketServerHandler(server: self)
-                        return channel.pipeline.addHandler(wsHandler)
+                        return channel.pipeline.addHandler(wsHandler).flatMap {
+                            // After adding WS handler, try to remove HTTP handler
+                            // If it fails, mark it as upgraded so it ignores future data
+                            channel.pipeline.context(name: "HTTPHandler").flatMap { context in
+                                if let httpHandler = context.handler as? HTTPServerHandler {
+                                    httpHandler.markAsUpgraded()
+                                }
+                                return channel.eventLoop.makeSucceededFuture(())
+                            }.recover { _ in
+                                // Handler doesn't exist or can't be accessed, that's OK
+                            }
+                        }
                     }
                 )
 
@@ -107,7 +121,7 @@ class NetworkServer {
                     withPipeliningAssistance: false,
                     withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
                 ).flatMap {
-                    channel.pipeline.addHandler(HTTPServerHandler(server: self))
+                    channel.pipeline.addHandler(HTTPServerHandler(server: self), name: "HTTPHandler")
                 }
             }
 
@@ -393,21 +407,350 @@ class NetworkServer {
     }
 
     private func handleWebUI() -> HTTPResponse {
-        // TODO: Serve embedded HTML web UI
         let html = """
         <!DOCTYPE html>
         <html>
         <head>
-            <title>AvoCam</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>AvoCam Control</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+            <meta charset="UTF-8">
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                    color: #333;
+                }
+                .container {
+                    max-width: 600px;
+                    margin: 0 auto;
+                }
+                .card {
+                    background: white;
+                    border-radius: 16px;
+                    padding: 24px;
+                    margin-bottom: 16px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                }
+                h1 {
+                    font-size: 28px;
+                    color: white;
+                    margin-bottom: 20px;
+                    text-align: center;
+                    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                }
+                h2 {
+                    font-size: 20px;
+                    margin-bottom: 16px;
+                    color: #667eea;
+                }
+                .status-grid {
+                    display: grid;
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 12px;
+                    margin-bottom: 20px;
+                }
+                .status-item {
+                    padding: 12px;
+                    background: #f8f9fa;
+                    border-radius: 8px;
+                }
+                .status-label {
+                    font-size: 12px;
+                    color: #666;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 4px;
+                }
+                .status-value {
+                    font-size: 24px;
+                    font-weight: 600;
+                    color: #333;
+                    font-family: 'SF Mono', Monaco, monospace;
+                }
+                .status-value.streaming {
+                    color: #10b981;
+                }
+                .status-value.idle {
+                    color: #6b7280;
+                }
+                button {
+                    width: 100%;
+                    padding: 16px;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    margin-bottom: 12px;
+                }
+                button:active {
+                    transform: scale(0.98);
+                }
+                .btn-primary {
+                    background: #667eea;
+                    color: white;
+                }
+                .btn-primary:hover {
+                    background: #5568d3;
+                }
+                .btn-danger {
+                    background: #ef4444;
+                    color: white;
+                }
+                .btn-danger:hover {
+                    background: #dc2626;
+                }
+                .btn-secondary {
+                    background: #f3f4f6;
+                    color: #374151;
+                }
+                .btn-secondary:hover {
+                    background: #e5e7eb;
+                }
+                .settings-row {
+                    margin-bottom: 16px;
+                }
+                label {
+                    display: block;
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: #374151;
+                    margin-bottom: 8px;
+                }
+                input, select {
+                    width: 100%;
+                    padding: 12px;
+                    border: 2px solid #e5e7eb;
+                    border-radius: 8px;
+                    font-size: 16px;
+                    transition: border-color 0.2s;
+                }
+                input:focus, select:focus {
+                    outline: none;
+                    border-color: #667eea;
+                }
+                .connection-status {
+                    display: inline-block;
+                    padding: 6px 12px;
+                    border-radius: 20px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                }
+                .connection-status.connected {
+                    background: #d1fae5;
+                    color: #065f46;
+                }
+                .connection-status.disconnected {
+                    background: #fee2e2;
+                    color: #991b1b;
+                }
+                .info-text {
+                    font-size: 14px;
+                    color: #6b7280;
+                    text-align: center;
+                    margin-top: 12px;
+                }
+            </style>
         </head>
         <body>
-            <h1>AvoCam Web UI</h1>
-            <p>TODO: Implement web UI</p>
+            <div class="container">
+                <h1>🎥 AvoCam Control</h1>
+
+                <div class="card">
+                    <h2>Status</h2>
+                    <div id="connection-indicator" class="connection-status disconnected">Disconnected</div>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="status-label">State</div>
+                            <div id="ndi-state" class="status-value idle">Idle</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">FPS</div>
+                            <div id="fps" class="status-value">0.0</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Bitrate</div>
+                            <div id="bitrate" class="status-value">0.0 Mbps</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Battery</div>
+                            <div id="battery" class="status-value">--</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Temperature</div>
+                            <div id="temp" class="status-value">--</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">WiFi RSSI</div>
+                            <div id="wifi" class="status-value">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Stream Control</h2>
+                    <button id="btn-start" class="btn-primary">▶️ Start Stream</button>
+                    <button id="btn-stop" class="btn-danger">⏹ Stop Stream</button>
+                    <button id="btn-keyframe" class="btn-secondary">🔑 Force Keyframe</button>
+                </div>
+
+                <div class="card">
+                    <h2>Camera Settings</h2>
+                    <div class="settings-row">
+                        <label for="wb-mode">White Balance</label>
+                        <select id="wb-mode">
+                            <option value="auto">Auto</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                    </div>
+                    <div class="settings-row" id="wb-kelvin-row" style="display: none;">
+                        <label for="wb-kelvin">WB Temperature (K)</label>
+                        <input type="number" id="wb-kelvin" value="5000" min="2000" max="10000" step="100">
+                    </div>
+                    <div class="settings-row">
+                        <label for="iso">ISO (0 = Auto)</label>
+                        <input type="number" id="iso" value="0" min="0" max="3200" step="50">
+                    </div>
+                    <div class="settings-row">
+                        <label for="zoom">Zoom Factor</label>
+                        <input type="number" id="zoom" value="1.0" min="1.0" max="10.0" step="0.1">
+                    </div>
+                    <button id="btn-apply-settings" class="btn-primary">Apply Settings</button>
+                </div>
+
+                <div class="info-text">
+                    Use the Tauri Controller app for multi-camera management
+                </div>
+            </div>
+
+            <script>
+                let ws = null;
+                const wsUrl = `ws://${window.location.host}/ws`;
+
+                // Connect to WebSocket
+                function connectWebSocket() {
+                    try {
+                        ws = new WebSocket(wsUrl);
+
+                        ws.onopen = () => {
+                            console.log('Connected to WebSocket');
+                            document.getElementById('connection-indicator').textContent = 'Connected';
+                            document.getElementById('connection-indicator').className = 'connection-status connected';
+                        };
+
+                        ws.onmessage = (event) => {
+                            try {
+                                const telemetry = JSON.parse(event.data);
+                                updateTelemetry(telemetry);
+                            } catch (e) {
+                                console.error('Failed to parse telemetry:', e);
+                            }
+                        };
+
+                        ws.onerror = (error) => {
+                            console.error('WebSocket error:', error);
+                        };
+
+                        ws.onclose = () => {
+                            console.log('WebSocket closed, reconnecting...');
+                            document.getElementById('connection-indicator').textContent = 'Disconnected';
+                            document.getElementById('connection-indicator').className = 'connection-status disconnected';
+                            setTimeout(connectWebSocket, 2000);
+                        };
+                    } catch (e) {
+                        console.error('Failed to connect:', e);
+                        setTimeout(connectWebSocket, 2000);
+                    }
+                }
+
+                // Update telemetry display
+                function updateTelemetry(telemetry) {
+                    document.getElementById('fps').textContent = telemetry.fps.toFixed(1);
+                    document.getElementById('bitrate').textContent = (telemetry.bitrate / 1000000).toFixed(1) + ' Mbps';
+                    document.getElementById('battery').textContent = (telemetry.battery * 100).toFixed(0) + '%';
+                    document.getElementById('temp').textContent = telemetry.temp_c.toFixed(1) + '°C';
+                    document.getElementById('wifi').textContent = telemetry.wifi_rssi + ' dBm';
+
+                    const stateEl = document.getElementById('ndi-state');
+                    stateEl.textContent = telemetry.ndi_state.charAt(0).toUpperCase() + telemetry.ndi_state.slice(1);
+                    stateEl.className = 'status-value ' + telemetry.ndi_state;
+                }
+
+                // API calls
+                async function apiCall(endpoint, method = 'GET', body = null) {
+                    try {
+                        const options = {
+                            method,
+                            headers: {}
+                        };
+                        if (body) {
+                            options.headers['Content-Type'] = 'application/json';
+                            options.body = JSON.stringify(body);
+                        }
+                        const response = await fetch(endpoint, options);
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.message || 'Request failed');
+                        }
+                        return await response.json();
+                    } catch (e) {
+                        alert('Error: ' + e.message);
+                        throw e;
+                    }
+                }
+
+                // Event handlers
+                document.getElementById('btn-start').addEventListener('click', async () => {
+                    await apiCall('/api/v1/stream/start', 'POST', {
+                        resolution: '1920x1080',
+                        framerate: 30,
+                        bitrate: 10000000,
+                        codec: 'h264'
+                    });
+                });
+
+                document.getElementById('btn-stop').addEventListener('click', async () => {
+                    await apiCall('/api/v1/stream/stop', 'POST');
+                });
+
+                document.getElementById('btn-keyframe').addEventListener('click', async () => {
+                    await apiCall('/api/v1/encoder/force_keyframe', 'POST');
+                });
+
+                document.getElementById('btn-apply-settings').addEventListener('click', async () => {
+                    const settings = {
+                        wb_mode: document.getElementById('wb-mode').value,
+                        iso: parseInt(document.getElementById('iso').value),
+                        zoom_factor: parseFloat(document.getElementById('zoom').value)
+                    };
+                    if (settings.wb_mode === 'manual') {
+                        settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
+                    }
+                    await apiCall('/api/v1/camera', 'POST', settings);
+                });
+
+                // Show/hide WB kelvin input based on mode
+                document.getElementById('wb-mode').addEventListener('change', (e) => {
+                    const kelvinRow = document.getElementById('wb-kelvin-row');
+                    kelvinRow.style.display = e.target.value === 'manual' ? 'block' : 'none';
+                });
+
+                // Initialize
+                connectWebSocket();
+            </script>
         </body>
         </html>
         """
-        return HTTPResponse(status: 200, headers: ["Content-Type": "text/html"], body: html.data(using: .utf8) ?? Data())
+        return HTTPResponse(status: 200, headers: ["Content-Type": "text/html"], body: html.data(using: String.Encoding.utf8) ?? Data())
     }
 
     // MARK: - Helpers
@@ -499,12 +842,24 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
     private var uri: String = ""
     private var method: HTTPMethod = .GET
     private var bodyBuffer: ByteBuffer?
+    private var isUpgraded: Bool = false
 
     init(server: NetworkServer) {
         self.server = server
     }
 
+    func markAsUpgraded() {
+        isUpgraded = true
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        // Ignore data if we've been upgraded to WebSocket
+        // Must check BEFORE unwrapping, as upgraded connections send IOData not HTTPServerRequestPart
+        guard !isUpgraded else {
+            context.fireChannelRead(data)
+            return
+        }
+
         let part = self.unwrapInboundIn(data)
         requestParts.append(part)
 

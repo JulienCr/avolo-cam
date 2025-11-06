@@ -96,6 +96,54 @@
     }
   }
 
+  async function forceKeyframe(cameraId) {
+    try {
+      await invoke('force_keyframe', { cameraId });
+    } catch (e) {
+      alert(`Failed to force keyframe: ${e}`);
+    }
+  }
+
+  // MARK: - Camera Settings
+
+  let showSettingsDialog = false;
+  let settingsCameraId = null;
+  let cameraSettings = {
+    wb_mode: 'auto',
+    wb_kelvin: 5000,
+    iso: 400,
+    zoom_factor: 1.0
+  };
+
+  function openSettings(cameraId) {
+    settingsCameraId = cameraId;
+    showSettingsDialog = true;
+  }
+
+  async function updateSettings() {
+    if (!settingsCameraId) return;
+
+    try {
+      // Build settings object with only non-null values
+      const settings = {};
+      if (cameraSettings.wb_mode) settings.wb_mode = cameraSettings.wb_mode;
+      if (cameraSettings.wb_mode === 'manual' && cameraSettings.wb_kelvin) {
+        settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
+      }
+      if (cameraSettings.iso) settings.iso = parseInt(cameraSettings.iso);
+      if (cameraSettings.zoom_factor) settings.zoom_factor = parseFloat(cameraSettings.zoom_factor);
+
+      await invoke('update_camera_settings', {
+        cameraId: settingsCameraId,
+        settings
+      });
+      showSettingsDialog = false;
+      await refreshCameras();
+    } catch (e) {
+      alert(`Failed to update settings: ${e}`);
+    }
+  }
+
   // MARK: - Group Controls
 
   async function groupStartStream() {
@@ -237,9 +285,11 @@
             <div class="camera-controls">
               {#if camera.status.ndi_state === 'streaming'}
                 <button on:click={() => stopStream(camera.id)}>⏹ Stop</button>
+                <button on:click={() => forceKeyframe(camera.id)} title="Force IDR keyframe">🔑</button>
               {:else}
                 <button class="primary" on:click={() => startStream(camera.id)}>▶️ Start</button>
               {/if}
+              <button on:click={() => openSettings(camera.id)} title="Camera Settings">⚙️</button>
             </div>
           {:else}
             <p class="disconnected">Disconnected</p>
@@ -270,6 +320,43 @@
           <div class="dialog-buttons">
             <button type="submit" class="primary">Add</button>
             <button type="button" on:click={() => showAddDialog = false}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Camera Settings Dialog -->
+  {#if showSettingsDialog}
+    <div class="dialog-overlay" on:click={() => showSettingsDialog = false}>
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Camera Settings</h2>
+        <form on:submit|preventDefault={updateSettings}>
+          <label>
+            White Balance Mode:
+            <select bind:value={cameraSettings.wb_mode}>
+              <option value="auto">Auto</option>
+              <option value="manual">Manual</option>
+            </select>
+          </label>
+          {#if cameraSettings.wb_mode === 'manual'}
+            <label>
+              White Balance (Kelvin):
+              <input type="number" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" />
+            </label>
+          {/if}
+          <label>
+            ISO:
+            <input type="number" bind:value={cameraSettings.iso} min="0" max="3200" step="50" />
+            <small>0 = Auto</small>
+          </label>
+          <label>
+            Zoom Factor:
+            <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />
+          </label>
+          <div class="dialog-buttons">
+            <button type="submit" class="primary">Apply</button>
+            <button type="button" on:click={() => showSettingsDialog = false}>Cancel</button>
           </div>
         </form>
       </div>
@@ -484,7 +571,7 @@
     font-weight: 500;
   }
 
-  .dialog input {
+  .dialog input, .dialog select {
     display: block;
     width: 100%;
     padding: 8px;
@@ -493,6 +580,13 @@
     border-radius: 4px;
     font-size: 14px;
     box-sizing: border-box;
+  }
+
+  .dialog small {
+    display: block;
+    margin-top: 5px;
+    color: #666;
+    font-size: 12px;
   }
 
   .dialog-buttons {
