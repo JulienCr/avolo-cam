@@ -4,17 +4,20 @@
 ## UP TO DATE - 2025-11-06
 ### To implement
 - Changing camera (normal, wide, tele), in both app, webui and Tauri controller
-- Use defined video codec profiles and resolution preset (already defined in the code) to switch settings quickly. For now we are blocked with 1080p only.
-- Auto camera detection in Tauri controller (mDNS browsing)
+- Allow selecting framerate and resolution combinations (e.g., 1080p60, 4K30) in app, webui and Tauri controller
+- We can remove our custom VideoToolbox implementation. NDI SDK handles low-latency encoding internally.
+AVFoundation → CVPixelBuffer (YUV raw) → NDI SDK (internal low-latency H.264) → Network
+- Auto camera detection in Tauri controller (mDNS browsing) (currently stubbed or buggy)
+- Fix Tauri controller UI bugs : can't change ISO or shutter, when reload settings page settings are lost
+- Fix WebSocket reconnection issues in Tauri controller (see logs below)
+[2025-11-06T23:42:06Z ERROR avocam_controller::camera_client] WebSocket connection error: Failed to connect to WebSocket...
+[2025-11-06T23:43:06Z ERROR avocam_controller::camera_client] Max reconnection attempts reached, giving up
 - Profile Management in Tauri controller (save/recall camera settings)
 - Live settings editing in Tauri controller and webui (without hitting apply button)
 - Real stats (not simulated) in Tauri controller and webui (temperature, CPU usage, battery, network quality)
 - Real screen blackout on iphone (not only low brightness) to save power
 - NDI integration in the Tauri controller to receive and display NDI streams from cameras
-- Better ui/ux in Tauri controller (camera details, settings, etc)
-
-## Already implemented
-- NDI streaming from iOS app to OBS
+- Better ui/ux in Tauri controller (camera details, settings, etc) --> Tailwind + Melt UI
 
 
 ## Summary
