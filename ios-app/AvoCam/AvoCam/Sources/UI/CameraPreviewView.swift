@@ -39,11 +39,10 @@ class PreviewUIView: UIView {
         previewLayer.videoGravity = .resizeAspectFill
         previewLayer.session = captureSession
 
-        // Lock preview orientation to landscapeRight (matches video output)
-        // This prevents the camera view from rotating with device orientation
-        lockOrientation()
+        // Update preview orientation to match device orientation
+        updateOrientation()
 
-        // Observe device orientation changes to re-lock if needed
+        // Observe device orientation changes to update preview orientation
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(deviceOrientationDidChange),
@@ -61,14 +60,36 @@ class PreviewUIView: UIView {
     }
 
     @objc private func deviceOrientationDidChange() {
-        // Re-lock orientation when device rotates
-        lockOrientation()
+        // Update orientation when device rotates
+        updateOrientation()
     }
 
-    private func lockOrientation() {
-        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .landscapeRight
+    private func updateOrientation() {
+        guard let connection = previewLayer.connection, connection.isVideoOrientationSupported else {
+            return
         }
+
+        // Map device orientation to video orientation
+        let deviceOrientation = UIDevice.current.orientation
+        let videoOrientation: AVCaptureVideoOrientation
+
+        switch deviceOrientation {
+        case .portrait:
+            videoOrientation = .portrait
+        case .portraitUpsideDown:
+            videoOrientation = .portraitUpsideDown
+        case .landscapeLeft:
+            // Note: Device landscape left means video orientation landscape right
+            videoOrientation = .landscapeRight
+        case .landscapeRight:
+            // Note: Device landscape right means video orientation landscape left
+            videoOrientation = .landscapeLeft
+        default:
+            // For unknown/face-up/face-down, keep current orientation
+            return
+        }
+
+        connection.videoOrientation = videoOrientation
     }
 
     func updateSession(_ session: AVCaptureSession?) {
@@ -76,8 +97,8 @@ class PreviewUIView: UIView {
             captureSession = session
             previewLayer.session = session
 
-            // Ensure orientation is locked when session changes
-            lockOrientation()
+            // Ensure orientation is updated when session changes
+            updateOrientation()
         }
     }
 }

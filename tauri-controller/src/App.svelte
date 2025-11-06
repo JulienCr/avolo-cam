@@ -112,6 +112,7 @@
     wb_mode: 'auto',
     wb_kelvin: 5000,
     iso: 400,
+    shutter_s: 0.01,
     zoom_factor: 1.0
   };
 
@@ -131,6 +132,7 @@
         settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
       }
       if (cameraSettings.iso) settings.iso = parseInt(cameraSettings.iso);
+      if (cameraSettings.shutter_s) settings.shutter_s = parseFloat(cameraSettings.shutter_s);
       if (cameraSettings.zoom_factor) settings.zoom_factor = parseFloat(cameraSettings.zoom_factor);
 
       await invoke('update_camera_settings', {
@@ -202,6 +204,14 @@
 
   function formatBitrate(bitrate) {
     return (bitrate / 1000000).toFixed(1) + ' Mbps';
+  }
+
+  function formatShutterSpeed(seconds) {
+    if (seconds >= 1) {
+      return seconds.toFixed(1) + 's';
+    } else {
+      return '1/' + Math.round(1.0 / seconds);
+    }
   }
 </script>
 
@@ -349,6 +359,11 @@
             ISO:
             <input type="number" bind:value={cameraSettings.iso} min="0" max="3200" step="50" />
             <small>0 = Auto</small>
+          </label>
+          <label>
+            Shutter Speed:
+            <input type="range" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" />
+            <small>{formatShutterSpeed(cameraSettings.shutter_s)}</small>
           </label>
           <label>
             Zoom Factor:
