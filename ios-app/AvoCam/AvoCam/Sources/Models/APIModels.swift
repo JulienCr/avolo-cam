@@ -38,7 +38,9 @@ struct CurrentSettings: Codable {
     var wbMode: WhiteBalanceMode
     var wbKelvin: Int?
     var wbTint: Double?
+    var isoMode: ExposureMode
     var iso: Int
+    var shutterMode: ExposureMode
     var shutterS: Double
     var focusMode: FocusMode
     var zoomFactor: Double
@@ -51,7 +53,9 @@ struct CurrentSettings: Codable {
         case wbMode = "wb_mode"
         case wbKelvin = "wb_kelvin"
         case wbTint = "wb_tint"
+        case isoMode = "iso_mode"
         case iso
+        case shutterMode = "shutter_mode"
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
         case zoomFactor = "zoom_factor"
@@ -64,6 +68,11 @@ enum WhiteBalanceMode: String, Codable {
 }
 
 enum FocusMode: String, Codable {
+    case auto
+    case manual
+}
+
+enum ExposureMode: String, Codable {
     case auto
     case manual
 }
@@ -127,7 +136,9 @@ struct CameraSettingsRequest: Codable {
     let wbMode: WhiteBalanceMode?
     let wbKelvin: Int?
     let wbTint: Double?
+    let isoMode: ExposureMode?
     let iso: Int?
+    let shutterMode: ExposureMode?
     let shutterS: Double?
     let focusMode: FocusMode?
     let zoomFactor: Double?
@@ -138,7 +149,9 @@ struct CameraSettingsRequest: Codable {
         case wbMode = "wb_mode"
         case wbKelvin = "wb_kelvin"
         case wbTint = "wb_tint"
+        case isoMode = "iso_mode"
         case iso
+        case shutterMode = "shutter_mode"
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
         case zoomFactor = "zoom_factor"

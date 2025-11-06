@@ -111,7 +111,9 @@
   let cameraSettings = {
     wb_mode: 'auto',
     wb_kelvin: 5000,
+    iso_mode: 'auto',
     iso: 400,
+    shutter_mode: 'auto',
     shutter_s: 0.01,
     zoom_factor: 1.0
   };
@@ -131,8 +133,14 @@
       if (cameraSettings.wb_mode === 'manual' && cameraSettings.wb_kelvin) {
         settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
       }
-      if (cameraSettings.iso) settings.iso = parseInt(cameraSettings.iso);
-      if (cameraSettings.shutter_s) settings.shutter_s = parseFloat(cameraSettings.shutter_s);
+      if (cameraSettings.iso_mode) settings.iso_mode = cameraSettings.iso_mode;
+      if (cameraSettings.iso_mode === 'manual' && cameraSettings.iso) {
+        settings.iso = parseInt(cameraSettings.iso);
+      }
+      if (cameraSettings.shutter_mode) settings.shutter_mode = cameraSettings.shutter_mode;
+      if (cameraSettings.shutter_mode === 'manual' && cameraSettings.shutter_s) {
+        settings.shutter_s = parseFloat(cameraSettings.shutter_s);
+      }
       if (cameraSettings.zoom_factor) settings.zoom_factor = parseFloat(cameraSettings.zoom_factor);
 
       await invoke('update_camera_settings', {
@@ -356,15 +364,32 @@
             </label>
           {/if}
           <label>
-            ISO:
-            <input type="number" bind:value={cameraSettings.iso} min="0" max="3200" step="50" />
-            <small>0 = Auto</small>
+            ISO Mode:
+            <select bind:value={cameraSettings.iso_mode}>
+              <option value="auto">Auto</option>
+              <option value="manual">Manual</option>
+            </select>
           </label>
+          {#if cameraSettings.iso_mode === 'manual'}
+            <label>
+              ISO Value:
+              <input type="number" bind:value={cameraSettings.iso} min="50" max="3200" step="50" />
+            </label>
+          {/if}
           <label>
-            Shutter Speed:
-            <input type="range" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" />
-            <small>{formatShutterSpeed(cameraSettings.shutter_s)}</small>
+            Shutter Speed Mode:
+            <select bind:value={cameraSettings.shutter_mode}>
+              <option value="auto">Auto</option>
+              <option value="manual">Manual</option>
+            </select>
           </label>
+          {#if cameraSettings.shutter_mode === 'manual'}
+            <label>
+              Shutter Speed:
+              <input type="range" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" />
+              <small>{formatShutterSpeed(cameraSettings.shutter_s)}</small>
+            </label>
+          {/if}
           <label>
             Zoom Factor:
             <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />

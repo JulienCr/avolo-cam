@@ -22,6 +22,12 @@ actor CaptureManager: NSObject {
     private var currentResolution: String?
     private var currentFramerate: Int?
 
+    // Exposure state tracking
+    private var currentISOMode: ExposureMode = .auto
+    private var currentISO: Float = 0
+    private var currentShutterMode: ExposureMode = .auto
+    private var currentShutterS: Double = 0
+
     // MARK: - Public Access
 
     nonisolated func getSession() -> AVCaptureSession? {
@@ -247,32 +253,50 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // ISO
-        if let iso = settings.iso {
-            if device.isExposureModeSupported(.custom) {
-                let clampedISO = min(
-                    max(Float(iso), device.activeFormat.minISO), device.activeFormat.maxISO)
-                let currentDuration = device.exposureDuration
-                device.setExposureModeCustom(
-                    duration: currentDuration, iso: clampedISO, completionHandler: nil)
-            }
+        // Handle exposure (ISO and Shutter) independently
+        var needsExposureUpdate = false
+        var targetISO: Float = currentISO
+        var targetDuration: CMTime = device.exposureDuration
+
+        // Update ISO mode/value if specified
+        if let isoMode = settings.isoMode {
+            currentISOMode = isoMode
+            needsExposureUpdate = true
+        }
+        if let iso = settings.iso, currentISOMode == .manual {
+            currentISO = Float(iso)
+            targetISO = min(max(currentISO, device.activeFormat.minISO), device.activeFormat.maxISO)
+            needsExposureUpdate = true
         }
 
-        // Shutter speed
-        if let shutterS = settings.shutterS {
-            if device.isExposureModeSupported(.custom) {
-                let minD = device.activeFormat.minExposureDuration
-                let maxD = device.activeFormat.maxExposureDuration
-                var duration = CMTime(seconds: shutterS, preferredTimescale: 1_000_000)
+        // Update shutter mode/value if specified
+        if let shutterMode = settings.shutterMode {
+            currentShutterMode = shutterMode
+            needsExposureUpdate = true
+        }
+        if let shutterS = settings.shutterS, currentShutterMode == .manual {
+            currentShutterS = shutterS
+            let minD = device.activeFormat.minExposureDuration
+            let maxD = device.activeFormat.maxExposureDuration
+            var duration = CMTime(seconds: shutterS, preferredTimescale: 1_000_000)
 
-                // Clamp duration to device-supported range
-                if duration < minD { duration = minD }
-                if duration > maxD { duration = maxD }
+            // Clamp duration to device-supported range
+            if duration < minD { duration = minD }
+            if duration > maxD { duration = maxD }
 
-                let currentISO = device.iso
-                device.setExposureModeCustom(
-                    duration: duration, iso: currentISO, completionHandler: nil)
-            }
+            targetDuration = duration
+            needsExposureUpdate = true
+        }
+
+        // Apply exposure settings based on mode combination
+        if needsExposureUpdate {
+            applyExposureSettings(
+                device: device,
+                isoMode: currentISOMode,
+                targetISO: targetISO,
+                shutterMode: currentShutterMode,
+                targetDuration: targetDuration
+            )
         }
 
         // Focus
@@ -296,6 +320,59 @@ actor CaptureManager: NSObject {
         }
 
         print("✅ Camera settings updated")
+    }
+
+    // MARK: - Exposure Control
+
+    private func applyExposureSettings(
+        device: AVCaptureDevice,
+        isoMode: ExposureMode,
+        targetISO: Float,
+        shutterMode: ExposureMode,
+        targetDuration: CMTime
+    ) {
+        switch (isoMode, shutterMode) {
+        case (.auto, .auto):
+            // Both auto - use continuous auto exposure
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+                print("✅ Exposure: Both auto (continuous)")
+            }
+
+        case (.manual, .auto):
+            // Manual ISO, auto shutter - use custom with calculated shutter
+            if device.isExposureModeSupported(.custom) {
+                // Calculate shutter speed based on framerate (180° shutter angle)
+                let framerate = currentFramerate ?? 30
+                let autoShutter = CMTime(value: 1, timescale: CMTimeScale(framerate * 2))
+                device.setExposureModeCustom(
+                    duration: autoShutter, iso: targetISO, completionHandler: nil)
+                print("✅ Exposure: Manual ISO (\(Int(targetISO))), auto shutter (1/\(framerate * 2))")
+            }
+
+        case (.auto, .manual):
+            // Auto ISO, manual shutter - use custom with device's current ISO
+            if device.isExposureModeSupported(.custom) {
+                let currentDeviceISO = device.iso
+                device.setExposureModeCustom(
+                    duration: targetDuration, iso: currentDeviceISO, completionHandler: nil)
+                let shutterDisplay = targetDuration.seconds >= 1
+                    ? String(format: "%.3fs", targetDuration.seconds)
+                    : "1/\(Int(1.0 / targetDuration.seconds))"
+                print("✅ Exposure: Auto ISO (\(Int(currentDeviceISO))), manual shutter (\(shutterDisplay))")
+            }
+
+        case (.manual, .manual):
+            // Both manual - use custom with both specified values
+            if device.isExposureModeSupported(.custom) {
+                device.setExposureModeCustom(
+                    duration: targetDuration, iso: targetISO, completionHandler: nil)
+                let shutterDisplay = targetDuration.seconds >= 1
+                    ? String(format: "%.3fs", targetDuration.seconds)
+                    : "1/\(Int(1.0 / targetDuration.seconds))"
+                print("✅ Exposure: Manual ISO (\(Int(targetISO))), manual shutter (\(shutterDisplay))")
+            }
+        }
     }
 
     /// Measures white balance by enabling auto mode, waiting for convergence, then returning the measured values
