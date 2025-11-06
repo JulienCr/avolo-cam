@@ -56,17 +56,23 @@ actor CaptureManager: NSObject {
         let session = captureSession ?? AVCaptureSession()
         session.sessionPreset = .inputPriority  // We'll manually set format
 
+        // Begin atomic configuration
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
         // Remove existing inputs/outputs if reconfiguring
         if captureSession != nil {
             session.inputs.forEach { session.removeInput($0) }
             session.outputs.forEach { session.removeOutput($0) }
         }
 
-        // Get video device (default wide camera)
-        guard
-            let device = AVCaptureDevice.default(
-                .builtInWideAngleCamera, for: .video, position: .back)
-        else {
+        // Get video device using discovery session (more robust than default lookup)
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video,
+            position: .back
+        )
+        guard let device = discovery.devices.first else {
             throw CaptureError.deviceNotAvailable
         }
 
@@ -111,6 +117,7 @@ actor CaptureManager: NSObject {
         }
 
         captureSession = session
+        // commitConfiguration() called via defer
 
         // Restart session if it was running before reconfiguration
         if wasRunning {
@@ -214,18 +221,13 @@ actor CaptureManager: NSObject {
                 if device.isWhiteBalanceModeSupported(.locked),
                     let kelvin = settings.wbKelvin
                 {
-                    let clampedKelvin = min(max(kelvin, 2000), 10000)
+                    let clampedKelvin = min(max(kelvin, uiMinKelvin), uiMaxKelvin)
                     let tint = settings.wbTint ?? 0.0
-
-                    // Invert the temperature scale for intuitive UI behavior
-                    // User expectation: higher K = cooler/blue, lower K = warmer/orange
-                    // Apple API expects: scene illumination temperature (opposite)
-                    // Formula: inverted = (min + max) - input
-                    let invertedKelvin = 12000 - clampedKelvin  // 2000K <-> 10000K
+                    let appleKelvin = mapUIToAppleKelvin(clampedKelvin)
 
                     // Use official Apple API to convert temperature/tint to gains
                     let tempTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
-                        temperature: Float(invertedKelvin),
+                        temperature: appleKelvin,
                         tint: Float(tint)
                     )
                     var gains = device.deviceWhiteBalanceGains(for: tempTint)
@@ -237,7 +239,8 @@ actor CaptureManager: NSObject {
 
                     // Debug round-trip to verify applied values
                     let rt = device.temperatureAndTintValues(for: gains)
-                    print("✅ WB locked \(clampedKelvin)K (inverted to \(invertedKelvin)K) tint \(tint) | gains R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain)) | rt K=\(Int(rt.temperature)) tint=\(String(format: "%.1f", rt.tint))")
+                    let uiK = mapAppleToUIKelvin(rt.temperature)
+                    print("✅ WB locked UI \(uiK)K (apple \(Int(rt.temperature))K) tint \(String(format: "%.1f", rt.tint)) | gains R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
                 }
             }
         }
@@ -256,7 +259,14 @@ actor CaptureManager: NSObject {
         // Shutter speed
         if let shutterS = settings.shutterS {
             if device.isExposureModeSupported(.custom) {
-                let duration = CMTime(seconds: shutterS, preferredTimescale: 1_000_000)
+                let minD = device.activeFormat.minExposureDuration
+                let maxD = device.activeFormat.maxExposureDuration
+                var duration = CMTime(seconds: shutterS, preferredTimescale: 1_000_000)
+
+                // Clamp duration to device-supported range
+                if duration < minD { duration = minD }
+                if duration > maxD { duration = maxD }
+
                 let currentISO = device.iso
                 device.setExposureModeCustom(
                     duration: duration, iso: currentISO, completionHandler: nil)
@@ -314,15 +324,13 @@ actor CaptureManager: NSObject {
         // Convert gains back to temperature and tint using Apple's API
         let tempTint = device.temperatureAndTintValues(for: gains)
 
-        // UNINVERT the temperature to match our UI convention
-        // The device returns scene illumination temp, we need to invert for display
-        let invertedKelvin = Int(12000 - tempTint.temperature)
-        let clampedKelvin = min(max(invertedKelvin, 2000), 10000)
+        // Map from Apple's scene illumination temperature to UI convention
+        let uiKelvin = mapAppleToUIKelvin(tempTint.temperature)
 
         print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
-        print("✅ Measured white balance: \(clampedKelvin)K, tint: \(String(format: "%.1f", tempTint.tint))")
+        print("✅ Measured white balance: UI \(uiKelvin)K (apple \(Int(tempTint.temperature))K), tint: \(String(format: "%.1f", tempTint.tint))")
 
-        return (kelvin: clampedKelvin, tint: Double(tempTint.tint))
+        return (kelvin: uiKelvin, tint: Double(tempTint.tint))
     }
 
     // MARK: - Capabilities
@@ -392,6 +400,26 @@ actor CaptureManager: NSObject {
         return (width: components[0], height: components[1])
     }
 
+    // MARK: - White Balance Helpers
+
+    private let uiMinKelvin = 2000
+    private let uiMaxKelvin = 10000
+
+    /// Maps UI Kelvin (higher = cooler) to Apple's scene illumination Kelvin
+    private func mapUIToAppleKelvin(_ uiKelvin: Int) -> Float {
+        // UI expectation: higher K = cooler/blue
+        // Apple API: represents scene illumination temperature (opposite)
+        // Formula: AppleKelvin = (min + max) - UIKelvin
+        let inverted = uiMinKelvin + uiMaxKelvin - uiKelvin
+        return Float(min(max(inverted, uiMinKelvin), uiMaxKelvin))
+    }
+
+    /// Maps Apple's scene illumination Kelvin to UI Kelvin (higher = cooler)
+    private func mapAppleToUIKelvin(_ appleKelvin: Float) -> Int {
+        let inverted = uiMinKelvin + uiMaxKelvin - Int(appleKelvin)
+        return min(max(inverted, uiMinKelvin), uiMaxKelvin)
+    }
+
     // Clamp helper to keep gains in device-safe range
     private func clampedGains(_ gains: AVCaptureDevice.WhiteBalanceGains, for device: AVCaptureDevice) -> AVCaptureDevice.WhiteBalanceGains {
         var g = gains
@@ -404,12 +432,18 @@ actor CaptureManager: NSObject {
 
     // MARK: - Color Space Attachment
 
-    private func attachColorSpaceMetadata(to sampleBuffer: CMSampleBuffer) {
+    nonisolated private func attachColorSpaceMetadata(to sampleBuffer: CMSampleBuffer) {
         // Attach Rec.709 Full Range color space metadata
+        // Note: CVBufferSetAttachment is thread-safe and doesn't require actor isolation
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_709) else {
+            return
+        }
+
         let attachments: [String: Any] = [
             kCVImageBufferColorPrimariesKey as String: kCVImageBufferColorPrimaries_ITU_R_709_2,
             kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
             kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_ITU_R_709_2,
+            kCVImageBufferCGColorSpaceKey as String: colorSpace
         ]
 
         if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
@@ -429,11 +463,11 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // Attach color space metadata to ensure Rec.709 Full
-        Task {
-            await attachColorSpaceMetadata(to: sampleBuffer)
+        // Attach color space metadata to ensure Rec.709 Full (synchronous, thread-safe)
+        attachColorSpaceMetadata(to: sampleBuffer)
 
-            // Forward to callback
+        // Forward to callback (access via Task to respect actor isolation)
+        Task {
             if let callback = await frameCallback {
                 callback(sampleBuffer)
             }
