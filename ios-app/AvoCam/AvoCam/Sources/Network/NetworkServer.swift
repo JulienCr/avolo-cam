@@ -910,12 +910,15 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
             Data(buffer.readableBytesView)
         }
 
-        // Handle request asynchronously
+        // Capture values before they get reset (reset() is called after this method returns)
         let path = uri.components(separatedBy: "?").first ?? uri
+        let methodString = method.rawValue  // Capture method string NOW before reset()
+
+        // Handle request asynchronously
         Task {
             let response = await server.handleHTTPRequest(
                 path: path,
-                method: method.rawValue,
+                method: methodString,  // Use captured value
                 headers: headersDict,
                 body: bodyData
             )
