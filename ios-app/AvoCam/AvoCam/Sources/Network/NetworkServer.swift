@@ -672,9 +672,12 @@ class NetworkServer {
                     </div>
                     <div id="wb-manual-controls" style="display: none;">
                         <div class="settings-row">
-                            <label for="wb-kelvin">Temperature: <span id="wb-kelvin-value">5000</span>K</label>
+                            <label for="wb-kelvin">
+                                Temperature: <span id="wb-kelvin-scene-value">5000</span>K
+                                <small style="color: #6b7280;">(Scene CCT)</small>
+                            </label>
                             <div class="slider-group">
-                                <input type="range" id="wb-kelvin-slider" value="5000" min="2000" max="10000" step="100">
+                                <input type="range" id="wb-kelvin-slider" value="5000" min="2000" max="10000" step="100" data-scene-cct="5000">
                                 <input type="number" id="wb-kelvin" value="5000" min="2000" max="10000" step="100">
                             </div>
                         </div>
@@ -766,9 +769,16 @@ class NetworkServer {
                             if (current.wb_mode === 'manual') {
                                 document.getElementById('wb-manual-controls').style.display = 'block';
                                 if (current.wb_kelvin) {
-                                    document.getElementById('wb-kelvin').value = current.wb_kelvin;
-                                    document.getElementById('wb-kelvin-slider').value = current.wb_kelvin;
-                                    document.getElementById('wb-kelvin-value').textContent = current.wb_kelvin;
+                                    const uiKelvin = current.wb_kelvin;
+                                    const sceneCCT_K = mapUIKelvinToSceneCCT(uiKelvin);
+
+                                    // Set slider to UIKelvin (for UX positioning)
+                                    document.getElementById('wb-kelvin').value = uiKelvin;
+                                    document.getElementById('wb-kelvin-slider').value = uiKelvin;
+                                    document.getElementById('wb-kelvin-slider').setAttribute('data-scene-cct', sceneCCT_K);
+
+                                    // Display physical SceneCCT_K in label
+                                    document.getElementById('wb-kelvin-scene-value').textContent = sceneCCT_K;
                                 }
                                 if (current.wb_tint !== null && current.wb_tint !== undefined) {
                                     const tint = Math.round(current.wb_tint);
@@ -871,8 +881,30 @@ class NetworkServer {
                     });
                 }
 
+                // Special sync for WB kelvin - displays physical SceneCCT_K in label
+                function syncWBKelvin() {
+                    const slider = document.getElementById('wb-kelvin-slider');
+                    const input = document.getElementById('wb-kelvin');
+                    const sceneLabel = document.getElementById('wb-kelvin-scene-value');
+
+                    function updateDisplay() {
+                        const uiKelvin = parseInt(slider.value);
+                        const sceneCCT_K = mapUIKelvinToSceneCCT(uiKelvin);
+
+                        input.value = uiKelvin;
+                        sceneLabel.textContent = sceneCCT_K;  // Display physical temp
+                        slider.setAttribute('data-scene-cct', sceneCCT_K);
+                    }
+
+                    slider.addEventListener('input', updateDisplay);
+                    input.addEventListener('input', (e) => {
+                        slider.value = e.target.value;
+                        updateDisplay();
+                    });
+                }
+
                 // Initialize slider sync
-                syncSlider('wb-kelvin-slider', 'wb-kelvin', 'wb-kelvin-value');
+                syncWBKelvin();  // Special handling for WB temperature
                 syncSlider('wb-tint-slider', 'wb-tint', 'wb-tint-value');
                 syncSlider('iso-slider', 'iso', 'iso-value');
                 syncSlider('zoom-slider', 'zoom', 'zoom-value');
@@ -903,21 +935,26 @@ class NetworkServer {
 
                         const result = await apiCall('/api/v1/camera/wb/measure', 'POST');
 
-                        // Result contains physical SceneCCT_K - convert to UIKelvin for display
+                        // Result contains physical SceneCCT_K
                         const sceneCCT_K = result.scene_cct_k;
                         const tint = result.tint;
+
+                        // Convert to UIKelvin for slider positioning (inverted scale for UX)
                         const uiKelvin = mapSceneCCTToUIKelvin(sceneCCT_K);
 
                         // Log for diagnostics
                         console.log('📊 WB Measured:');
                         console.log('  SceneCCT_K:', sceneCCT_K, 'K (physical scene illumination)');
-                        console.log('  UIKelvin:', uiKelvin, 'K (UI slider value)');
+                        console.log('  UIKelvin:', uiKelvin, 'K (UI slider value - inverted for UX)');
                         console.log('  Tint:', tint);
 
-                        // Update sliders and inputs with UIKelvin (not physical CCT)
+                        // Update slider with UIKelvin (for inverted UX feel)
                         document.getElementById('wb-kelvin').value = uiKelvin;
                         document.getElementById('wb-kelvin-slider').value = uiKelvin;
-                        document.getElementById('wb-kelvin-value').textContent = uiKelvin;
+                        document.getElementById('wb-kelvin-slider').setAttribute('data-scene-cct', sceneCCT_K);
+
+                        // Display physical SceneCCT_K in label (NOT UIKelvin)
+                        document.getElementById('wb-kelvin-scene-value').textContent = sceneCCT_K;
 
                         document.getElementById('wb-tint').value = Math.round(tint);
                         document.getElementById('wb-tint-slider').value = Math.round(tint);
