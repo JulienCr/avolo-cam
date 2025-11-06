@@ -335,15 +335,15 @@ actor CaptureManager: NSObject {
     }
 
     private func whiteBalanceGains(forTemperature temperature: Float, tint: Float, device: AVCaptureDevice) -> AVCaptureDevice.WhiteBalanceGains {
-        // Convert Kelvin temperature to RGB gains using standard color science
-        // Based on Tanner Helland's algorithm (https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html)
-        // Adapted for camera white balance (inverted for correction)
+        // Convert Kelvin temperature to RGB gains for camera white balance
+        // Based on Tanner Helland's algorithm, adapted for camera correction
 
         let temp = temperature / 100.0
         var red: Float
         var green: Float
         var blue: Float
 
+        // Calculate RGB color of the light source at this temperature
         // Calculate Red
         if temp <= 66 {
             red = 255
@@ -379,9 +379,18 @@ actor CaptureManager: NSObject {
         green = green / 255.0
         blue = blue / 255.0
 
-        // For camera white balance, we need to INVERT the gains
-        // (we're correcting FOR the color temperature, not applying it)
-        // Find the minimum to normalize
+        // For white balance correction, we need the RECIPROCAL
+        // (to neutralize the color cast of the light source)
+        // Find max value to use as reference
+        let maxValue = max(red, max(green, blue))
+        if maxValue > 0 {
+            // Take reciprocal relative to max
+            red = maxValue / red
+            green = maxValue / green
+            blue = maxValue / blue
+        }
+
+        // Now normalize so the minimum gain is 1.0
         let minGain = min(red, min(green, blue))
         if minGain > 0 {
             red = red / minGain
@@ -389,16 +398,16 @@ actor CaptureManager: NSObject {
             blue = blue / minGain
         }
 
-        // Apply tint adjustment (green/magenta)
-        // Positive tint = more magenta (increase R&B, decrease G)
-        // Negative tint = more green (increase G, decrease R&B)
-        let tintFactor = Float(1.0) + (tint * 0.01) // Scale tint to ~1% per unit
+        // Apply tint adjustment (green/magenta axis)
+        // Positive tint = add magenta (reduce green)
+        // Negative tint = add green (increase green)
+        let tintAmount = abs(tint) * 0.01 // Scale to ~1% per unit
         if tint > 0 {
-            // More magenta
-            green = green / tintFactor
+            // Add magenta by reducing green
+            green = green * (1.0 + tintAmount)
         } else if tint < 0 {
-            // More green
-            green = green * tintFactor
+            // Add green by increasing it
+            green = green * (1.0 - tintAmount)
         }
 
         // Clamp gains to valid range [1.0, maxWhiteBalanceGain]
@@ -406,6 +415,8 @@ actor CaptureManager: NSObject {
         red = min(max(red, 1.0), maxGain)
         green = min(max(green, 1.0), maxGain)
         blue = min(max(blue, 1.0), maxGain)
+
+        print("📊 WB Gains for \(Int(temperature))K, tint \(tint): R=\(String(format: "%.3f", red)) G=\(String(format: "%.3f", green)) B=\(String(format: "%.3f", blue))")
 
         return AVCaptureDevice.WhiteBalanceGains(
             redGain: red,

@@ -628,6 +628,10 @@ class NetworkServer {
                         <label for="wb-kelvin">WB Temperature (K)</label>
                         <input type="number" id="wb-kelvin" value="5000" min="2000" max="10000" step="100">
                     </div>
+                    <div class="settings-row" id="wb-tint-row" style="display: none;">
+                        <label for="wb-tint">Tint (Green ← -100 to +100 → Magenta)</label>
+                        <input type="number" id="wb-tint" value="0" min="-100" max="100" step="1">
+                    </div>
                     <div class="settings-row">
                         <label for="iso">ISO (0 = Auto)</label>
                         <input type="number" id="iso" value="0" min="0" max="3200" step="50">
@@ -681,6 +685,44 @@ class NetworkServer {
                     } catch (e) {
                         console.error('Failed to connect:', e);
                         setTimeout(connectWebSocket, 2000);
+                    }
+                }
+
+                // Load camera status and populate form
+                async function loadCameraStatus() {
+                    try {
+                        const status = await apiCall('/api/v1/status');
+                        console.log('Camera status loaded:', status);
+
+                        // Populate camera settings form
+                        if (status.current) {
+                            const current = status.current;
+
+                            // White balance
+                            document.getElementById('wb-mode').value = current.wb_mode;
+                            if (current.wb_mode === 'manual') {
+                                document.getElementById('wb-kelvin-row').style.display = 'block';
+                                document.getElementById('wb-tint-row').style.display = 'block';
+                                if (current.wb_kelvin) {
+                                    document.getElementById('wb-kelvin').value = current.wb_kelvin;
+                                }
+                                if (current.wb_tint !== null && current.wb_tint !== undefined) {
+                                    document.getElementById('wb-tint').value = current.wb_tint;
+                                }
+                            }
+
+                            // ISO
+                            if (current.iso !== null && current.iso !== undefined) {
+                                document.getElementById('iso').value = current.iso;
+                            }
+
+                            // Zoom
+                            if (current.zoom_factor) {
+                                document.getElementById('zoom').value = current.zoom_factor;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to load camera status:', e);
                     }
                 }
 
@@ -746,17 +788,20 @@ class NetworkServer {
                     };
                     if (settings.wb_mode === 'manual') {
                         settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
+                        settings.wb_tint = parseFloat(document.getElementById('wb-tint').value);
                     }
                     await apiCall('/api/v1/camera', 'POST', settings);
                 });
 
-                // Show/hide WB kelvin input based on mode
+                // Show/hide WB kelvin and tint inputs based on mode
                 document.getElementById('wb-mode').addEventListener('change', (e) => {
-                    const kelvinRow = document.getElementById('wb-kelvin-row');
-                    kelvinRow.style.display = e.target.value === 'manual' ? 'block' : 'none';
+                    const isManual = e.target.value === 'manual';
+                    document.getElementById('wb-kelvin-row').style.display = isManual ? 'block' : 'none';
+                    document.getElementById('wb-tint-row').style.display = isManual ? 'block' : 'none';
                 });
 
                 // Initialize
+                loadCameraStatus();
                 connectWebSocket();
             </script>
         </body>
