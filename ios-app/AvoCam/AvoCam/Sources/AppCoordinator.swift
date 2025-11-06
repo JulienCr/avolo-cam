@@ -418,6 +418,9 @@ class AppCoordinator: ObservableObject {
             if let wbKelvin = settings.wbKelvin {
                 current.wbKelvin = wbKelvin
             }
+            if let wbTint = settings.wbTint {
+                current.wbTint = wbTint
+            }
             if let iso = settings.iso {
                 current.iso = iso
             }
@@ -467,6 +470,7 @@ class AppCoordinator: ObservableObject {
             codec: request.codec,
             wbMode: .auto,
             wbKelvin: nil,
+            wbTint: nil,
             iso: 0,
             shutterS: 0.0,
             focusMode: .auto,
@@ -482,6 +486,7 @@ class AppCoordinator: ObservableObject {
             codec: "h264",
             wbMode: .auto,
             wbKelvin: nil,
+            wbTint: nil,
             iso: 0,
             shutterS: 0.0,
             focusMode: .auto,

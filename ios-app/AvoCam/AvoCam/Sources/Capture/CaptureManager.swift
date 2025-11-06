@@ -195,12 +195,36 @@ actor CaptureManager: NSObject {
             case .auto:
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
+                    print("✅ White balance set to auto")
                 }
             case .manual:
                 if device.isWhiteBalanceModeSupported(.locked),
                    let kelvin = settings.wbKelvin {
-                    let gains = whiteBalanceGains(forTemperature: Float(kelvin))
-                    device.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
+                    // Validate Kelvin range (2000-10000K is reasonable for video)
+                    let clampedKelvin = min(max(kelvin, 2000), 10000)
+
+                    if clampedKelvin != kelvin {
+                        print("⚠️ White balance Kelvin \(kelvin)K out of range, clamped to \(clampedKelvin)K")
+                    }
+
+                    // Get tint value (defaults to 0 if not provided)
+                    let tint = settings.wbTint ?? 0.0
+
+                    // Convert to gains and validate
+                    let gains = whiteBalanceGains(
+                        forTemperature: Float(clampedKelvin),
+                        tint: Float(tint),
+                        device: device
+                    )
+
+                    // Double-check gains are valid before applying
+                    if validateGains(gains, device: device) {
+                        device.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
+                        print("✅ White balance set to \(clampedKelvin)K, tint: \(tint)")
+                    } else {
+                        print("❌ Invalid white balance gains after validation, skipping")
+                        throw CaptureError.invalidWhiteBalanceGains
+                    }
                 }
             }
         }
@@ -310,18 +334,99 @@ actor CaptureManager: NSObject {
         return (width: components[0], height: components[1])
     }
 
-    private func whiteBalanceGains(forTemperature temperature: Float) -> AVCaptureDevice.WhiteBalanceGains {
-        // Simplified temperature to RGB gains conversion
-        // In production, use proper color science lookup tables
-        let normalizedTemp = (temperature - 3000.0) / (6500.0 - 3000.0)
-        let blue = Float(1.0 + (normalizedTemp * 0.5))
-        let red = Float(1.5 - (normalizedTemp * 0.5))
+    private func whiteBalanceGains(forTemperature temperature: Float, tint: Float, device: AVCaptureDevice) -> AVCaptureDevice.WhiteBalanceGains {
+        // Convert Kelvin temperature to RGB gains using standard color science
+        // Based on Tanner Helland's algorithm (https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html)
+        // Adapted for camera white balance (inverted for correction)
+
+        let temp = temperature / 100.0
+        var red: Float
+        var green: Float
+        var blue: Float
+
+        // Calculate Red
+        if temp <= 66 {
+            red = 255
+        } else {
+            red = temp - 60
+            red = 329.698727446 * pow(red, -0.1332047592)
+            red = min(max(red, 0), 255)
+        }
+
+        // Calculate Green
+        if temp <= 66 {
+            green = temp
+            green = 99.4708025861 * log(green) - 161.1195681661
+        } else {
+            green = temp - 60
+            green = 288.1221695283 * pow(green, -0.0755148492)
+        }
+        green = min(max(green, 0), 255)
+
+        // Calculate Blue
+        if temp >= 66 {
+            blue = 255
+        } else if temp <= 19 {
+            blue = 0
+        } else {
+            blue = temp - 10
+            blue = 138.5177312231 * log(blue) - 305.0447927307
+            blue = min(max(blue, 0), 255)
+        }
+
+        // Normalize to 0-1 range
+        red = red / 255.0
+        green = green / 255.0
+        blue = blue / 255.0
+
+        // For camera white balance, we need to INVERT the gains
+        // (we're correcting FOR the color temperature, not applying it)
+        // Find the minimum to normalize
+        let minGain = min(red, min(green, blue))
+        if minGain > 0 {
+            red = red / minGain
+            green = green / minGain
+            blue = blue / minGain
+        }
+
+        // Apply tint adjustment (green/magenta)
+        // Positive tint = more magenta (increase R&B, decrease G)
+        // Negative tint = more green (increase G, decrease R&B)
+        let tintFactor = Float(1.0) + (tint * 0.01) // Scale tint to ~1% per unit
+        if tint > 0 {
+            // More magenta
+            green = green / tintFactor
+        } else if tint < 0 {
+            // More green
+            green = green * tintFactor
+        }
+
+        // Clamp gains to valid range [1.0, maxWhiteBalanceGain]
+        let maxGain = device.maxWhiteBalanceGain
+        red = min(max(red, 1.0), maxGain)
+        green = min(max(green, 1.0), maxGain)
+        blue = min(max(blue, 1.0), maxGain)
 
         return AVCaptureDevice.WhiteBalanceGains(
             redGain: red,
-            greenGain: 1.0,
+            greenGain: green,
             blueGain: blue
         )
+    }
+
+    private func validateGains(_ gains: AVCaptureDevice.WhiteBalanceGains, device: AVCaptureDevice) -> Bool {
+        let maxGain = device.maxWhiteBalanceGain
+
+        // Check each gain is in valid range
+        let isValid = gains.redGain >= 1.0 && gains.redGain <= maxGain &&
+                      gains.greenGain >= 1.0 && gains.greenGain <= maxGain &&
+                      gains.blueGain >= 1.0 && gains.blueGain <= maxGain
+
+        if !isValid {
+            print("❌ Invalid gains - R:\(gains.redGain) G:\(gains.greenGain) B:\(gains.blueGain) (max: \(maxGain))")
+        }
+
+        return isValid
     }
 
     // MARK: - Color Space Attachment
@@ -380,6 +485,7 @@ enum CaptureError: LocalizedError {
     case sessionNotConfigured
     case formatNotSupported
     case invalidResolution
+    case invalidWhiteBalanceGains
 
     var errorDescription: String? {
         switch self {
@@ -395,6 +501,8 @@ enum CaptureError: LocalizedError {
             return "Requested format not supported"
         case .invalidResolution:
             return "Invalid resolution format"
+        case .invalidWhiteBalanceGains:
+            return "White balance gains out of valid range"
         }
     }
 }
