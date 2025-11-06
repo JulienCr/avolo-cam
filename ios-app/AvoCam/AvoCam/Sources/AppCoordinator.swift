@@ -612,9 +612,10 @@ extension AppCoordinator: NetworkRequestHandler {
 
     func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse {
         let result = try await captureManager?.measureWhiteBalance()
-        guard let (kelvin, tint) = result else {
+        guard let (sceneCCT_K, tint) = result else {
             throw AppError.invalidConfiguration
         }
-        return WhiteBalanceMeasureResponse(kelvin: kelvin, tint: tint)
+        // Return physical scene CCT - UI will convert to UIKelvin if needed
+        return WhiteBalanceMeasureResponse(sceneCCT_K: sceneCCT_K, tint: tint)
     }
 }

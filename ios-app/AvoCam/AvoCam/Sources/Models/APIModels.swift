@@ -156,11 +156,11 @@ struct ScreenBrightnessRequest: Codable {
 // MARK: - White Balance Measure
 
 struct WhiteBalanceMeasureResponse: Codable {
-    let kelvin: Int
+    let sceneCCT_K: Int  // Physical scene illumination temperature (Apple's value)
     let tint: Double
 
     enum CodingKeys: String, CodingKey {
-        case kelvin
+        case sceneCCT_K = "scene_cct_k"
         case tint
     }
 }

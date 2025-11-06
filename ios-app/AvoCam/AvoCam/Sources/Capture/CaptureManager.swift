@@ -297,8 +297,9 @@ actor CaptureManager: NSObject {
     }
 
     /// Measures white balance by enabling auto mode, waiting for convergence, then returning the measured values
+    /// Returns physical scene CCT (SceneCCT_K) - NOT UI Kelvin
     /// This is like "one-shot AWB" on professional cameras
-    func measureWhiteBalance() async throws -> (kelvin: Int, tint: Double) {
+    func measureWhiteBalance() async throws -> (sceneCCT_K: Int, tint: Double) {
         guard let device = videoDevice else {
             throw CaptureError.deviceNotAvailable
         }
@@ -322,15 +323,23 @@ actor CaptureManager: NSObject {
         let gains = device.deviceWhiteBalanceGains
 
         // Convert gains back to temperature and tint using Apple's API
+        // This returns the PHYSICAL scene illumination temperature (SceneCCT_K)
         let tempTint = device.temperatureAndTintValues(for: gains)
 
-        // Map from Apple's scene illumination temperature to UI convention
+        let sceneCCT_K = Int(tempTint.temperature)
+        let tint = Double(tempTint.tint)
+
+        // For UI display, derive UIKelvin (but don't return it - UI layer will convert)
         let uiKelvin = mapAppleToUIKelvin(tempTint.temperature)
 
         print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
-        print("✅ Measured white balance: UI \(uiKelvin)K (apple \(Int(tempTint.temperature))K), tint: \(String(format: "%.1f", tempTint.tint))")
+        print("✅ Measured WB:")
+        print("   SceneCCT_K: \(sceneCCT_K)K (physical scene illumination)")
+        print("   UIKelvin: \(uiKelvin)K (UI slider value)")
+        print("   Tint: \(String(format: "%.1f", tint))")
 
-        return (kelvin: uiKelvin, tint: Double(tempTint.tint))
+        // Return PHYSICAL scene CCT, not UI value
+        return (sceneCCT_K: sceneCCT_K, tint: tint)
     }
 
     // MARK: - Capabilities

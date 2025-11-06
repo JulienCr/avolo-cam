@@ -425,7 +425,7 @@ class NetworkServer {
 
         do {
             let result = try await handler.handleMeasureWhiteBalance()
-            print("✅ White balance measured: \(result.kelvin)K, tint: \(result.tint)")
+            print("✅ White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
 
             guard let jsonData = try? JSONEncoder().encode(result) else {
                 return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
@@ -833,6 +833,25 @@ class NetworkServer {
                     }
                 }
 
+                // White Balance Kelvin mapping functions
+                // SceneCCT_K (Apple's physical scene illumination) ↔ UIKelvin (UI slider)
+                const UI_MIN_KELVIN = 2000;
+                const UI_MAX_KELVIN = 10000;
+
+                function mapSceneCCTToUIKelvin(sceneCCT_K) {
+                    // UI expectation: higher K = cooler/blue
+                    // Apple API: scene illumination (opposite)
+                    // Formula: UIKelvin = (min + max) - SceneCCT_K
+                    const inverted = UI_MIN_KELVIN + UI_MAX_KELVIN - sceneCCT_K;
+                    return Math.max(UI_MIN_KELVIN, Math.min(inverted, UI_MAX_KELVIN));
+                }
+
+                function mapUIKelvinToSceneCCT(uiKelvin) {
+                    // Inverse of above
+                    const inverted = UI_MIN_KELVIN + UI_MAX_KELVIN - uiKelvin;
+                    return Math.max(UI_MIN_KELVIN, Math.min(inverted, UI_MAX_KELVIN));
+                }
+
                 // Slider sync functions
                 function syncSlider(sliderId, inputId, valueId) {
                     const slider = document.getElementById(sliderId);
@@ -884,20 +903,31 @@ class NetworkServer {
 
                         const result = await apiCall('/api/v1/camera/wb/measure', 'POST');
 
-                        // Update sliders and inputs with measured values
-                        document.getElementById('wb-kelvin').value = result.kelvin;
-                        document.getElementById('wb-kelvin-slider').value = result.kelvin;
-                        document.getElementById('wb-kelvin-value').textContent = result.kelvin;
+                        // Result contains physical SceneCCT_K - convert to UIKelvin for display
+                        const sceneCCT_K = result.scene_cct_k;
+                        const tint = result.tint;
+                        const uiKelvin = mapSceneCCTToUIKelvin(sceneCCT_K);
 
-                        document.getElementById('wb-tint').value = Math.round(result.tint);
-                        document.getElementById('wb-tint-slider').value = Math.round(result.tint);
-                        document.getElementById('wb-tint-value').textContent = Math.round(result.tint);
+                        // Log for diagnostics
+                        console.log('📊 WB Measured:');
+                        console.log('  SceneCCT_K:', sceneCCT_K, 'K (physical scene illumination)');
+                        console.log('  UIKelvin:', uiKelvin, 'K (UI slider value)');
+                        console.log('  Tint:', tint);
 
-                        // Auto-apply the measured settings
+                        // Update sliders and inputs with UIKelvin (not physical CCT)
+                        document.getElementById('wb-kelvin').value = uiKelvin;
+                        document.getElementById('wb-kelvin-slider').value = uiKelvin;
+                        document.getElementById('wb-kelvin-value').textContent = uiKelvin;
+
+                        document.getElementById('wb-tint').value = Math.round(tint);
+                        document.getElementById('wb-tint-slider').value = Math.round(tint);
+                        document.getElementById('wb-tint-value').textContent = Math.round(tint);
+
+                        // Auto-apply: send UIKelvin (server will convert to sceneCCT)
                         await apiCall('/api/v1/camera', 'POST', {
                             wb_mode: 'manual',
-                            wb_kelvin: result.kelvin,
-                            wb_tint: result.tint,
+                            wb_kelvin: uiKelvin,  // Send UI value, server converts
+                            wb_tint: tint,
                             iso: parseInt(document.getElementById('iso').value),
                             zoom_factor: parseFloat(document.getElementById('zoom').value)
                         });
@@ -905,6 +935,7 @@ class NetworkServer {
                         btn.disabled = false;
                         btn.textContent = '📸 Auto Measure';
                     } catch (e) {
+                        console.error('Auto measure failed:', e);
                         document.getElementById('btn-wb-measure').disabled = false;
                         document.getElementById('btn-wb-measure').textContent = '📸 Auto Measure';
                     }
