@@ -32,26 +32,38 @@ AVOLO-CAM enables multiple iPhones to stream high-quality, low-latency video to 
 
 ## Architecture
 
-```
-┌─────────────────┐         NDI|HX          ┌─────────────┐
-│  iPhone #1      │◄───────────────────────►│             │
-│  (AvoCam)       │                          │             │
-├─────────────────┤                          │     OBS     │
-│  iPhone #2      │◄───────────────────────►│  (NDI Rx)   │
-│  (AvoCam)       │                          │             │
-├─────────────────┤                          │             │
-│  iPhone #3      │◄───────────────────────►│             │
-│  (AvoCam)       │                          └─────────────┘
-└─────────────────┘
-         ▲
-         │ HTTP/WS
-         │ (Control + Telemetry)
-         ▼
-┌─────────────────┐
-│     Tauri       │
-│   Controller    │
-│   (Desktop)     │
-└─────────────────┘
+```mermaid
+flowchart TB
+
+%% ---------------- LAYERS ----------------
+subgraph Layer1["🎛 Control Layer"]
+  Tauri["Tauri Controller (Desktop)"]
+  CBus["HTTP/WS Control & Telemetry Bus"]
+  Tauri --> CBus
+end
+
+subgraph Layer2["📱 Capture Layer — AvoCam Devices"]
+  direction LR
+  P1["iPhone #1"]
+  P2["iPhone #2"]
+  P3["iPhone #3"]
+end
+
+subgraph Layer3["🖥 Video Ingest Layer"]
+  VBus["NDI HX Network"]
+  OBS["OBS (NDI Receiver)"]
+  VBus --> OBS
+end
+
+%% ----------- FAN-OUT / FAN-IN -----------
+CBus --> P1
+CBus --> P2
+CBus --> P3
+
+P1 --> VBus
+P2 --> VBus
+P3 --> VBus
+
 ```
 
 ## Components
