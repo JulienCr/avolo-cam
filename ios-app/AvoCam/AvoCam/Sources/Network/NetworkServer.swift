@@ -172,7 +172,7 @@ class NetworkServer {
         print("🔌 WebSocket client disconnected (total: \(wsClients.count))")
     }
 
-    func broadcastTelemetry(_ telemetry: Telemetry) {
+    func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
         wsClientsLock.lock()
         let clients = wsClients
         wsClientsLock.unlock()
@@ -185,7 +185,7 @@ class NetworkServer {
             battery: telemetry.battery,
             tempC: telemetry.tempC,
             wifiRssi: telemetry.wifiRssi,
-            ndiState: .idle, // TODO: Get from actual state
+            ndiState: ndiState,
             droppedFrames: telemetry.droppedFrames ?? 0,
             chargingState: telemetry.chargingState ?? .unplugged
         )
@@ -204,10 +204,14 @@ class NetworkServer {
     // MARK: - Request Handling
 
     func handleHTTPRequest(path: String, method: String, headers: [String: String], body: Data?) async -> HTTPResponse {
+        // Log incoming request
+        print("📥 HTTP \(method) \(path)")
+
         // Authenticate if enabled
         if isAuthenticationEnabled {
             guard let authHeader = headers["Authorization"],
                   authHeader == "Bearer \(bearerToken)" else {
+                print("⚠️ Authentication failed for \(method) \(path)")
                 return HTTPResponse(
                     status: 401,
                     body: errorJSON(code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
@@ -263,9 +267,10 @@ class NetworkServer {
             return handleWebUI()
 
         default:
+            print("❌ 404 Not Found: \(method) \(path)")
             return HTTPResponse(
                 status: 404,
-                body: errorJSON(code: "NOT_FOUND", message: "Endpoint not found")
+                body: errorJSON(code: "NOT_FOUND", message: "Endpoint not found: \(method) \(path)")
             )
         }
     }
@@ -301,30 +306,37 @@ class NetworkServer {
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(StreamStartRequest.self, from: body) else {
+            print("⚠️ Invalid stream start request body")
             return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid stream start request"))
         }
 
         guard let handler = requestHandler else {
+            print("⚠️ No request handler available")
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
         do {
             try await handler.handleStreamStart(request)
+            print("✅ Stream started: \(request.resolution)@\(request.framerate)fps")
             return HTTPResponse(status: 200, body: successJSON(message: "Stream started"))
         } catch {
+            print("❌ Stream start failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_START_FAILED", message: error.localizedDescription))
         }
     }
 
     private func handleStreamStop() async -> HTTPResponse {
         guard let handler = requestHandler else {
+            print("⚠️ No request handler available")
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
         do {
             try await handler.handleStreamStop()
+            print("✅ Stream stopped")
             return HTTPResponse(status: 200, body: successJSON(message: "Stream stopped"))
         } catch {
+            print("❌ Stream stop failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_STOP_FAILED", message: error.localizedDescription))
         }
     }

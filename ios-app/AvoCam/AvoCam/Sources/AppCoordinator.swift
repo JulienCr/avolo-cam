@@ -318,7 +318,8 @@ class AppCoordinator: ObservableObject {
 
         // Broadcast telemetry via WebSocket
         if let telemetry = self.telemetry {
-            networkServer?.broadcastTelemetry(telemetry)
+            let currentNDIState: NDIState = self.isStreaming ? .streaming : .idle
+            networkServer?.broadcastTelemetry(telemetry, ndiState: currentNDIState)
         }
 
         // Check thermal state and adjust if needed
