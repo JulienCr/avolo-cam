@@ -22,6 +22,7 @@ protocol NetworkRequestHandler: AnyObject {
     func handleGetVideoSettings() async -> VideoSettingsResponse
     func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws
     func handleScreenBrightness(_ request: ScreenBrightnessRequest)
+    func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse
 }
 
 // MARK: - Network Server
@@ -172,7 +173,7 @@ class NetworkServer {
         print("🔌 WebSocket client disconnected (total: \(wsClients.count))")
     }
 
-    func broadcastTelemetry(_ telemetry: Telemetry) {
+    func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
         wsClientsLock.lock()
         let clients = wsClients
         wsClientsLock.unlock()
@@ -185,7 +186,7 @@ class NetworkServer {
             battery: telemetry.battery,
             tempC: telemetry.tempC,
             wifiRssi: telemetry.wifiRssi,
-            ndiState: .idle, // TODO: Get from actual state
+            ndiState: ndiState,
             droppedFrames: telemetry.droppedFrames ?? 0,
             chargingState: telemetry.chargingState ?? .unplugged
         )
@@ -204,10 +205,14 @@ class NetworkServer {
     // MARK: - Request Handling
 
     func handleHTTPRequest(path: String, method: String, headers: [String: String], body: Data?) async -> HTTPResponse {
+        // Log incoming request
+        print("📥 HTTP \(method) \(path)")
+
         // Authenticate if enabled
         if isAuthenticationEnabled {
             guard let authHeader = headers["Authorization"],
                   authHeader == "Bearer \(bearerToken)" else {
+                print("⚠️ Authentication failed for \(method) \(path)")
                 return HTTPResponse(
                     status: 401,
                     body: errorJSON(code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
@@ -256,6 +261,9 @@ class NetworkServer {
         case ("POST", "/api/v1/encoder/force_keyframe"):
             return handleForceKeyframe()
 
+        case ("POST", "/api/v1/camera/wb/measure"):
+            return await handleMeasureWhiteBalance()
+
         case ("GET", "/api/v1/logs.zip"):
             return handleLogsDownload()
 
@@ -263,9 +271,10 @@ class NetworkServer {
             return handleWebUI()
 
         default:
+            print("❌ 404 Not Found: \(method) \(path)")
             return HTTPResponse(
                 status: 404,
-                body: errorJSON(code: "NOT_FOUND", message: "Endpoint not found")
+                body: errorJSON(code: "NOT_FOUND", message: "Endpoint not found: \(method) \(path)")
             )
         }
     }
@@ -301,30 +310,37 @@ class NetworkServer {
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(StreamStartRequest.self, from: body) else {
+            print("⚠️ Invalid stream start request body")
             return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid stream start request"))
         }
 
         guard let handler = requestHandler else {
+            print("⚠️ No request handler available")
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
         do {
             try await handler.handleStreamStart(request)
+            print("✅ Stream started: \(request.resolution)@\(request.framerate)fps")
             return HTTPResponse(status: 200, body: successJSON(message: "Stream started"))
         } catch {
+            print("❌ Stream start failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_START_FAILED", message: error.localizedDescription))
         }
     }
 
     private func handleStreamStop() async -> HTTPResponse {
         guard let handler = requestHandler else {
+            print("⚠️ No request handler available")
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
         }
 
         do {
             try await handler.handleStreamStop()
+            print("✅ Stream stopped")
             return HTTPResponse(status: 200, body: successJSON(message: "Stream stopped"))
         } catch {
+            print("❌ Stream stop failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_STOP_FAILED", message: error.localizedDescription))
         }
     }
@@ -398,6 +414,27 @@ class NetworkServer {
             return HTTPResponse(status: 200, body: successJSON(message: "Video settings updated"))
         } catch {
             return HTTPResponse(status: 500, body: errorJSON(code: "VIDEO_SETTINGS_UPDATE_FAILED", message: error.localizedDescription))
+        }
+    }
+
+    private func handleMeasureWhiteBalance() async -> HTTPResponse {
+        guard let handler = requestHandler else {
+            print("⚠️ No request handler available")
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        do {
+            let result = try await handler.handleMeasureWhiteBalance()
+            print("✅ White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
+
+            guard let jsonData = try? JSONEncoder().encode(result) else {
+                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
+            }
+
+            return HTTPResponse(status: 200, body: jsonData)
+        } catch {
+            print("❌ White balance measure failed: \(error.localizedDescription)")
+            return HTTPResponse(status: 500, body: errorJSON(code: "MEASURE_FAILED", message: error.localizedDescription))
         }
     }
 
@@ -559,6 +596,27 @@ class NetworkServer {
                     text-align: center;
                     margin-top: 12px;
                 }
+                .slider-group {
+                    display: flex;
+                    gap: 12px;
+                    align-items: center;
+                }
+                .slider-group input[type="range"] {
+                    flex: 1;
+                    height: 6px;
+                    padding: 0;
+                }
+                .slider-group input[type="number"] {
+                    width: 80px;
+                    padding: 8px;
+                }
+                .btn-group {
+                    display: flex;
+                    gap: 8px;
+                }
+                .btn-group button {
+                    flex: 1;
+                }
             </style>
         </head>
         <body>
@@ -612,17 +670,38 @@ class NetworkServer {
                             <option value="manual">Manual</option>
                         </select>
                     </div>
-                    <div class="settings-row" id="wb-kelvin-row" style="display: none;">
-                        <label for="wb-kelvin">WB Temperature (K)</label>
-                        <input type="number" id="wb-kelvin" value="5000" min="2000" max="10000" step="100">
+                    <div id="wb-manual-controls" style="display: none;">
+                        <div class="settings-row">
+                            <label for="wb-kelvin">Temperature (Scene CCT): <span id="wb-kelvin-value">5000</span>K</label>
+                            <div class="slider-group">
+                                <input type="range" id="wb-kelvin-slider" value="5000" min="2000" max="10000" step="100">
+                                <input type="number" id="wb-kelvin" value="5000" min="2000" max="10000" step="100">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label for="wb-tint">Tint: <span id="wb-tint-value">0</span> (Green ← → Magenta)</label>
+                            <div class="slider-group">
+                                <input type="range" id="wb-tint-slider" value="0" min="-100" max="100" step="1">
+                                <input type="number" id="wb-tint" value="0" min="-100" max="100" step="1">
+                            </div>
+                        </div>
+                        <div class="btn-group">
+                            <button id="btn-wb-measure" class="btn-secondary">📸 Auto Measure</button>
+                        </div>
                     </div>
                     <div class="settings-row">
-                        <label for="iso">ISO (0 = Auto)</label>
-                        <input type="number" id="iso" value="0" min="0" max="3200" step="50">
+                        <label for="iso">ISO: <span id="iso-value">0</span> (0 = Auto)</label>
+                        <div class="slider-group">
+                            <input type="range" id="iso-slider" value="0" min="0" max="3200" step="50">
+                            <input type="number" id="iso" value="0" min="0" max="3200" step="50">
+                        </div>
                     </div>
                     <div class="settings-row">
-                        <label for="zoom">Zoom Factor</label>
-                        <input type="number" id="zoom" value="1.0" min="1.0" max="10.0" step="0.1">
+                        <label for="zoom">Zoom: <span id="zoom-value">1.0</span>x</label>
+                        <div class="slider-group">
+                            <input type="range" id="zoom-slider" value="1.0" min="1.0" max="10.0" step="0.1">
+                            <input type="number" id="zoom" value="1.0" min="1.0" max="10.0" step="0.1">
+                        </div>
                     </div>
                     <button id="btn-apply-settings" class="btn-primary">Apply Settings</button>
                 </div>
@@ -672,6 +751,53 @@ class NetworkServer {
                     }
                 }
 
+                // Load camera status and populate form
+                async function loadCameraStatus() {
+                    try {
+                        const status = await apiCall('/api/v1/status');
+                        console.log('Camera status loaded:', status);
+
+                        // Populate camera settings form
+                        if (status.current) {
+                            const current = status.current;
+
+                            // White balance - work directly with physical values
+                            document.getElementById('wb-mode').value = current.wb_mode;
+                            if (current.wb_mode === 'manual') {
+                                document.getElementById('wb-manual-controls').style.display = 'block';
+                                if (current.wb_kelvin) {
+                                    const sceneCCT_K = current.wb_kelvin;  // Physical value
+                                    document.getElementById('wb-kelvin').value = sceneCCT_K;
+                                    document.getElementById('wb-kelvin-slider').value = sceneCCT_K;
+                                    document.getElementById('wb-kelvin-value').textContent = sceneCCT_K;
+                                }
+                                if (current.wb_tint !== null && current.wb_tint !== undefined) {
+                                    const tint = Math.round(current.wb_tint);
+                                    document.getElementById('wb-tint').value = tint;
+                                    document.getElementById('wb-tint-slider').value = tint;
+                                    document.getElementById('wb-tint-value').textContent = tint;
+                                }
+                            }
+
+                            // ISO
+                            if (current.iso !== null && current.iso !== undefined) {
+                                document.getElementById('iso').value = current.iso;
+                                document.getElementById('iso-slider').value = current.iso;
+                                document.getElementById('iso-value').textContent = current.iso;
+                            }
+
+                            // Zoom
+                            if (current.zoom_factor) {
+                                document.getElementById('zoom').value = current.zoom_factor;
+                                document.getElementById('zoom-slider').value = current.zoom_factor;
+                                document.getElementById('zoom-value').textContent = current.zoom_factor;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to load camera status:', e);
+                    }
+                }
+
                 // Update telemetry display
                 function updateTelemetry(telemetry) {
                     document.getElementById('fps').textContent = telemetry.fps.toFixed(1);
@@ -708,6 +834,31 @@ class NetworkServer {
                     }
                 }
 
+                // Slider sync functions - work directly with physical SceneCCT_K
+                function syncSlider(sliderId, inputId, valueId) {
+                    const slider = document.getElementById(sliderId);
+                    const input = document.getElementById(inputId);
+                    const valueLabel = document.getElementById(valueId);
+
+                    slider.addEventListener('input', (e) => {
+                        const val = e.target.value;
+                        input.value = val;
+                        valueLabel.textContent = val;
+                    });
+
+                    input.addEventListener('input', (e) => {
+                        const val = e.target.value;
+                        slider.value = val;
+                        valueLabel.textContent = val;
+                    });
+                }
+
+                // Initialize slider sync - all work with physical values
+                syncSlider('wb-kelvin-slider', 'wb-kelvin', 'wb-kelvin-value');
+                syncSlider('wb-tint-slider', 'wb-tint', 'wb-tint-value');
+                syncSlider('iso-slider', 'iso', 'iso-value');
+                syncSlider('zoom-slider', 'zoom', 'zoom-value');
+
                 // Event handlers
                 document.getElementById('btn-start').addEventListener('click', async () => {
                     await apiCall('/api/v1/stream/start', 'POST', {
@@ -726,6 +877,48 @@ class NetworkServer {
                     await apiCall('/api/v1/encoder/force_keyframe', 'POST');
                 });
 
+                document.getElementById('btn-wb-measure').addEventListener('click', async () => {
+                    try {
+                        const btn = document.getElementById('btn-wb-measure');
+                        btn.disabled = true;
+                        btn.textContent = '⏳ Measuring...';
+
+                        const result = await apiCall('/api/v1/camera/wb/measure', 'POST');
+
+                        // Result contains physical SceneCCT_K - use it directly!
+                        const sceneCCT_K = result.scene_cct_k;
+                        const tint = result.tint;
+
+                        // Log for diagnostics
+                        console.log('📊 WB Measured: SceneCCT_K =', sceneCCT_K, 'K, Tint =', tint);
+
+                        // Update controls with physical values (no conversion!)
+                        document.getElementById('wb-kelvin').value = sceneCCT_K;
+                        document.getElementById('wb-kelvin-slider').value = sceneCCT_K;
+                        document.getElementById('wb-kelvin-value').textContent = sceneCCT_K;
+
+                        document.getElementById('wb-tint').value = Math.round(tint);
+                        document.getElementById('wb-tint-slider').value = Math.round(tint);
+                        document.getElementById('wb-tint-value').textContent = Math.round(tint);
+
+                        // Auto-apply: send physical SceneCCT_K directly
+                        await apiCall('/api/v1/camera', 'POST', {
+                            wb_mode: 'manual',
+                            wb_kelvin: sceneCCT_K,  // Send physical value
+                            wb_tint: tint,
+                            iso: parseInt(document.getElementById('iso').value),
+                            zoom_factor: parseFloat(document.getElementById('zoom').value)
+                        });
+
+                        btn.disabled = false;
+                        btn.textContent = '📸 Auto Measure';
+                    } catch (e) {
+                        console.error('Auto measure failed:', e);
+                        document.getElementById('btn-wb-measure').disabled = false;
+                        document.getElementById('btn-wb-measure').textContent = '📸 Auto Measure';
+                    }
+                });
+
                 document.getElementById('btn-apply-settings').addEventListener('click', async () => {
                     const settings = {
                         wb_mode: document.getElementById('wb-mode').value,
@@ -734,17 +927,19 @@ class NetworkServer {
                     };
                     if (settings.wb_mode === 'manual') {
                         settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
+                        settings.wb_tint = parseFloat(document.getElementById('wb-tint').value);
                     }
                     await apiCall('/api/v1/camera', 'POST', settings);
                 });
 
-                // Show/hide WB kelvin input based on mode
+                // Show/hide WB manual controls based on mode
                 document.getElementById('wb-mode').addEventListener('change', (e) => {
-                    const kelvinRow = document.getElementById('wb-kelvin-row');
-                    kelvinRow.style.display = e.target.value === 'manual' ? 'block' : 'none';
+                    const isManual = e.target.value === 'manual';
+                    document.getElementById('wb-manual-controls').style.display = isManual ? 'block' : 'none';
                 });
 
                 // Initialize
+                loadCameraStatus();
                 connectWebSocket();
             </script>
         </body>
@@ -898,12 +1093,15 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
             Data(buffer.readableBytesView)
         }
 
-        // Handle request asynchronously
+        // Capture values before they get reset (reset() is called after this method returns)
         let path = uri.components(separatedBy: "?").first ?? uri
+        let methodString = method.rawValue  // Capture method string NOW before reset()
+
+        // Handle request asynchronously
         Task {
             let response = await server.handleHTTPRequest(
                 path: path,
-                method: method.rawValue,
+                method: methodString,  // Use captured value
                 headers: headersDict,
                 body: bodyData
             )

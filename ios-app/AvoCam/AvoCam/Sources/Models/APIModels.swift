@@ -37,6 +37,7 @@ struct CurrentSettings: Codable {
     var codec: String
     var wbMode: WhiteBalanceMode
     var wbKelvin: Int?
+    var wbTint: Double?
     var iso: Int
     var shutterS: Double
     var focusMode: FocusMode
@@ -49,6 +50,7 @@ struct CurrentSettings: Codable {
         case codec
         case wbMode = "wb_mode"
         case wbKelvin = "wb_kelvin"
+        case wbTint = "wb_tint"
         case iso
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
@@ -124,6 +126,7 @@ struct StreamStartRequest: Codable {
 struct CameraSettingsRequest: Codable {
     let wbMode: WhiteBalanceMode?
     let wbKelvin: Int?
+    let wbTint: Double?
     let iso: Int?
     let shutterS: Double?
     let focusMode: FocusMode?
@@ -134,6 +137,7 @@ struct CameraSettingsRequest: Codable {
     enum CodingKeys: String, CodingKey {
         case wbMode = "wb_mode"
         case wbKelvin = "wb_kelvin"
+        case wbTint = "wb_tint"
         case iso
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
@@ -147,6 +151,18 @@ struct CameraSettingsRequest: Codable {
 
 struct ScreenBrightnessRequest: Codable {
     let dimmed: Bool
+}
+
+// MARK: - White Balance Measure
+
+struct WhiteBalanceMeasureResponse: Codable {
+    let sceneCCT_K: Int  // Physical scene illumination temperature (Apple's value)
+    let tint: Double
+
+    enum CodingKeys: String, CodingKey {
+        case sceneCCT_K = "scene_cct_k"
+        case tint
+    }
 }
 
 // MARK: - WebSocket Messages

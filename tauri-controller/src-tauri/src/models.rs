@@ -28,6 +28,7 @@ pub struct CurrentSettings {
     pub codec: String,
     pub wb_mode: WhiteBalanceMode,
     pub wb_kelvin: Option<u32>,
+    pub wb_tint: Option<f64>,
     pub iso: u32,
     pub shutter_s: f64,
     pub focus_mode: FocusMode,
@@ -93,6 +94,7 @@ pub struct StreamStartRequest {
 pub struct CameraSettingsRequest {
     pub wb_mode: Option<WhiteBalanceMode>,
     pub wb_kelvin: Option<u32>,
+    pub wb_tint: Option<f64>,
     pub iso: Option<u32>,
     pub shutter_s: Option<f64>,
     pub focus_mode: Option<FocusMode>,

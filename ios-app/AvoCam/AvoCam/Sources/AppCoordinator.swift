@@ -54,12 +54,15 @@ class AppCoordinator: ObservableObject {
         // Save if newly generated
         UserDefaults.standard.set(cameraAlias, forKey: "camera_alias")
         UserDefaults.standard.set(bearerToken, forKey: "bearer_token")
-        
+
         // Set display token
         self.bearerTokenForDisplay = bearerToken
-        
+
         // Load authentication setting (default: disabled)
         self.isAuthenticationEnabled = UserDefaults.standard.bool(forKey: "authentication_enabled")
+
+        // Load persisted camera settings
+        self.currentSettings = loadPersistedSettings()
     }
 
     // MARK: - Lifecycle
@@ -318,7 +321,8 @@ class AppCoordinator: ObservableObject {
 
         // Broadcast telemetry via WebSocket
         if let telemetry = self.telemetry {
-            networkServer?.broadcastTelemetry(telemetry)
+            let currentNDIState: NDIState = self.isStreaming ? .streaming : .idle
+            networkServer?.broadcastTelemetry(telemetry, ndiState: currentNDIState)
         }
 
         // Check thermal state and adjust if needed
@@ -409,29 +413,35 @@ class AppCoordinator: ObservableObject {
     func updateCameraSettings(_ settings: CameraSettingsRequest) async throws {
         try await captureManager?.updateSettings(settings)
 
-        // Update current settings
-        if var current = currentSettings {
-            if let wbMode = settings.wbMode {
-                current.wbMode = wbMode
-            }
-            if let wbKelvin = settings.wbKelvin {
-                current.wbKelvin = wbKelvin
-            }
-            if let iso = settings.iso {
-                current.iso = iso
-            }
-            if let shutterS = settings.shutterS {
-                current.shutterS = shutterS
-            }
-            if let focusMode = settings.focusMode {
-                current.focusMode = focusMode
-            }
-            if let zoomFactor = settings.zoomFactor {
-                current.zoomFactor = zoomFactor
-            }
+        // Ensure currentSettings exists (should always be loaded from persistence at init)
+        var current = currentSettings ?? createDefaultSettings()
 
-            currentSettings = current
+        // Update with new values
+        if let wbMode = settings.wbMode {
+            current.wbMode = wbMode
         }
+        if let wbKelvin = settings.wbKelvin {
+            current.wbKelvin = wbKelvin
+        }
+        if let wbTint = settings.wbTint {
+            current.wbTint = wbTint
+        }
+        if let iso = settings.iso {
+            current.iso = iso
+        }
+        if let shutterS = settings.shutterS {
+            current.shutterS = shutterS
+        }
+        if let focusMode = settings.focusMode {
+            current.focusMode = focusMode
+        }
+        if let zoomFactor = settings.zoomFactor {
+            current.zoomFactor = zoomFactor
+        }
+
+        currentSettings = current
+        // Persist settings so they survive page refresh
+        persistSettings(current)
     }
 
     func forceKeyframe() {
@@ -459,18 +469,32 @@ class AppCoordinator: ObservableObject {
     // MARK: - Helpers
 
     private func updateCurrentSettings(from request: StreamStartRequest) {
-        currentSettings = CurrentSettings(
-            resolution: request.resolution,
-            fps: request.framerate,
-            bitrate: request.bitrate,
-            codec: request.codec,
-            wbMode: .auto,
-            wbKelvin: nil,
-            iso: 0,
-            shutterS: 0.0,
-            focusMode: .auto,
-            zoomFactor: 1.0
-        )
+        // Preserve existing camera settings, only update stream parameters
+        if var current = currentSettings {
+            current.resolution = request.resolution
+            current.fps = request.framerate
+            current.bitrate = request.bitrate
+            current.codec = request.codec
+            currentSettings = current
+            persistSettings(current)
+        } else {
+            // First time - create new settings
+            let newSettings = CurrentSettings(
+                resolution: request.resolution,
+                fps: request.framerate,
+                bitrate: request.bitrate,
+                codec: request.codec,
+                wbMode: .auto,
+                wbKelvin: nil,
+                wbTint: nil,
+                iso: 0,
+                shutterS: 0.0,
+                focusMode: .auto,
+                zoomFactor: 1.0
+            )
+            currentSettings = newSettings
+            persistSettings(newSettings)
+        }
     }
 
     private func createDefaultSettings() -> CurrentSettings {
@@ -481,6 +505,7 @@ class AppCoordinator: ObservableObject {
             codec: "h264",
             wbMode: .auto,
             wbKelvin: nil,
+            wbTint: nil,
             iso: 0,
             shutterS: 0.0,
             focusMode: .auto,
@@ -499,6 +524,26 @@ class AppCoordinator: ObservableObject {
             droppedFrames: nil,
             chargingState: nil
         )
+    }
+
+    // MARK: - Settings Persistence
+
+    private func loadPersistedSettings() -> CurrentSettings? {
+        // Try to load from UserDefaults
+        guard let data = UserDefaults.standard.data(forKey: "camera_settings"),
+              let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
+            // Return defaults if nothing saved
+            return createDefaultSettings()
+        }
+        print("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+        return settings
+    }
+
+    private func persistSettings(_ settings: CurrentSettings) {
+        if let data = try? JSONEncoder().encode(settings) {
+            UserDefaults.standard.set(data, forKey: "camera_settings")
+            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+        }
     }
 
     private static func generateShortID() -> String {
@@ -602,5 +647,14 @@ extension AppCoordinator: NetworkRequestHandler {
   
     func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
         setScreenBrightness(dimmed: request.dimmed)
+    }
+
+    func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse {
+        let result = try await captureManager?.measureWhiteBalance()
+        guard let (sceneCCT_K, tint) = result else {
+            throw AppError.invalidConfiguration
+        }
+        // Return physical scene CCT - UI will convert to UIKelvin if needed
+        return WhiteBalanceMeasureResponse(sceneCCT_K: sceneCCT_K, tint: tint)
     }
 }

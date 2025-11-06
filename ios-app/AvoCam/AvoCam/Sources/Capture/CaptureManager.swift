@@ -36,8 +36,9 @@ actor CaptureManager: NSObject {
 
         // Check if already configured with same settings
         if let existingSession = captureSession,
-           currentResolution == resolution,
-           currentFramerate == framerate {
+            currentResolution == resolution,
+            currentFramerate == framerate
+        {
             print("✅ Already configured with requested settings, reusing session")
             return
         }
@@ -53,7 +54,11 @@ actor CaptureManager: NSObject {
 
         // Setup capture session (reuse existing or create new)
         let session = captureSession ?? AVCaptureSession()
-        session.sessionPreset = .inputPriority // We'll manually set format
+        session.sessionPreset = .inputPriority  // We'll manually set format
+
+        // Begin atomic configuration
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
 
         // Remove existing inputs/outputs if reconfiguring
         if captureSession != nil {
@@ -61,8 +66,13 @@ actor CaptureManager: NSObject {
             session.outputs.forEach { session.removeOutput($0) }
         }
 
-        // Get video device (default wide camera)
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        // Get video device using discovery session (more robust than default lookup)
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video,
+            position: .back
+        )
+        guard let device = discovery.devices.first else {
             throw CaptureError.deviceNotAvailable
         }
 
@@ -82,7 +92,8 @@ actor CaptureManager: NSObject {
         // Create video output
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            kCVPixelBufferPixelFormatTypeKey as String:
+                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         ]
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: outputQueue)
@@ -96,7 +107,7 @@ actor CaptureManager: NSObject {
         // Configure color space (Rec.709 Full) and orientation
         if let connection = output.connection(with: .video) {
             if connection.isVideoStabilizationSupported {
-                connection.preferredVideoStabilizationMode = .off // For lowest latency
+                connection.preferredVideoStabilizationMode = .off  // For lowest latency
             }
 
             // Lock video orientation to landscape
@@ -106,6 +117,7 @@ actor CaptureManager: NSObject {
         }
 
         captureSession = session
+        // commitConfiguration() called via defer
 
         // Restart session if it was running before reconfiguration
         if wasRunning {
@@ -114,11 +126,17 @@ actor CaptureManager: NSObject {
         }
     }
 
-    private func configureFormat(device: AVCaptureDevice, resolution: String, framerate: Int) async throws {
+    private func configureFormat(device: AVCaptureDevice, resolution: String, framerate: Int)
+        async throws
+    {
         let dimensions = try parseResolution(resolution)
 
         // Find matching format
-        guard let format = findFormat(for: device, width: Int(dimensions.width), height: Int(dimensions.height), framerate: framerate) else {
+        guard
+            let format = findFormat(
+                for: device, width: Int(dimensions.width), height: Int(dimensions.height),
+                framerate: framerate)
+        else {
             throw CaptureError.formatNotSupported
         }
 
@@ -138,7 +156,9 @@ actor CaptureManager: NSObject {
         print("✅ Configured format: \(format.formatDescription)")
     }
 
-    private func findFormat(for device: AVCaptureDevice, width: Int, height: Int, framerate: Int) -> AVCaptureDevice.Format? {
+    private func findFormat(for device: AVCaptureDevice, width: Int, height: Int, framerate: Int)
+        -> AVCaptureDevice.Format?
+    {
         return device.formats.first { format in
             let description = format.formatDescription
             let dimensions = CMVideoFormatDescriptionGetDimensions(description)
@@ -195,12 +215,34 @@ actor CaptureManager: NSObject {
             case .auto:
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
+                    print("✅ White balance set to auto")
                 }
             case .manual:
                 if device.isWhiteBalanceModeSupported(.locked),
-                   let kelvin = settings.wbKelvin {
-                    let gains = whiteBalanceGains(forTemperature: Float(kelvin))
+                    let sceneCCT_K = settings.wbKelvin  // API sends physical scene CCT
+                {
+                    // Clamp to reasonable range for video
+                    let clampedCCT = min(max(sceneCCT_K, 2000), 10000)
+                    let tint = settings.wbTint ?? 0.0
+
+                    // Use official Apple API to convert temperature/tint to gains
+                    // Apple expects physical scene illumination temperature (no inversion needed!)
+                    let tempTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
+                        temperature: Float(clampedCCT),
+                        tint: Float(tint)
+                    )
+                    var gains = device.deviceWhiteBalanceGains(for: tempTint)
+
+                    // Clamp to device range
+                    gains = clampedGains(gains, for: device)
+
                     device.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
+
+                    // Debug round-trip to verify applied values
+                    let rt = device.temperatureAndTintValues(for: gains)
+                    print("✅ WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
+                    print("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
+                    print("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
                 }
             }
         }
@@ -208,18 +250,28 @@ actor CaptureManager: NSObject {
         // ISO
         if let iso = settings.iso {
             if device.isExposureModeSupported(.custom) {
-                let clampedISO = min(max(Float(iso), device.activeFormat.minISO), device.activeFormat.maxISO)
+                let clampedISO = min(
+                    max(Float(iso), device.activeFormat.minISO), device.activeFormat.maxISO)
                 let currentDuration = device.exposureDuration
-                device.setExposureModeCustom(duration: currentDuration, iso: clampedISO, completionHandler: nil)
+                device.setExposureModeCustom(
+                    duration: currentDuration, iso: clampedISO, completionHandler: nil)
             }
         }
 
         // Shutter speed
         if let shutterS = settings.shutterS {
             if device.isExposureModeSupported(.custom) {
-                let duration = CMTime(seconds: shutterS, preferredTimescale: 1000000)
+                let minD = device.activeFormat.minExposureDuration
+                let maxD = device.activeFormat.maxExposureDuration
+                var duration = CMTime(seconds: shutterS, preferredTimescale: 1_000_000)
+
+                // Clamp duration to device-supported range
+                if duration < minD { duration = minD }
+                if duration > maxD { duration = maxD }
+
                 let currentISO = device.iso
-                device.setExposureModeCustom(duration: duration, iso: currentISO, completionHandler: nil)
+                device.setExposureModeCustom(
+                    duration: duration, iso: currentISO, completionHandler: nil)
             }
         }
 
@@ -246,6 +298,46 @@ actor CaptureManager: NSObject {
         print("✅ Camera settings updated")
     }
 
+    /// Measures white balance by enabling auto mode, waiting for convergence, then returning the measured values
+    /// Returns physical scene CCT (SceneCCT_K) - NOT UI Kelvin
+    /// This is like "one-shot AWB" on professional cameras
+    func measureWhiteBalance() async throws -> (sceneCCT_K: Int, tint: Double) {
+        guard let device = videoDevice else {
+            throw CaptureError.deviceNotAvailable
+        }
+
+        print("📸 Measuring white balance (auto mode for 2 seconds)...")
+
+        // Enable auto white balance
+        try device.lockForConfiguration()
+        if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            device.whiteBalanceMode = .continuousAutoWhiteBalance
+        } else {
+            device.unlockForConfiguration()
+            throw CaptureError.whiteBalanceNotSupported
+        }
+        device.unlockForConfiguration()
+
+        // Wait for white balance to converge (typically 1-2 seconds)
+        try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+
+        // Read the converged gains
+        let gains = device.deviceWhiteBalanceGains
+
+        // Convert gains back to temperature and tint using Apple's API
+        // This returns the PHYSICAL scene illumination temperature (SceneCCT_K)
+        let tempTint = device.temperatureAndTintValues(for: gains)
+
+        let sceneCCT_K = Int(tempTint.temperature)
+        let tint = Double(tempTint.tint)
+
+        print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+        print("✅ Measured WB: SceneCCT_K = \(sceneCCT_K)K (physical scene illumination), Tint = \(String(format: "%.1f", tint))")
+
+        // Return physical scene CCT
+        return (sceneCCT_K: sceneCCT_K, tint: tint)
+    }
+
     // MARK: - Capabilities
 
     func getCapabilities() -> [Capability] {
@@ -257,27 +349,30 @@ actor CaptureManager: NSObject {
         let commonResolutions = [
             (1280, 720, "1280x720"),
             (1920, 1080, "1920x1080"),
-            (3840, 2160, "3840x2160")
+            (3840, 2160, "3840x2160"),
         ]
 
         for (width, height, resString) in commonResolutions {
             let supportedFPS = getAvailableFramerates(for: device, width: width, height: height)
 
             if !supportedFPS.isEmpty {
-                capabilities.append(Capability(
-                    resolution: resString,
-                    fps: supportedFPS,
-                    codec: ["h264", "hevc"],
-                    lens: "wide",
-                    maxZoom: Double(device.activeFormat.videoMaxZoomFactor)
-                ))
+                capabilities.append(
+                    Capability(
+                        resolution: resString,
+                        fps: supportedFPS,
+                        codec: ["h264", "hevc"],
+                        lens: "wide",
+                        maxZoom: Double(device.activeFormat.videoMaxZoomFactor)
+                    ))
             }
         }
 
         return capabilities
     }
 
-    private func getAvailableFramerates(for device: AVCaptureDevice, width: Int, height: Int) -> [Int] {
+    private func getAvailableFramerates(for device: AVCaptureDevice, width: Int, height: Int)
+        -> [Int]
+    {
         var framerates: Set<Int> = []
 
         for format in device.formats {
@@ -310,33 +405,38 @@ actor CaptureManager: NSObject {
         return (width: components[0], height: components[1])
     }
 
-    private func whiteBalanceGains(forTemperature temperature: Float) -> AVCaptureDevice.WhiteBalanceGains {
-        // Simplified temperature to RGB gains conversion
-        // In production, use proper color science lookup tables
-        let normalizedTemp = (temperature - 3000.0) / (6500.0 - 3000.0)
-        let blue = Float(1.0 + (normalizedTemp * 0.5))
-        let red = Float(1.5 - (normalizedTemp * 0.5))
+    // MARK: - White Balance Helpers
 
-        return AVCaptureDevice.WhiteBalanceGains(
-            redGain: red,
-            greenGain: 1.0,
-            blueGain: blue
-        )
+    // Clamp helper to keep gains in device-safe range
+    private func clampedGains(_ gains: AVCaptureDevice.WhiteBalanceGains, for device: AVCaptureDevice) -> AVCaptureDevice.WhiteBalanceGains {
+        var g = gains
+        let maxG = device.maxWhiteBalanceGain
+        g.redGain   = max(1.0, min(g.redGain,   maxG))   // clamp R
+        g.greenGain = max(1.0, min(g.greenGain, maxG))   // clamp G
+        g.blueGain  = max(1.0, min(g.blueGain,  maxG))   // clamp B
+        return g
     }
 
     // MARK: - Color Space Attachment
 
-    private func attachColorSpaceMetadata(to sampleBuffer: CMSampleBuffer) {
+    nonisolated private func attachColorSpaceMetadata(to sampleBuffer: CMSampleBuffer) {
         // Attach Rec.709 Full Range color space metadata
+        // Note: CVBufferSetAttachment is thread-safe and doesn't require actor isolation
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_709) else {
+            return
+        }
+
         let attachments: [String: Any] = [
             kCVImageBufferColorPrimariesKey as String: kCVImageBufferColorPrimaries_ITU_R_709_2,
             kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
-            kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_ITU_R_709_2
+            kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_ITU_R_709_2,
+            kCVImageBufferCGColorSpaceKey as String: colorSpace
         ]
 
         if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
             for (key, value) in attachments {
-                CVBufferSetAttachment(pixelBuffer, key as CFString, value as CFTypeRef, .shouldPropagate)
+                CVBufferSetAttachment(
+                    pixelBuffer, key as CFString, value as CFTypeRef, .shouldPropagate)
             }
         }
     }
@@ -350,11 +450,11 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // Attach color space metadata to ensure Rec.709 Full
-        Task {
-            await attachColorSpaceMetadata(to: sampleBuffer)
+        // Attach color space metadata to ensure Rec.709 Full (synchronous, thread-safe)
+        attachColorSpaceMetadata(to: sampleBuffer)
 
-            // Forward to callback
+        // Forward to callback (access via Task to respect actor isolation)
+        Task {
             if let callback = await frameCallback {
                 callback(sampleBuffer)
             }
@@ -380,6 +480,8 @@ enum CaptureError: LocalizedError {
     case sessionNotConfigured
     case formatNotSupported
     case invalidResolution
+    case invalidWhiteBalanceGains
+    case whiteBalanceNotSupported
 
     var errorDescription: String? {
         switch self {
@@ -395,6 +497,10 @@ enum CaptureError: LocalizedError {
             return "Requested format not supported"
         case .invalidResolution:
             return "Invalid resolution format"
+        case .invalidWhiteBalanceGains:
+            return "White balance gains out of valid range"
+        case .whiteBalanceNotSupported:
+            return "White balance mode not supported"
         }
     }
 }
