@@ -13,6 +13,7 @@ struct CameraSettingsPanel: View {
 
     @State private var selectedWBMode: WhiteBalanceMode = .auto
     @State private var wbKelvin: Double = 5000
+    @State private var wbTint: Double = 0.0
     @State private var iso: Double = 160
     @State private var shutterSpeed: Double = 0.01
     @State private var zoomFactor: Double = 1.0
@@ -172,6 +173,7 @@ struct CameraSettingsPanel: View {
         if let settings = coordinator.currentSettings {
             selectedWBMode = settings.wbMode
             wbKelvin = Double(settings.wbKelvin ?? 5000)
+            wbTint = settings.wbTint ?? 0.0
             iso = Double(settings.iso)
             shutterSpeed = settings.shutterS
             zoomFactor = settings.zoomFactor
@@ -183,6 +185,7 @@ struct CameraSettingsPanel: View {
             let request = CameraSettingsRequest(
                 wbMode: selectedWBMode,
                 wbKelvin: selectedWBMode == .manual ? Int(wbKelvin) : nil,
+                wbTint: selectedWBMode == .manual ? wbTint : nil,
                 iso: Int(iso),
                 shutterS: shutterSpeed,
                 focusMode: nil,
