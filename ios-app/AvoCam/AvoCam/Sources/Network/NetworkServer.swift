@@ -690,10 +690,35 @@ class NetworkServer {
                         </div>
                     </div>
                     <div class="settings-row">
-                        <label for="iso">ISO: <span id="iso-value">0</span> (0 = Auto)</label>
-                        <div class="slider-group">
-                            <input type="range" id="iso-slider" value="0" min="0" max="3200" step="50">
-                            <input type="number" id="iso" value="0" min="0" max="3200" step="50">
+                        <label for="iso-mode">ISO</label>
+                        <select id="iso-mode">
+                            <option value="auto">Auto</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                    </div>
+                    <div id="iso-manual-controls" style="display: none;">
+                        <div class="settings-row">
+                            <label for="iso">Sensitivity: <span id="iso-value">160</span></label>
+                            <div class="slider-group">
+                                <input type="range" id="iso-slider" value="160" min="50" max="3200" step="50">
+                                <input type="number" id="iso" value="160" min="50" max="3200" step="50">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <label for="shutter-mode">Shutter Speed</label>
+                        <select id="shutter-mode">
+                            <option value="auto">Auto</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                    </div>
+                    <div id="shutter-manual-controls" style="display: none;">
+                        <div class="settings-row">
+                            <label for="shutter">Exposure Time: <span id="shutter-value">1/100</span></label>
+                            <div class="slider-group">
+                                <input type="range" id="shutter-slider" value="0.01" min="0.001" max="0.1" step="0.001">
+                                <input type="number" id="shutter" value="0.01" min="0.001" max="0.1" step="0.001">
+                            </div>
                         </div>
                     </div>
                     <div class="settings-row">
@@ -780,10 +805,27 @@ class NetworkServer {
                             }
 
                             // ISO
+                            if (current.iso_mode) {
+                                document.getElementById('iso-mode').value = current.iso_mode;
+                                document.getElementById('iso-manual-controls').style.display =
+                                    current.iso_mode === 'manual' ? 'block' : 'none';
+                            }
                             if (current.iso !== null && current.iso !== undefined) {
                                 document.getElementById('iso').value = current.iso;
                                 document.getElementById('iso-slider').value = current.iso;
                                 document.getElementById('iso-value').textContent = current.iso;
+                            }
+
+                            // Shutter speed
+                            if (current.shutter_mode) {
+                                document.getElementById('shutter-mode').value = current.shutter_mode;
+                                document.getElementById('shutter-manual-controls').style.display =
+                                    current.shutter_mode === 'manual' ? 'block' : 'none';
+                            }
+                            if (current.shutter_s !== null && current.shutter_s !== undefined) {
+                                document.getElementById('shutter').value = current.shutter_s;
+                                document.getElementById('shutter-slider').value = current.shutter_s;
+                                document.getElementById('shutter-value').textContent = formatShutterSpeed(current.shutter_s);
                             }
 
                             // Zoom
@@ -834,8 +876,17 @@ class NetworkServer {
                     }
                 }
 
+                // Format shutter speed for display
+                function formatShutterSpeed(seconds) {
+                    if (seconds >= 1) {
+                        return seconds.toFixed(1) + 's';
+                    } else {
+                        return '1/' + Math.round(1.0 / seconds);
+                    }
+                }
+
                 // Slider sync functions - work directly with physical SceneCCT_K
-                function syncSlider(sliderId, inputId, valueId) {
+                function syncSlider(sliderId, inputId, valueId, formatter = null) {
                     const slider = document.getElementById(sliderId);
                     const input = document.getElementById(inputId);
                     const valueLabel = document.getElementById(valueId);
@@ -843,13 +894,13 @@ class NetworkServer {
                     slider.addEventListener('input', (e) => {
                         const val = e.target.value;
                         input.value = val;
-                        valueLabel.textContent = val;
+                        valueLabel.textContent = formatter ? formatter(val) : val;
                     });
 
                     input.addEventListener('input', (e) => {
                         const val = e.target.value;
                         slider.value = val;
-                        valueLabel.textContent = val;
+                        valueLabel.textContent = formatter ? formatter(val) : val;
                     });
                 }
 
@@ -857,6 +908,7 @@ class NetworkServer {
                 syncSlider('wb-kelvin-slider', 'wb-kelvin', 'wb-kelvin-value');
                 syncSlider('wb-tint-slider', 'wb-tint', 'wb-tint-value');
                 syncSlider('iso-slider', 'iso', 'iso-value');
+                syncSlider('shutter-slider', 'shutter', 'shutter-value', formatShutterSpeed);
                 syncSlider('zoom-slider', 'zoom', 'zoom-value');
 
                 // Event handlers
@@ -902,13 +954,21 @@ class NetworkServer {
                         document.getElementById('wb-tint-value').textContent = Math.round(tint);
 
                         // Auto-apply: send physical SceneCCT_K directly
-                        await apiCall('/api/v1/camera', 'POST', {
+                        const applySettings = {
                             wb_mode: 'manual',
                             wb_kelvin: sceneCCT_K,  // Send physical value
                             wb_tint: tint,
-                            iso: parseInt(document.getElementById('iso').value),
+                            iso_mode: document.getElementById('iso-mode').value,
+                            shutter_mode: document.getElementById('shutter-mode').value,
                             zoom_factor: parseFloat(document.getElementById('zoom').value)
-                        });
+                        };
+                        if (applySettings.iso_mode === 'manual') {
+                            applySettings.iso = parseInt(document.getElementById('iso').value);
+                        }
+                        if (applySettings.shutter_mode === 'manual') {
+                            applySettings.shutter_s = parseFloat(document.getElementById('shutter').value);
+                        }
+                        await apiCall('/api/v1/camera', 'POST', applySettings);
 
                         btn.disabled = false;
                         btn.textContent = '📸 Auto Measure';
@@ -922,12 +982,19 @@ class NetworkServer {
                 document.getElementById('btn-apply-settings').addEventListener('click', async () => {
                     const settings = {
                         wb_mode: document.getElementById('wb-mode').value,
-                        iso: parseInt(document.getElementById('iso').value),
+                        iso_mode: document.getElementById('iso-mode').value,
+                        shutter_mode: document.getElementById('shutter-mode').value,
                         zoom_factor: parseFloat(document.getElementById('zoom').value)
                     };
                     if (settings.wb_mode === 'manual') {
                         settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
                         settings.wb_tint = parseFloat(document.getElementById('wb-tint').value);
+                    }
+                    if (settings.iso_mode === 'manual') {
+                        settings.iso = parseInt(document.getElementById('iso').value);
+                    }
+                    if (settings.shutter_mode === 'manual') {
+                        settings.shutter_s = parseFloat(document.getElementById('shutter').value);
                     }
                     await apiCall('/api/v1/camera', 'POST', settings);
                 });
@@ -936,6 +1003,18 @@ class NetworkServer {
                 document.getElementById('wb-mode').addEventListener('change', (e) => {
                     const isManual = e.target.value === 'manual';
                     document.getElementById('wb-manual-controls').style.display = isManual ? 'block' : 'none';
+                });
+
+                // Show/hide ISO manual controls based on mode
+                document.getElementById('iso-mode').addEventListener('change', (e) => {
+                    const isManual = e.target.value === 'manual';
+                    document.getElementById('iso-manual-controls').style.display = isManual ? 'block' : 'none';
+                });
+
+                // Show/hide shutter manual controls based on mode
+                document.getElementById('shutter-mode').addEventListener('change', (e) => {
+                    const isManual = e.target.value === 'manual';
+                    document.getElementById('shutter-manual-controls').style.display = isManual ? 'block' : 'none';
                 });
 
                 // Initialize

@@ -426,8 +426,14 @@ class AppCoordinator: ObservableObject {
         if let wbTint = settings.wbTint {
             current.wbTint = wbTint
         }
+        if let isoMode = settings.isoMode {
+            current.isoMode = isoMode
+        }
         if let iso = settings.iso {
             current.iso = iso
+        }
+        if let shutterMode = settings.shutterMode {
+            current.shutterMode = shutterMode
         }
         if let shutterS = settings.shutterS {
             current.shutterS = shutterS
@@ -487,7 +493,9 @@ class AppCoordinator: ObservableObject {
                 wbMode: .auto,
                 wbKelvin: nil,
                 wbTint: nil,
+                isoMode: .auto,
                 iso: 0,
+                shutterMode: .auto,
                 shutterS: 0.0,
                 focusMode: .auto,
                 zoomFactor: 1.0
@@ -506,7 +514,9 @@ class AppCoordinator: ObservableObject {
             wbMode: .auto,
             wbKelvin: nil,
             wbTint: nil,
+            isoMode: .auto,
             iso: 0,
+            shutterMode: .auto,
             shutterS: 0.0,
             focusMode: .auto,
             zoomFactor: 1.0

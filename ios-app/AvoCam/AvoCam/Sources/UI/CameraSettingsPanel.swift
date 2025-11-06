@@ -14,7 +14,9 @@ struct CameraSettingsPanel: View {
     @State private var selectedWBMode: WhiteBalanceMode = .auto
     @State private var wbKelvin: Double = 5000
     @State private var wbTint: Double = 0.0
+    @State private var selectedISOMode: ExposureMode = .auto
     @State private var iso: Double = 160
+    @State private var selectedShutterMode: ExposureMode = .auto
     @State private var shutterSpeed: Double = 0.01
     @State private var zoomFactor: Double = 1.0
 
@@ -80,18 +82,26 @@ struct CameraSettingsPanel: View {
                             .font(.subheadline)
                             .fontWeight(.semibold)
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Sensitivity")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(iso))")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
+                        Picker("Mode", selection: $selectedISOMode) {
+                            Text("Auto").tag(ExposureMode.auto)
+                            Text("Manual").tag(ExposureMode.manual)
+                        }
+                        .pickerStyle(.segmented)
 
-                            Slider(value: $iso, in: 50...3200, step: 10)
+                        if selectedISOMode == .manual {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Sensitivity")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(Int(iso))")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+
+                                Slider(value: $iso, in: 50...3200, step: 10)
+                            }
                         }
                     }
                     .padding()
@@ -104,18 +114,26 @@ struct CameraSettingsPanel: View {
                             .font(.subheadline)
                             .fontWeight(.semibold)
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Exposure Time")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text(formatShutterSpeed(shutterSpeed))
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
+                        Picker("Mode", selection: $selectedShutterMode) {
+                            Text("Auto").tag(ExposureMode.auto)
+                            Text("Manual").tag(ExposureMode.manual)
+                        }
+                        .pickerStyle(.segmented)
 
-                            Slider(value: $shutterSpeed, in: 0.001...0.1, step: 0.001)
+                        if selectedShutterMode == .manual {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Exposure Time")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text(formatShutterSpeed(shutterSpeed))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+
+                                Slider(value: $shutterSpeed, in: 0.001...0.1, step: 0.001)
+                            }
                         }
                     }
                     .padding()
@@ -174,7 +192,9 @@ struct CameraSettingsPanel: View {
             selectedWBMode = settings.wbMode
             wbKelvin = Double(settings.wbKelvin ?? 5000)
             wbTint = settings.wbTint ?? 0.0
+            selectedISOMode = settings.isoMode
             iso = Double(settings.iso)
+            selectedShutterMode = settings.shutterMode
             shutterSpeed = settings.shutterS
             zoomFactor = settings.zoomFactor
         }
@@ -186,8 +206,10 @@ struct CameraSettingsPanel: View {
                 wbMode: selectedWBMode,
                 wbKelvin: selectedWBMode == .manual ? Int(wbKelvin) : nil,
                 wbTint: selectedWBMode == .manual ? wbTint : nil,
-                iso: Int(iso),
-                shutterS: shutterSpeed,
+                isoMode: selectedISOMode,
+                iso: selectedISOMode == .manual ? Int(iso) : nil,
+                shutterMode: selectedShutterMode,
+                shutterS: selectedShutterMode == .manual ? shutterSpeed : nil,
                 focusMode: nil,
                 zoomFactor: zoomFactor,
                 lens: nil,

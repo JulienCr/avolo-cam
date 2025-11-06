@@ -111,12 +111,29 @@
   let cameraSettings = {
     wb_mode: 'auto',
     wb_kelvin: 5000,
+    iso_mode: 'auto',
     iso: 400,
+    shutter_mode: 'auto',
+    shutter_s: 0.01,
     zoom_factor: 1.0
   };
 
   function openSettings(cameraId) {
     settingsCameraId = cameraId;
+
+    // Load current settings from camera
+    const camera = cameras.find(c => c.id === cameraId);
+    if (camera && camera.status && camera.status.current) {
+      const current = camera.status.current;
+      cameraSettings.wb_mode = current.wb_mode || 'auto';
+      cameraSettings.wb_kelvin = current.wb_kelvin || 5000;
+      cameraSettings.iso_mode = current.iso_mode || 'auto';
+      cameraSettings.iso = current.iso || 160;
+      cameraSettings.shutter_mode = current.shutter_mode || 'auto';
+      cameraSettings.shutter_s = current.shutter_s || 0.01;
+      cameraSettings.zoom_factor = current.zoom_factor || 1.0;
+    }
+
     showSettingsDialog = true;
   }
 
@@ -124,14 +141,26 @@
     if (!settingsCameraId) return;
 
     try {
-      // Build settings object with only non-null values
-      const settings = {};
-      if (cameraSettings.wb_mode) settings.wb_mode = cameraSettings.wb_mode;
-      if (cameraSettings.wb_mode === 'manual' && cameraSettings.wb_kelvin) {
+      // Build settings object - always send modes, conditionally send values
+      const settings = {
+        wb_mode: cameraSettings.wb_mode,
+        iso_mode: cameraSettings.iso_mode,
+        shutter_mode: cameraSettings.shutter_mode,
+        zoom_factor: parseFloat(cameraSettings.zoom_factor)
+      };
+
+      // Add manual values only when in manual mode
+      if (cameraSettings.wb_mode === 'manual') {
         settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
       }
-      if (cameraSettings.iso) settings.iso = parseInt(cameraSettings.iso);
-      if (cameraSettings.zoom_factor) settings.zoom_factor = parseFloat(cameraSettings.zoom_factor);
+      if (cameraSettings.iso_mode === 'manual') {
+        settings.iso = parseInt(cameraSettings.iso);
+      }
+      if (cameraSettings.shutter_mode === 'manual') {
+        settings.shutter_s = parseFloat(cameraSettings.shutter_s);
+      }
+
+      console.log('Sending settings:', settings);
 
       await invoke('update_camera_settings', {
         cameraId: settingsCameraId,
@@ -140,6 +169,7 @@
       showSettingsDialog = false;
       await refreshCameras();
     } catch (e) {
+      console.error('Failed to update settings:', e);
       alert(`Failed to update settings: ${e}`);
     }
   }
@@ -202,6 +232,14 @@
 
   function formatBitrate(bitrate) {
     return (bitrate / 1000000).toFixed(1) + ' Mbps';
+  }
+
+  function formatShutterSpeed(seconds) {
+    if (seconds >= 1) {
+      return seconds.toFixed(1) + 's';
+    } else {
+      return '1/' + Math.round(1.0 / seconds);
+    }
   }
 </script>
 
@@ -341,15 +379,45 @@
           </label>
           {#if cameraSettings.wb_mode === 'manual'}
             <label>
-              White Balance (Kelvin):
-              <input type="number" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" />
+              Temperature: <strong>{cameraSettings.wb_kelvin}K</strong>
+              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+                <input type="range" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" style="flex: 1;" />
+                <input type="number" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" style="width: 80px;" />
+              </div>
             </label>
           {/if}
           <label>
-            ISO:
-            <input type="number" bind:value={cameraSettings.iso} min="0" max="3200" step="50" />
-            <small>0 = Auto</small>
+            ISO Mode:
+            <select bind:value={cameraSettings.iso_mode}>
+              <option value="auto">Auto</option>
+              <option value="manual">Manual</option>
+            </select>
           </label>
+          {#if cameraSettings.iso_mode === 'manual'}
+            <label>
+              ISO: <strong>{cameraSettings.iso}</strong>
+              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+                <input type="range" bind:value={cameraSettings.iso} min="50" max="3200" step="50" style="flex: 1;" />
+                <input type="number" bind:value={cameraSettings.iso} min="50" max="3200" step="50" style="width: 80px;" />
+              </div>
+            </label>
+          {/if}
+          <label>
+            Shutter Speed Mode:
+            <select bind:value={cameraSettings.shutter_mode}>
+              <option value="auto">Auto</option>
+              <option value="manual">Manual</option>
+            </select>
+          </label>
+          {#if cameraSettings.shutter_mode === 'manual'}
+            <label>
+              Shutter Speed: <strong>{formatShutterSpeed(cameraSettings.shutter_s)}</strong>
+              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+                <input type="range" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" style="flex: 1;" />
+                <input type="number" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" style="width: 80px;" />
+              </div>
+            </label>
+          {/if}
           <label>
             Zoom Factor:
             <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />
