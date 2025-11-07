@@ -116,6 +116,14 @@ pub struct CameraSettingsRequest {
     pub orientation_lock: Option<String>,
 }
 
+// MARK: - Profiles
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraProfile {
+    pub name: String,
+    pub settings: CameraSettingsRequest,
+}
+
 // MARK: - WebSocket Messages
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

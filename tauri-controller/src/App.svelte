@@ -29,6 +29,12 @@
   let manualPort = 8888;
   let manualToken = '';
 
+  // Profile management
+  let profiles = [];
+  let showProfileDialog = false;
+  let profileName = '';
+  let savingProfile = false;
+
   // Refresh cameras periodically
   let refreshInterval;
   let discoveryInterval;
@@ -36,6 +42,7 @@
   onMount(async () => {
     await refreshCameras();
     await discoverCameras(); // Initial discovery
+    await loadProfiles(); // Load saved profiles
 
     refreshInterval = setInterval(refreshCameras, 2000); // Refresh every 2 seconds
     discoveryInterval = setInterval(discoverCameras, 10000); // Re-discover every 10 seconds
@@ -264,6 +271,87 @@
     debouncedUpdateSettings();
   }
 
+  // MARK: - Profile Management
+
+  async function loadProfiles() {
+    try {
+      profiles = await invoke('get_profiles');
+      console.log('Loaded profiles:', profiles);
+    } catch (e) {
+      console.error('Failed to load profiles:', e);
+    }
+  }
+
+  async function saveCurrentProfile() {
+    if (!profileName.trim()) {
+      alert('Please enter a profile name');
+      return;
+    }
+
+    try {
+      savingProfile = true;
+      await invoke('save_profile', {
+        name: profileName.trim(),
+        settings: {
+          wb_mode: cameraSettings.wb_mode,
+          wb_kelvin: cameraSettings.wb_mode === 'manual' ? cameraSettings.wb_kelvin : null,
+          wb_tint: cameraSettings.wb_mode === 'manual' ? 0.0 : null,
+          iso_mode: cameraSettings.iso_mode,
+          iso: cameraSettings.iso_mode === 'manual' ? cameraSettings.iso : null,
+          shutter_mode: cameraSettings.shutter_mode,
+          shutter_s: cameraSettings.shutter_mode === 'manual' ? cameraSettings.shutter_s : null,
+          zoom_factor: cameraSettings.zoom_factor,
+          lens: cameraSettings.lens,
+        }
+      });
+      await loadProfiles();
+      profileName = '';
+      alert('Profile saved successfully!');
+    } catch (e) {
+      alert(`Failed to save profile: ${e}`);
+    } finally {
+      savingProfile = false;
+    }
+  }
+
+  async function deleteProfile(name) {
+    if (!confirm(`Delete profile "${name}"?`)) return;
+
+    try {
+      await invoke('delete_profile', { name });
+      await loadProfiles();
+    } catch (e) {
+      alert(`Failed to delete profile: ${e}`);
+    }
+  }
+
+  async function applyProfile(profileName) {
+    const ids = Array.from(selectedCameras);
+    if (ids.length === 0) {
+      alert('No cameras selected');
+      return;
+    }
+
+    try {
+      const results = await invoke('apply_profile', {
+        profileName,
+        cameraIds: ids
+      });
+
+      // Show results
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        alert(`Failed for ${failures.length} cameras:\n` + failures.map(f => f.error).join('\n'));
+      } else {
+        alert(`Profile "${profileName}" applied to ${ids.length} camera(s)`);
+      }
+
+      await refreshCameras();
+    } catch (e) {
+      alert(`Failed to apply profile: ${e}`);
+    }
+  }
+
   // MARK: - Group Controls
 
   async function groupStartStream() {
@@ -338,6 +426,7 @@
     <h1>🎥 AvoCam Controller</h1>
     <div class="header-actions">
       <button on:click={() => showAddDialog = true}>+ Add Camera</button>
+      <button on:click={() => showProfileDialog = true}>📋 Profiles</button>
       <button on:click={refreshCameras}>🔄 Refresh</button>
     </div>
   </header>
@@ -472,6 +561,84 @@
             <button type="button" on:click={() => showAddDialog = false}>Cancel</button>
           </div>
         </form>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Profile Management Dialog -->
+  {#if showProfileDialog}
+    <div class="dialog-overlay" on:click={() => showProfileDialog = false}>
+      <div class="dialog dialog-large" on:click|stopPropagation>
+        <h2>Profile Management</h2>
+
+        <!-- Save Current Settings as Profile -->
+        {#if showSettingsDialog && settingsCameraId}
+          <div class="profile-save-section">
+            <h3>Save Current Settings</h3>
+            <div class="profile-save-form">
+              <input
+                type="text"
+                bind:value={profileName}
+                placeholder="Profile name"
+                disabled={savingProfile}
+              />
+              <button
+                on:click={saveCurrentProfile}
+                disabled={savingProfile || !profileName.trim()}
+                class="primary"
+              >
+                {savingProfile ? 'Saving...' : 'Save Profile'}
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Saved Profiles List -->
+        <div class="profiles-section">
+          <h3>Saved Profiles ({profiles.length})</h3>
+          {#if profiles.length === 0}
+            <p class="empty-message">No profiles saved yet</p>
+          {:else}
+            <div class="profiles-list">
+              {#each profiles as profile (profile.name)}
+                <div class="profile-item">
+                  <div class="profile-info">
+                    <strong>{profile.name}</strong>
+                    <div class="profile-details">
+                      WB: {profile.settings.wb_mode || 'auto'}
+                      {#if profile.settings.wb_mode === 'manual' && profile.settings.wb_kelvin}
+                        ({profile.settings.wb_kelvin}K)
+                      {/if}
+                      | ISO: {profile.settings.iso_mode || 'auto'}
+                      {#if profile.settings.iso_mode === 'manual' && profile.settings.iso}
+                        ({profile.settings.iso})
+                      {/if}
+                      | Lens: {profile.settings.lens || 'wide'}
+                    </div>
+                  </div>
+                  <div class="profile-actions">
+                    <button
+                      on:click={() => applyProfile(profile.name)}
+                      class="btn-apply"
+                    >
+                      Apply to Selected
+                    </button>
+                    <button
+                      on:click={() => deleteProfile(profile.name)}
+                      class="btn-delete"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="dialog-buttons">
+          <button on:click={() => showProfileDialog = false}>Close</button>
+        </div>
       </div>
     </div>
   {/if}
@@ -928,5 +1095,130 @@
   .discovering-message p {
     margin: 0;
     color: #856404;
+  }
+
+  /* Profile Management Styles */
+  .dialog-large {
+    max-width: 600px;
+  }
+
+  .profile-save-section {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+
+  .profile-save-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    color: #495057;
+  }
+
+  .profile-save-form {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .profile-save-form input {
+    flex: 1;
+    margin: 0;
+  }
+
+  .profiles-section h3 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    color: #495057;
+  }
+
+  .empty-message {
+    text-align: center;
+    color: #6c757d;
+    padding: 20px;
+    font-style: italic;
+  }
+
+  .profiles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .profile-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+
+  .profile-item:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+  }
+
+  .profile-info {
+    flex: 1;
+  }
+
+  .profile-info strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #212529;
+    font-size: 15px;
+  }
+
+  .profile-details {
+    font-size: 13px;
+    color: #6c757d;
+  }
+
+  .profile-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-apply {
+    padding: 8px 16px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-apply:hover {
+    background: #5568d3;
+  }
+
+  .btn-apply:active {
+    transform: scale(0.98);
+  }
+
+  .btn-delete {
+    padding: 8px 16px;
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-delete:hover {
+    background: #c82333;
+  }
+
+  .btn-delete:active {
+    transform: scale(0.98);
   }
 </style>

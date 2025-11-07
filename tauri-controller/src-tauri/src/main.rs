@@ -185,6 +185,49 @@ async fn update_camera_alias(
         .map_err(|e| e.to_string())
 }
 
+// Profile management commands
+
+#[tauri::command]
+async fn save_profile(
+    state: State<'_, AppState>,
+    name: String,
+    settings: CameraSettingsRequest,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.save_profile(name, settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<CameraProfile>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_profiles().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_profile(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.delete_profile(&name).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn apply_profile(
+    state: State<'_, AppState>,
+    profile_name: String,
+    camera_ids: Vec<String>,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.apply_profile(&profile_name, &camera_ids).await
+        .map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -250,6 +293,10 @@ fn main() {
             group_stop_stream,
             group_update_settings,
             update_camera_alias,
+            save_profile,
+            get_profiles,
+            delete_profile,
+            apply_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
