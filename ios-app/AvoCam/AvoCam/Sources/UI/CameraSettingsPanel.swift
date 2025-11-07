@@ -212,6 +212,7 @@ struct CameraSettingsPanel: View {
                 shutterS: selectedShutterMode == .manual ? shutterSpeed : nil,
                 focusMode: nil,
                 zoomFactor: zoomFactor,
+                cameraPosition: nil,
                 lens: nil,
                 orientationLock: nil
             )
