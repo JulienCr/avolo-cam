@@ -44,6 +44,8 @@ struct CurrentSettings: Codable {
     var shutterS: Double
     var focusMode: FocusMode
     var zoomFactor: Double
+    var cameraPosition: String  // "back" or "front"
+    var lens: String            // "wide", "ultra_wide", "telephoto"
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -59,6 +61,8 @@ struct CurrentSettings: Codable {
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
         case zoomFactor = "zoom_factor"
+        case cameraPosition = "camera_position"
+        case lens
     }
 }
 
@@ -142,6 +146,7 @@ struct CameraSettingsRequest: Codable {
     let shutterS: Double?
     let focusMode: FocusMode?
     let zoomFactor: Double?
+    let cameraPosition: String?
     let lens: String?
     let orientationLock: String?
 
@@ -155,6 +160,7 @@ struct CameraSettingsRequest: Codable {
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
         case zoomFactor = "zoom_factor"
+        case cameraPosition = "camera_position"
         case lens
         case orientationLock = "orientation_lock"
     }

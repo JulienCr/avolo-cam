@@ -29,10 +29,14 @@ pub struct CurrentSettings {
     pub wb_mode: WhiteBalanceMode,
     pub wb_kelvin: Option<u32>,
     pub wb_tint: Option<f64>,
+    pub iso_mode: ExposureMode,
     pub iso: u32,
+    pub shutter_mode: ExposureMode,
     pub shutter_s: f64,
     pub focus_mode: FocusMode,
     pub zoom_factor: f64,
+    pub camera_position: String,
+    pub lens: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,6 +49,13 @@ pub enum WhiteBalanceMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FocusMode {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExposureMode {
     Auto,
     Manual,
 }
@@ -95,12 +106,22 @@ pub struct CameraSettingsRequest {
     pub wb_mode: Option<WhiteBalanceMode>,
     pub wb_kelvin: Option<u32>,
     pub wb_tint: Option<f64>,
+    pub iso_mode: Option<ExposureMode>,
     pub iso: Option<u32>,
+    pub shutter_mode: Option<ExposureMode>,
     pub shutter_s: Option<f64>,
     pub focus_mode: Option<FocusMode>,
     pub zoom_factor: Option<f64>,
     pub lens: Option<String>,
     pub orientation_lock: Option<String>,
+}
+
+// MARK: - Profiles
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraProfile {
+    pub name: String,
+    pub settings: CameraSettingsRequest,
 }
 
 // MARK: - WebSocket Messages

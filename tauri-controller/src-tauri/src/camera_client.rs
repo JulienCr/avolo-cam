@@ -12,7 +12,8 @@ use crate::models::*;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const WS_RECONNECT_DELAY: Duration = Duration::from_secs(2);
-const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+const MAX_RECONNECT_ATTEMPTS: u32 = 100; // High limit, effectively unlimited
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30); // Cap backoff at 30s
 
 pub struct CameraClient {
     base_url: String,
@@ -174,9 +175,11 @@ impl CameraClient {
                     }
                 }
 
-                // Exponential backoff
-                let delay = WS_RECONNECT_DELAY * 2_u32.pow(reconnect_attempts.min(5));
-                log::info!("Reconnecting in {:?}", delay);
+                // Exponential backoff with cap
+                let backoff_multiplier = 2_u32.pow(reconnect_attempts.min(5));
+                let calculated_delay = WS_RECONNECT_DELAY * backoff_multiplier;
+                let delay = calculated_delay.min(MAX_RECONNECT_DELAY);
+                log::info!("Reconnecting in {:?} (attempt {}/{})", delay, reconnect_attempts, MAX_RECONNECT_ATTEMPTS);
                 tokio::time::sleep(delay).await;
 
                 // Check if we should stop reconnecting
@@ -211,11 +214,27 @@ async fn connect_websocket_internal<F>(
 where
     F: Fn(WebSocketTelemetryMessage) + Send + Sync + 'static,
 {
-    let url = format!("{}?token={}", ws_url, token);
-    let (ws_stream, _) = connect_async(&url).await
+    // Build request with Authorization header (Bearer token)
+    use tokio_tungstenite::tungstenite::http::Request;
+
+    let request = Request::builder()
+        .uri(ws_url)
+        .header("Host", ws_url.split("//").nth(1).unwrap_or(ws_url).split('/').next().unwrap_or(ws_url))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+        .header("Authorization", format!("Bearer {}", token))
+        .body(())
+        .context("Failed to build WebSocket request")?;
+
+    log::info!("Connecting to WebSocket: {}", ws_url);
+    log::debug!("Authorization: Bearer {}", token);
+
+    let (ws_stream, response) = connect_async(request).await
         .context("Failed to connect to WebSocket")?;
 
-    log::info!("WebSocket connected: {}", ws_url);
+    log::info!("WebSocket connected successfully: {} (status: {})", ws_url, response.status());
 
     let (_write, mut read) = ws_stream.split();
 

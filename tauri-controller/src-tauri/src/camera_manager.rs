@@ -1,7 +1,9 @@
 //! Manager for multiple camera clients with group control
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 
@@ -11,10 +13,45 @@ use crate::models::*;
 
 const MAX_CONCURRENT_OPERATIONS: usize = 10;
 
+// MARK: - Persistence
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedCamera {
+    id: String,
+    alias: String,
+    ip: String,
+    port: u16,
+    token: String,
+}
+
+impl PersistedCamera {
+    fn from_camera_info(info: &CameraInfo) -> Self {
+        Self {
+            id: info.id.clone(),
+            alias: info.alias.clone(),
+            ip: info.ip.clone(),
+            port: info.port,
+            token: info.token.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CamerasPersistence {
+    cameras: Vec<PersistedCamera>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProfilesPersistence {
+    profiles: Vec<CameraProfile>,
+}
+
 pub struct CameraManager {
     cameras: HashMap<String, Camera>,
     discovery: Option<CameraDiscovery>,
     operation_semaphore: Arc<Semaphore>,
+    persistence_file_path: Option<PathBuf>,
+    profiles_file_path: Option<PathBuf>,
 }
 
 struct Camera {
@@ -28,7 +65,183 @@ impl CameraManager {
             cameras: HashMap::new(),
             discovery: None,
             operation_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_OPERATIONS)),
+            persistence_file_path: None,
+            profiles_file_path: None,
         }
+    }
+
+    /// Set the persistence file path and load any saved cameras
+    pub async fn set_persistence_path(&mut self, path: PathBuf) -> Result<()> {
+        self.persistence_file_path = Some(path.clone());
+
+        // Set profiles path in same directory
+        let profiles_path = path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid persistence path"))?
+            .join("profiles.json");
+        self.profiles_file_path = Some(profiles_path);
+
+        self.load_cameras_from_disk().await?;
+        Ok(())
+    }
+
+    /// Save all cameras to disk
+    async fn save_cameras_to_disk(&self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            return Ok(()); // No persistence path set
+        };
+
+        let persisted_cameras: Vec<PersistedCamera> = self.cameras
+            .values()
+            .map(|camera| PersistedCamera::from_camera_info(&camera.info))
+            .collect();
+
+        let persistence = CamerasPersistence {
+            cameras: persisted_cameras,
+        };
+
+        let json = serde_json::to_string_pretty(&persistence)
+            .context("Failed to serialize cameras")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write cameras to disk")?;
+
+        log::info!("Saved {} cameras to {:?}", persistence.cameras.len(), path);
+        Ok(())
+    }
+
+    /// Load cameras from disk and add them to the manager
+    async fn load_cameras_from_disk(&mut self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            return Ok(()); // No persistence path set
+        };
+
+        if !path.exists() {
+            log::info!("No cameras file found at {:?}, starting fresh", path);
+            return Ok(());
+        }
+
+        let json = tokio::fs::read_to_string(path).await
+            .context("Failed to read cameras file")?;
+
+        let persistence: CamerasPersistence = serde_json::from_str(&json)
+            .context("Failed to deserialize cameras")?;
+
+        log::info!("Loading {} cameras from {:?}", persistence.cameras.len(), path);
+
+        for persisted in persistence.cameras {
+            // Try to add camera, but don't fail if one camera fails
+            match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
+                Ok(id) => {
+                    log::info!("Loaded camera: {} ({})", persisted.alias, id);
+                }
+                Err(e) => {
+                    log::warn!("Failed to load camera {}: {}", persisted.alias, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // MARK: - Profile Management
+
+    /// Save a camera settings profile
+    pub async fn save_profile(&mut self, name: String, settings: CameraSettingsRequest) -> Result<()> {
+        let Some(path) = &self.profiles_file_path else {
+            anyhow::bail!("Profiles path not set");
+        };
+
+        // Load existing profiles
+        let mut profiles = self.load_profiles_from_disk().await.unwrap_or_default();
+
+        // Check if profile with this name already exists
+        if let Some(existing) = profiles.iter_mut().find(|p| p.name == name) {
+            // Update existing profile
+            existing.settings = settings;
+            log::info!("Updated existing profile: {}", name);
+        } else {
+            // Add new profile
+            profiles.push(CameraProfile { name: name.clone(), settings });
+            log::info!("Created new profile: {}", name);
+        }
+
+        // Save to disk
+        let persistence = ProfilesPersistence { profiles };
+        let json = serde_json::to_string_pretty(&persistence)
+            .context("Failed to serialize profiles")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write profiles to disk")?;
+
+        log::info!("Saved profiles to {:?}", path);
+        Ok(())
+    }
+
+    /// Get all saved profiles
+    pub async fn get_profiles(&self) -> Result<Vec<CameraProfile>> {
+        self.load_profiles_from_disk().await
+    }
+
+    /// Delete a profile by name
+    pub async fn delete_profile(&mut self, name: &str) -> Result<()> {
+        let Some(path) = &self.profiles_file_path else {
+            anyhow::bail!("Profiles path not set");
+        };
+
+        // Load existing profiles
+        let mut profiles = self.load_profiles_from_disk().await.unwrap_or_default();
+
+        // Remove the profile
+        let initial_len = profiles.len();
+        profiles.retain(|p| p.name != name);
+
+        if profiles.len() == initial_len {
+            anyhow::bail!("Profile not found: {}", name);
+        }
+
+        // Save updated list
+        let persistence = ProfilesPersistence { profiles };
+        let json = serde_json::to_string_pretty(&persistence)
+            .context("Failed to serialize profiles")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write profiles to disk")?;
+
+        log::info!("Deleted profile: {}", name);
+        Ok(())
+    }
+
+    /// Apply a profile to selected cameras
+    pub async fn apply_profile(&self, profile_name: &str, camera_ids: &[String]) -> Result<Vec<GroupCommandResult>> {
+        // Load profile
+        let profiles = self.load_profiles_from_disk().await?;
+        let profile = profiles.iter()
+            .find(|p| p.name == profile_name)
+            .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", profile_name))?;
+
+        // Apply settings to all selected cameras
+        self.group_update_settings(camera_ids, profile.settings.clone()).await
+    }
+
+    /// Load profiles from disk
+    async fn load_profiles_from_disk(&self) -> Result<Vec<CameraProfile>> {
+        let Some(path) = &self.profiles_file_path else {
+            return Ok(Vec::new());
+        };
+
+        if !path.exists() {
+            log::info!("No profiles file found at {:?}, starting fresh", path);
+            return Ok(Vec::new());
+        }
+
+        let json = tokio::fs::read_to_string(path).await
+            .context("Failed to read profiles file")?;
+
+        let persistence: ProfilesPersistence = serde_json::from_str(&json)
+            .context("Failed to deserialize profiles")?;
+
+        log::info!("Loaded {} profiles from {:?}", persistence.profiles.len(), path);
+        Ok(persistence.profiles)
     }
 
     // MARK: - Discovery
@@ -96,6 +309,11 @@ impl CameraManager {
 
         log::info!("Added camera: {}", id);
 
+        // Persist to disk
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk: {}", e);
+        }
+
         Ok(id)
     }
 
@@ -104,6 +322,12 @@ impl CameraManager {
             // Disconnect WebSocket
             camera.client.read().await.disconnect_websocket().await;
             log::info!("Removed camera: {}", camera_id);
+
+            // Persist to disk
+            if let Err(e) = self.save_cameras_to_disk().await {
+                log::warn!("Failed to save cameras to disk: {}", e);
+            }
+
             Ok(())
         } else {
             anyhow::bail!("Camera not found: {}", camera_id);
@@ -111,7 +335,28 @@ impl CameraManager {
     }
 
     pub async fn get_all_cameras(&self) -> Vec<CameraInfo> {
-        self.cameras.values().map(|c| c.info.clone()).collect()
+        let mut result = Vec::new();
+
+        for (id, camera) in &self.cameras {
+            let mut info = camera.info.clone();
+
+            // Fetch fresh status from camera
+            match camera.client.read().await.get_status().await {
+                Ok(status) => {
+                    info.status = Some(status);
+                    info.connection_state = ConnectionState::Connected;
+                }
+                Err(e) => {
+                    log::warn!("Failed to get status for camera {}: {}", id, e);
+                    info.connection_state = ConnectionState::Error;
+                    // Keep existing status if available
+                }
+            }
+
+            result.push(info);
+        }
+
+        result
     }
 
     pub async fn update_camera_alias(&mut self, camera_id: &str, alias: String) -> Result<()> {

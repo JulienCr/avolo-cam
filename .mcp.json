@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "swiftlens": {
+      "command": "uvx",
+      "args": [
+        "swiftlens"
+      ]
+    }
+  }
+}

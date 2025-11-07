@@ -18,7 +18,8 @@ struct CameraSettingsPanel: View {
     @State private var iso: Double = 160
     @State private var selectedShutterMode: ExposureMode = .auto
     @State private var shutterSpeed: Double = 0.01
-    @State private var zoomFactor: Double = 1.0
+    @State private var zoomFactor: Double = 2.0  // Device zoom (wide lens = 2.0x)
+    @State private var selectedLens: String = "wide"  // "ultra_wide", "wide", "telephoto"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -140,24 +141,52 @@ struct CameraSettingsPanel: View {
                     .background(Color(.systemGray6))
                     .cornerRadius(12)
 
-                    // Zoom
+                    // Lens & Zoom
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Zoom", systemImage: "viewfinder.circle")
+                        Label("Lens & Zoom", systemImage: "camera.metering.center.weighted")
                             .font(.subheadline)
                             .fontWeight(.semibold)
 
+                        // Lens selector (segmented control style)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Lens")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            HStack(spacing: 8) {
+                                LensButton(title: ".5", lensType: "ultra_wide", isSelected: selectedLens == "ultra_wide") {
+                                    selectedLens = "ultra_wide"
+                                    zoomFactor = 1.0  // Device zoom for ultra-wide
+                                }
+
+                                LensButton(title: "1", lensType: "wide", isSelected: selectedLens == "wide") {
+                                    selectedLens = "wide"
+                                    zoomFactor = 2.0  // Device zoom for wide
+                                }
+
+                                LensButton(title: "5", lensType: "telephoto", isSelected: selectedLens == "telephoto") {
+                                    selectedLens = "telephoto"
+                                    zoomFactor = 10.0  // Device zoom for telephoto
+                                }
+                            }
+                        }
+
+                        // Zoom slider
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Text("Digital Zoom")
+                                Text("Fine Zoom")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Text(String(format: "%.1fx", zoomFactor))
+                                Text(String(format: "%.1f×", zoomFactor / 2.0))  // Display UI zoom (device / 2)
                                     .font(.caption)
                                     .fontWeight(.medium)
                             }
 
-                            Slider(value: $zoomFactor, in: 1.0...5.0, step: 0.1)
+                            Slider(value: $zoomFactor, in: 1.0...20.0, step: 0.1)  // Device zoom range
+                                .onChange(of: zoomFactor) { _, newValue in
+                                    updateLensFromZoom(newValue)
+                                }
                         }
                     }
                     .padding()
@@ -197,6 +226,20 @@ struct CameraSettingsPanel: View {
             selectedShutterMode = settings.shutterMode
             shutterSpeed = settings.shutterS
             zoomFactor = settings.zoomFactor
+            updateLensFromZoom(zoomFactor)  // Update lens based on current zoom
+        }
+    }
+
+    private func updateLensFromZoom(_ zoom: Double) {
+        // Auto-detect lens based on device zoom value
+        // Device zoom: ultra-wide=1.0, wide=2.0, telephoto=10.0
+        // Thresholds: 1.5 (between 1.0 and 2.0), 6.0 (between 2.0 and 10.0)
+        if zoom < 1.5 {
+            selectedLens = "ultra_wide"  // < 1.5x device zoom
+        } else if zoom >= 6.0 {
+            selectedLens = "telephoto"   // >= 6.0x device zoom
+        } else {
+            selectedLens = "wide"        // 1.5x - 6.0x device zoom
         }
     }
 
@@ -212,6 +255,7 @@ struct CameraSettingsPanel: View {
                 shutterS: selectedShutterMode == .manual ? shutterSpeed : nil,
                 focusMode: nil,
                 zoomFactor: zoomFactor,
+                cameraPosition: nil,
                 lens: nil,
                 orientationLock: nil
             )
@@ -230,6 +274,28 @@ struct CameraSettingsPanel: View {
             return String(format: "%.1fs", seconds)
         } else {
             return String(format: "1/%.0f", 1.0 / seconds)
+        }
+    }
+}
+
+// MARK: - Lens Button Component
+
+struct LensButton: View {
+    let title: String
+    let lensType: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(isSelected ? Color.blue : Color(.systemGray5))
+                .foregroundColor(isSelected ? .white : .primary)
+                .cornerRadius(8)
         }
     }
 }

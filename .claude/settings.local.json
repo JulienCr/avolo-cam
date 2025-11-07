@@ -24,5 +24,9 @@
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "server-time"
+  ],
+  "enableAllProjectMcpServers": true
 }

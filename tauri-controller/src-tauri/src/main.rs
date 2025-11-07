@@ -185,6 +185,49 @@ async fn update_camera_alias(
         .map_err(|e| e.to_string())
 }
 
+// Profile management commands
+
+#[tauri::command]
+async fn save_profile(
+    state: State<'_, AppState>,
+    name: String,
+    settings: CameraSettingsRequest,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.save_profile(name, settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<CameraProfile>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_profiles().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_profile(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.delete_profile(&name).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn apply_profile(
+    state: State<'_, AppState>,
+    profile_name: String,
+    camera_ids: Vec<String>,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.apply_profile(&profile_name, &camera_ids).await
+        .map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -195,6 +238,30 @@ fn main() {
         .setup(|app| {
             // Initialize camera manager
             let camera_manager = Arc::new(RwLock::new(CameraManager::new()));
+
+            // Set up persistence path
+            let manager_clone = camera_manager.clone();
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Get app data directory
+                if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                    // Create directory if it doesn't exist
+                    if let Err(e) = std::fs::create_dir_all(&app_data_dir) {
+                        log::error!("Failed to create app data directory: {}", e);
+                        return;
+                    }
+
+                    // Set persistence path to cameras.json in app data dir
+                    let cameras_file = app_data_dir.join("cameras.json");
+                    log::info!("Setting camera persistence path to: {:?}", cameras_file);
+
+                    if let Err(e) = manager_clone.write().await.set_persistence_path(cameras_file).await {
+                        log::error!("Failed to set persistence path: {}", e);
+                    }
+                } else {
+                    log::warn!("Failed to get app data directory, camera persistence disabled");
+                }
+            });
 
             // Start mDNS discovery in background
             let manager_clone = camera_manager.clone();
@@ -226,6 +293,10 @@ fn main() {
             group_stop_stream,
             group_update_settings,
             update_camera_alias,
+            save_profile,
+            get_profiles,
+            delete_profile,
+            apply_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

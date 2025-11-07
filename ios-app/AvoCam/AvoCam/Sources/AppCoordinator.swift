@@ -27,7 +27,6 @@ class AppCoordinator: ObservableObject {
     // MARK: - Components
 
     private var captureManager: CaptureManager?
-    private var encoderManager: EncoderManager?
     private var ndiManager: NDIManager?
     private var networkServer: NetworkServer?
     private var telemetryCollector: TelemetryCollector
@@ -73,7 +72,6 @@ class AppCoordinator: ObservableObject {
 
         // Initialize components
         captureManager = CaptureManager()
-        encoderManager = EncoderManager()
         ndiManager = NDIManager(alias: cameraAlias)
 
         // Detect local IP address
@@ -169,8 +167,11 @@ class AppCoordinator: ObservableObject {
                 self.captureSession = session
 
                 // Start the session for preview (but not streaming yet)
+                // Must be called on background thread to avoid UI hang
                 if !session.isRunning {
-                    session.startRunning()
+                    await Task.detached {
+                        session.startRunning()
+                    }.value
                 }
 
                 print("✅ Preview session initialized and running")
@@ -306,16 +307,17 @@ class AppCoordinator: ObservableObject {
 
     private func updateTelemetry() async {
         let systemTelemetry = await telemetryCollector.collect()
-        let encoderTelemetry = encoderManager?.getCurrentTelemetry()
 
+        // Note: NDI SDK handles encoding internally, so we don't have encoder telemetry
+        // FPS and bitrate would need to be calculated from NDI SDK if available
         self.telemetry = Telemetry(
-            fps: encoderTelemetry?.fps ?? 0,
-            bitrate: encoderTelemetry?.bitrate ?? 0,
+            fps: 0,  // TODO: Get from NDI SDK if available
+            bitrate: 0,  // TODO: Get from NDI SDK if available
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
-            queueMs: encoderTelemetry?.queueMs,
-            droppedFrames: encoderTelemetry?.droppedFrames,
+            queueMs: nil,
+            droppedFrames: nil,
             chargingState: systemTelemetry.chargingState
         )
 
@@ -361,13 +363,7 @@ class AppCoordinator: ObservableObject {
             framerate: request.framerate
         )
 
-        // Configure encoder
-        try encoderManager?.configure(
-            resolution: request.resolution,
-            framerate: request.framerate,
-            bitrate: request.bitrate,
-            codec: request.codec
-        )
+        // Note: NDI SDK handles encoding internally, no separate encoder needed
 
         // Start NDI sender
         try ndiManager?.start()
@@ -398,9 +394,6 @@ class AppCoordinator: ObservableObject {
 
         // Stop capture
         await captureManager?.stopCapture()
-
-        // Stop encoder
-        encoderManager?.stop()
 
         // Stop NDI
         ndiManager?.stop()
@@ -444,6 +437,12 @@ class AppCoordinator: ObservableObject {
         if let zoomFactor = settings.zoomFactor {
             current.zoomFactor = zoomFactor
         }
+        if let cameraPosition = settings.cameraPosition {
+            current.cameraPosition = cameraPosition
+        }
+        if let lens = settings.lens {
+            current.lens = lens
+        }
 
         currentSettings = current
         // Persist settings so they survive page refresh
@@ -451,7 +450,9 @@ class AppCoordinator: ObservableObject {
     }
 
     func forceKeyframe() {
-        encoderManager?.forceKeyframe()
+        // Note: NDI SDK handles encoding internally. Keyframe control would need
+        // to be implemented through NDI SDK if available.
+        print("⚠️ Force keyframe not available (NDI SDK handles encoding)")
     }
 
     // MARK: - Capabilities
@@ -498,7 +499,9 @@ class AppCoordinator: ObservableObject {
                 shutterMode: .auto,
                 shutterS: 0.0,
                 focusMode: .auto,
-                zoomFactor: 1.0
+                zoomFactor: 1.0,
+                cameraPosition: "back",
+                lens: "wide"
             )
             currentSettings = newSettings
             persistSettings(newSettings)
@@ -519,7 +522,9 @@ class AppCoordinator: ObservableObject {
             shutterMode: .auto,
             shutterS: 0.0,
             focusMode: .auto,
-            zoomFactor: 1.0
+            zoomFactor: 1.0,
+            cameraPosition: "back",
+            lens: "wide"
         )
     }
 
@@ -552,7 +557,8 @@ class AppCoordinator: ObservableObject {
     private func persistSettings(_ settings: CurrentSettings) {
         if let data = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(data, forKey: "camera_settings")
-            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+            let uiZoom = settings.zoomFactor / 2.0  // Convert device zoom to UI zoom
+            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
         }
     }
 
