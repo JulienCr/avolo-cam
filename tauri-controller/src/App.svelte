@@ -2,6 +2,19 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
 
+  // Utility: Debounce function
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
   // State
   let cameras = [];
   let selectedCameras = new Set();
@@ -108,6 +121,7 @@
 
   let showSettingsDialog = false;
   let settingsCameraId = null;
+  let savingSettings = false;
   let cameraSettings = {
     wb_mode: 'auto',
     wb_kelvin: 5000,
@@ -119,6 +133,47 @@
     camera_position: 'back',
     lens: 'wide'
   };
+
+  // Debounced settings update (300ms delay)
+  const debouncedUpdateSettings = debounce(async () => {
+    if (!settingsCameraId) return;
+
+    try {
+      savingSettings = true;
+
+      // Build settings object
+      const settings = {
+        wb_mode: cameraSettings.wb_mode,
+        iso_mode: cameraSettings.iso_mode,
+        shutter_mode: cameraSettings.shutter_mode,
+        zoom_factor: parseFloat(cameraSettings.zoom_factor),
+        camera_position: cameraSettings.camera_position,
+        lens: cameraSettings.lens
+      };
+
+      // Add manual values only when in manual mode
+      if (cameraSettings.wb_mode === 'manual') {
+        settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
+      }
+      if (cameraSettings.iso_mode === 'manual') {
+        settings.iso = parseInt(cameraSettings.iso);
+      }
+      if (cameraSettings.shutter_mode === 'manual') {
+        settings.shutter_s = parseFloat(cameraSettings.shutter_s);
+      }
+
+      await invoke('update_camera_settings', {
+        cameraId: settingsCameraId,
+        settings
+      });
+
+      await refreshCameras();
+      savingSettings = false;
+    } catch (e) {
+      console.error('Failed to update settings:', e);
+      savingSettings = false;
+    }
+  }, 300);
 
   function openSettings(cameraId) {
     settingsCameraId = cameraId;
@@ -141,43 +196,19 @@
     showSettingsDialog = true;
   }
 
-  async function updateSettings() {
-    if (!settingsCameraId) return;
-
-    try {
-      // Build settings object - always send modes, conditionally send values
-      const settings = {
-        wb_mode: cameraSettings.wb_mode,
-        iso_mode: cameraSettings.iso_mode,
-        shutter_mode: cameraSettings.shutter_mode,
-        zoom_factor: parseFloat(cameraSettings.zoom_factor),
-        camera_position: cameraSettings.camera_position,
-        lens: cameraSettings.lens
-      };
-
-      // Add manual values only when in manual mode
-      if (cameraSettings.wb_mode === 'manual') {
-        settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
-      }
-      if (cameraSettings.iso_mode === 'manual') {
-        settings.iso = parseInt(cameraSettings.iso);
-      }
-      if (cameraSettings.shutter_mode === 'manual') {
-        settings.shutter_s = parseFloat(cameraSettings.shutter_s);
-      }
-
-      console.log('Sending settings:', settings);
-
-      await invoke('update_camera_settings', {
-        cameraId: settingsCameraId,
-        settings
-      });
-      showSettingsDialog = false;
-      await refreshCameras();
-    } catch (e) {
-      console.error('Failed to update settings:', e);
-      alert(`Failed to update settings: ${e}`);
-    }
+  // Reactive statement: trigger debounced update when settings change
+  $: if (settingsCameraId && showSettingsDialog) {
+    // Watch for changes and trigger debounced update
+    cameraSettings.wb_mode;
+    cameraSettings.wb_kelvin;
+    cameraSettings.iso_mode;
+    cameraSettings.iso;
+    cameraSettings.shutter_mode;
+    cameraSettings.shutter_s;
+    cameraSettings.zoom_factor;
+    cameraSettings.camera_position;
+    cameraSettings.lens;
+    debouncedUpdateSettings();
   }
 
   // MARK: - Group Controls
@@ -374,8 +405,13 @@
   {#if showSettingsDialog}
     <div class="dialog-overlay" on:click={() => showSettingsDialog = false}>
       <div class="dialog" on:click|stopPropagation>
-        <h2>Camera Settings</h2>
-        <form on:submit|preventDefault={updateSettings}>
+        <h2>
+          Camera Settings
+          {#if savingSettings}
+            <span style="color: #4CAF50; font-size: 0.9em; margin-left: 10px;">● Saving...</span>
+          {/if}
+        </h2>
+        <div class="settings-form">
           <label>
             White Balance Mode:
             <select bind:value={cameraSettings.wb_mode}>
@@ -444,10 +480,9 @@
             <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />
           </label>
           <div class="dialog-buttons">
-            <button type="submit" class="primary">Apply</button>
-            <button type="button" on:click={() => showSettingsDialog = false}>Cancel</button>
+            <button type="button" on:click={() => showSettingsDialog = false}>Close</button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   {/if}
