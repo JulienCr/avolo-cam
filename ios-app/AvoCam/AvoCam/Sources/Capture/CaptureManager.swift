@@ -358,7 +358,7 @@ actor CaptureManager: NSObject {
             print("🔄 Reconfiguring capture session with \(resolution) @ \(framerate)fps")
             try await configure(resolution: resolution, framerate: framerate)
             print("✅ Camera/lens reconfiguration complete")
-            return
+            // Continue to apply remaining settings after reconfiguration
         }
 
         guard let device = videoDevice else {
