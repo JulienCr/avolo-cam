@@ -617,6 +617,31 @@ class NetworkServer {
                 .btn-group button {
                     flex: 1;
                 }
+                .lens-buttons {
+                    display: flex;
+                    gap: 8px;
+                    margin-bottom: 16px;
+                }
+                .lens-btn {
+                    flex: 1;
+                    padding: 12px;
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    background: #f3f4f6;
+                    color: #374151;
+                    transition: all 0.2s;
+                    margin-bottom: 0;
+                }
+                .lens-btn.active {
+                    background: #667eea;
+                    color: white;
+                }
+                .lens-btn:hover {
+                    transform: scale(1.02);
+                }
             </style>
         </head>
         <body>
@@ -722,13 +747,6 @@ class NetworkServer {
                         </div>
                     </div>
                     <div class="settings-row">
-                        <label for="zoom">Zoom: <span id="zoom-value">1.0</span>x</label>
-                        <div class="slider-group">
-                            <input type="range" id="zoom-slider" value="1.0" min="1.0" max="10.0" step="0.1">
-                            <input type="number" id="zoom" value="1.0" min="1.0" max="10.0" step="0.1">
-                        </div>
-                    </div>
-                    <div class="settings-row">
                         <label for="camera-position">Camera Position</label>
                         <select id="camera-position">
                             <option value="back">Back</option>
@@ -736,12 +754,19 @@ class NetworkServer {
                         </select>
                     </div>
                     <div class="settings-row">
-                        <label for="lens">Lens</label>
-                        <select id="lens">
-                            <option value="wide">Wide Angle</option>
-                            <option value="ultra_wide">Ultra Wide</option>
-                            <option value="telephoto">Telephoto</option>
-                        </select>
+                        <label>Lens</label>
+                        <div class="lens-buttons">
+                            <button class="lens-btn" data-lens="ultra_wide" data-zoom="1.0">.5</button>
+                            <button class="lens-btn active" data-lens="wide" data-zoom="2.0">1</button>
+                            <button class="lens-btn" data-lens="telephoto" data-zoom="10.0">5</button>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <label for="zoom">Fine Zoom: <span id="zoom-value">1.0</span>×</label>
+                        <div class="slider-group">
+                            <input type="range" id="zoom-slider" value="2.0" min="1.0" max="20.0" step="0.1">
+                            <input type="number" id="zoom" value="2.0" min="1.0" max="20.0" step="0.1">
+                        </div>
                     </div>
                     <div id="saving-indicator" style="text-align: center; padding: 12px; color: #667eea; font-weight: 500; display: none;">
                         ⏳ Saving...
@@ -849,17 +874,14 @@ class NetworkServer {
                             if (current.zoom_factor) {
                                 document.getElementById('zoom').value = current.zoom_factor;
                                 document.getElementById('zoom-slider').value = current.zoom_factor;
-                                document.getElementById('zoom-value').textContent = current.zoom_factor;
+                                // Display UI zoom (device zoom / 2)
+                                document.getElementById('zoom-value').textContent = (current.zoom_factor / 2.0).toFixed(1);
+                                updateLensButtonsFromZoom(current.zoom_factor);
                             }
 
                             // Camera position
                             if (current.camera_position) {
                                 document.getElementById('camera-position').value = current.camera_position;
-                            }
-
-                            // Lens
-                            if (current.lens) {
-                                document.getElementById('lens').value = current.lens;
                             }
                         }
                     } catch (e) {
@@ -1029,8 +1051,7 @@ class NetworkServer {
                             iso_mode: document.getElementById('iso-mode').value,
                             shutter_mode: document.getElementById('shutter-mode').value,
                             zoom_factor: parseFloat(document.getElementById('zoom').value),
-                            camera_position: document.getElementById('camera-position').value,
-                            lens: document.getElementById('lens').value
+                            camera_position: document.getElementById('camera-position').value
                         };
                         if (settings.wb_mode === 'manual') {
                             settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
@@ -1083,15 +1104,71 @@ class NetworkServer {
                     debouncedUpdateSettings();
                 });
 
-                // Lens change
-                document.getElementById('lens').addEventListener('change', () => {
+                // Helper functions for lens/zoom sync
+                function updateLensButtonsFromZoom(deviceZoom) {
+                    const buttons = document.querySelectorAll('.lens-btn');
+                    buttons.forEach(btn => {
+                        btn.classList.remove('active');
+                    });
+
+                    // Detect which lens based on device zoom
+                    // Device zoom: ultra-wide=1.0, wide=2.0, telephoto=10.0
+                    // Thresholds: 1.5 (between 1.0 and 2.0), 6.0 (between 2.0 and 10.0)
+                    let activeLens = 'wide';
+                    if (deviceZoom < 1.5) {
+                        activeLens = 'ultra_wide';  // < 1.5x device zoom
+                    } else if (deviceZoom >= 6.0) {
+                        activeLens = 'telephoto';   // >= 6.0x device zoom
+                    }
+
+                    // Activate the corresponding button
+                    buttons.forEach(btn => {
+                        if (btn.dataset.lens === activeLens) {
+                            btn.classList.add('active');
+                        }
+                    });
+                }
+
+                function setZoomFromLens(deviceZoom) {
+                    document.getElementById('zoom').value = deviceZoom;
+                    document.getElementById('zoom-slider').value = deviceZoom;
+                    // Display UI zoom (device / 2)
+                    document.getElementById('zoom-value').textContent = (parseFloat(deviceZoom) / 2.0).toFixed(1);
+                    updateLensButtonsFromZoom(deviceZoom);
                     debouncedUpdateSettings();
+                }
+
+                // Lens button click handlers
+                document.querySelectorAll('.lens-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const zoom = btn.dataset.zoom;
+                        setZoomFromLens(zoom);
+                    });
                 });
 
                 // Auto-update on slider/input changes
-                ['wb-kelvin', 'wb-tint', 'iso', 'shutter', 'zoom'].forEach(id => {
+                ['wb-kelvin', 'wb-tint', 'iso', 'shutter'].forEach(id => {
                     document.getElementById(id).addEventListener('input', debouncedUpdateSettings);
                     document.getElementById(id + '-slider').addEventListener('input', debouncedUpdateSettings);
+                });
+
+                // Zoom slider with lens sync
+                document.getElementById('zoom').addEventListener('input', (e) => {
+                    const deviceZoom = parseFloat(e.target.value);
+                    document.getElementById('zoom-slider').value = deviceZoom;
+                    // Display UI zoom (device / 2)
+                    document.getElementById('zoom-value').textContent = (deviceZoom / 2.0).toFixed(1);
+                    updateLensButtonsFromZoom(deviceZoom);
+                    debouncedUpdateSettings();
+                });
+
+                document.getElementById('zoom-slider').addEventListener('input', (e) => {
+                    const deviceZoom = parseFloat(e.target.value);
+                    document.getElementById('zoom').value = deviceZoom;
+                    // Display UI zoom (device / 2)
+                    document.getElementById('zoom-value').textContent = (deviceZoom / 2.0).toFixed(1);
+                    updateLensButtonsFromZoom(deviceZoom);
+                    debouncedUpdateSettings();
                 });
 
                 // Initialize

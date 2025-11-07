@@ -46,16 +46,13 @@ actor CaptureManager: NSObject {
     // MARK: - Configuration
 
     func configure(resolution: String, framerate: Int) async throws {
-        print("📷 Configuring capture: \(resolution) @ \(framerate)fps")
+        print("📷 Configuring capture: \(resolution) @ \(framerate)fps, position: \(currentCameraPosition == .back ? "back" : "front"), lens: \(currentLens)")
 
         // Check if already configured with same settings
-        if let existingSession = captureSession,
-            currentResolution == resolution,
-            currentFramerate == framerate
-        {
-            print("✅ Already configured with requested settings, reusing session")
-            return
-        }
+        // NOTE: We DO NOT check camera position or lens here because those are already
+        // updated in updateSettings() before calling configure(). If we're here, it means
+        // something changed and we need to reconfigure.
+        // The old logic would skip reconfiguration when switching cameras with same resolution/fps.
 
         currentResolution = resolution
         currentFramerate = framerate
@@ -277,13 +274,6 @@ actor CaptureManager: NSObject {
         } ?? candidates.first  // Last resort: any format
     }
 
-    private extension AVCaptureDevice.Format {
-        var formatPixelCount: Int {
-            let dims = CMVideoFormatDescriptionGetDimensions(self.formatDescription)
-            return Int(dims.width) * Int(dims.height)
-        }
-    }
-
     // MARK: - Capture Control
 
     func startCapture(frameCallback: @escaping (CMSampleBuffer) -> Void) async throws {
@@ -389,6 +379,7 @@ actor CaptureManager: NSObject {
                 }
             case .manual:
                 if device.isWhiteBalanceModeSupported(.locked),
+                    device.isLockingWhiteBalanceWithCustomDeviceGainsSupported,
                     let sceneCCT_K = settings.wbKelvin  // API sends physical scene CCT
                 {
                     // Clamp to reasonable range for video
@@ -413,6 +404,8 @@ actor CaptureManager: NSObject {
                     print("✅ WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
                     print("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
                     print("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+                } else if !device.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
+                    print("⚠️ Device does not support locking white balance with custom gains")
                 }
             }
         }
@@ -480,9 +473,21 @@ actor CaptureManager: NSObject {
         // Zoom: handle both explicit zoom factor and lens-based zoom (virtual devices)
         if let zoomFactor = settings.zoomFactor {
             // Explicit zoom factor requested
-            let clampedZoom = min(max(zoomFactor, 1.0), device.activeFormat.videoMaxZoomFactor)
+            let clampedZoom = min(max(zoomFactor, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
-            print("✅ Applied explicit zoom factor: \(clampedZoom)")
+
+            // Update currentLens to reflect which lens is now active (for virtual devices)
+            if isUsingVirtualDevice {
+                let detectedLens = lensForZoomFactor(clampedZoom, device: device)
+                if detectedLens != currentLens {
+                    currentLens = detectedLens
+                    print("✅ Applied zoom factor \(clampedZoom), auto-detected lens: '\(currentLens)'")
+                } else {
+                    print("✅ Applied zoom factor \(clampedZoom) (lens: '\(currentLens)')")
+                }
+            } else {
+                print("✅ Applied zoom factor \(clampedZoom)")
+            }
         } else if settings.lens != nil, isUsingVirtualDevice, let lensZoom = zoomFactorForLens(currentLens, device: device) {
             // Lens changed, apply appropriate zoom for virtual device
             let clampedZoom = min(max(lensZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
@@ -754,24 +759,44 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     /// Get zoom factors for lens switching on virtual devices
+    /// Device zoom values: ultra-wide=1.0, wide=2.0, telephoto=10.0
     private func zoomFactorForLens(_ lens: String, device: AVCaptureDevice) -> CGFloat? {
         guard isUsingVirtualDevice else { return nil }
 
-        // Use virtualDeviceSwitchOverVideoZoomFactors if available
-        let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors.map { $0.doubleValue }
-
+        // Device zoom factors (what AVFoundation actually uses)
+        // Ultra-wide is at 1.0x, wide is at 2.0x (2x zoom from ultra-wide)
+        let targetZoom: CGFloat
         switch lens {
         case "ultra_wide":
-            // Ultra-wide is typically < 1.0x (or explicit switch factor)
-            return 0.5
+            targetZoom = 1.0   // Ultra-wide baseline
         case "telephoto":
-            // Telephoto is typically >= 2.0x (or last switch factor)
-            return switchFactors.last ?? 2.0
+            targetZoom = 10.0  // Telephoto (5x UI = 10x device)
         case "wide":
             fallthrough
         default:
-            // Wide is typically 1.0x
-            return 1.0
+            targetZoom = 2.0   // Wide (1x UI = 2x device)
+        }
+
+        // Clamp to device's available zoom range
+        let clampedZoom = min(max(targetZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
+        return clampedZoom
+    }
+
+    /// Detects which lens is active based on the device zoom factor
+    /// Device thresholds: 1.5 (between ultra-wide and wide), 6.0 (between wide and tele)
+    private func lensForZoomFactor(_ zoomFactor: CGFloat, device: AVCaptureDevice) -> String {
+        guard isUsingVirtualDevice else { return "wide" }
+
+        // Detection based on device zoom values
+        // ultra-wide=1.0, wide=2.0, telephoto=10.0
+        // Thresholds: 1.5 (midpoint between 1.0 and 2.0), 6.0 (midpoint between 2.0 and 10.0)
+
+        if zoomFactor < 1.5 {
+            return "ultra_wide"  // < 1.5x device zoom
+        } else if zoomFactor >= 6.0 {
+            return "telephoto"   // >= 6.0x device zoom
+        } else {
+            return "wide"        // 1.5x - 6.0x device zoom
         }
     }
 }
@@ -807,5 +832,14 @@ enum CaptureError: LocalizedError {
         case .whiteBalanceNotSupported:
             return "White balance mode not supported"
         }
+    }
+}
+
+// MARK: - AVCaptureDevice.Format Extension
+
+private extension AVCaptureDevice.Format {
+    var formatPixelCount: Int {
+        let dims = CMVideoFormatDescriptionGetDimensions(self.formatDescription)
+        return Int(dims.width) * Int(dims.height)
     }
 }

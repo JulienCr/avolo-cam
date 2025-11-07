@@ -170,10 +170,23 @@
     iso: 400,
     shutter_mode: 'auto',
     shutter_s: 0.01,
-    zoom_factor: 1.0,
-    camera_position: 'back',
-    lens: 'wide'
+    zoom_factor: 2.0,  // Device zoom (wide = 2.0)
+    camera_position: 'back'
   };
+
+  // Auto-detect lens from device zoom factor
+  // Device zoom: ultra-wide=1.0, wide=2.0, telephoto=10.0
+  // Thresholds: 1.5 (between 1.0 and 2.0), 6.0 (between 2.0 and 10.0)
+  let selectedLens = 'wide';
+  $: {
+    if (cameraSettings.zoom_factor < 1.5) {
+      selectedLens = 'ultra_wide';  // < 1.5x device zoom
+    } else if (cameraSettings.zoom_factor >= 6.0) {
+      selectedLens = 'telephoto';   // >= 6.0x device zoom
+    } else {
+      selectedLens = 'wide';        // 1.5x - 6.0x device zoom
+    }
+  }
 
   // Debounced settings update (300ms delay)
   const debouncedUpdateSettings = debounce(async () => {
@@ -188,8 +201,7 @@
         iso_mode: cameraSettings.iso_mode,
         shutter_mode: cameraSettings.shutter_mode,
         zoom_factor: parseFloat(cameraSettings.zoom_factor),
-        camera_position: cameraSettings.camera_position,
-        lens: cameraSettings.lens
+        camera_position: cameraSettings.camera_position
       };
 
       // Add manual values only when in manual mode
@@ -530,18 +542,39 @@
               <option value="front">Front</option>
             </select>
           </label>
-          <label>
-            Lens:
-            <select bind:value={cameraSettings.lens}>
-              <option value="wide">Wide Angle</option>
-              <option value="ultra_wide">Ultra Wide</option>
-              <option value="telephoto">Telephoto</option>
-            </select>
-          </label>
-          <label>
-            Zoom Factor:
-            <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />
-          </label>
+          <div class="lens-zoom-control">
+            <label>Lens:</label>
+            <div class="lens-buttons">
+              <button
+                type="button"
+                class:active={selectedLens === 'ultra_wide'}
+                on:click={() => cameraSettings.zoom_factor = 1.0}>
+                .5
+              </button>
+              <button
+                type="button"
+                class:active={selectedLens === 'wide'}
+                on:click={() => cameraSettings.zoom_factor = 2.0}>
+                1
+              </button>
+              <button
+                type="button"
+                class:active={selectedLens === 'telephoto'}
+                on:click={() => cameraSettings.zoom_factor = 10.0}>
+                5
+              </button>
+            </div>
+            <label>
+              Fine Zoom: {(cameraSettings.zoom_factor / 2.0).toFixed(1)}×
+              <input
+                type="range"
+                bind:value={cameraSettings.zoom_factor}
+                min="1.0"
+                max="20.0"
+                step="0.1"
+                style="width: 100%;" />
+            </label>
+          </div>
           <div class="dialog-buttons">
             <button type="button" on:click={() => showSettingsDialog = false}>Close</button>
           </div>
@@ -833,6 +866,38 @@
   .discovered-info small {
     color: #666;
     font-size: 12px;
+  }
+
+  .lens-zoom-control {
+    margin: 16px 0;
+  }
+
+  .lens-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0 16px 0;
+  }
+
+  .lens-buttons button {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: #f3f4f6;
+    color: #374151;
+    transition: all 0.2s;
+  }
+
+  .lens-buttons button.active {
+    background: #667eea;
+    color: white;
+  }
+
+  .lens-buttons button:hover {
+    transform: scale(1.02);
   }
 
   .btn-add {

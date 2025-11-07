@@ -167,8 +167,11 @@ class AppCoordinator: ObservableObject {
                 self.captureSession = session
 
                 // Start the session for preview (but not streaming yet)
+                // Must be called on background thread to avoid UI hang
                 if !session.isRunning {
-                    session.startRunning()
+                    await Task.detached {
+                        session.startRunning()
+                    }.value
                 }
 
                 print("✅ Preview session initialized and running")
