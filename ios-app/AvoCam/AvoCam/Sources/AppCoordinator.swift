@@ -27,7 +27,6 @@ class AppCoordinator: ObservableObject {
     // MARK: - Components
 
     private var captureManager: CaptureManager?
-    private var encoderManager: EncoderManager?
     private var ndiManager: NDIManager?
     private var networkServer: NetworkServer?
     private var telemetryCollector: TelemetryCollector
@@ -73,7 +72,6 @@ class AppCoordinator: ObservableObject {
 
         // Initialize components
         captureManager = CaptureManager()
-        encoderManager = EncoderManager()
         ndiManager = NDIManager(alias: cameraAlias)
 
         // Detect local IP address
@@ -306,16 +304,17 @@ class AppCoordinator: ObservableObject {
 
     private func updateTelemetry() async {
         let systemTelemetry = await telemetryCollector.collect()
-        let encoderTelemetry = encoderManager?.getCurrentTelemetry()
 
+        // Note: NDI SDK handles encoding internally, so we don't have encoder telemetry
+        // FPS and bitrate would need to be calculated from NDI SDK if available
         self.telemetry = Telemetry(
-            fps: encoderTelemetry?.fps ?? 0,
-            bitrate: encoderTelemetry?.bitrate ?? 0,
+            fps: 0,  // TODO: Get from NDI SDK if available
+            bitrate: 0,  // TODO: Get from NDI SDK if available
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
-            queueMs: encoderTelemetry?.queueMs,
-            droppedFrames: encoderTelemetry?.droppedFrames,
+            queueMs: nil,
+            droppedFrames: nil,
             chargingState: systemTelemetry.chargingState
         )
 
@@ -361,13 +360,7 @@ class AppCoordinator: ObservableObject {
             framerate: request.framerate
         )
 
-        // Configure encoder
-        try encoderManager?.configure(
-            resolution: request.resolution,
-            framerate: request.framerate,
-            bitrate: request.bitrate,
-            codec: request.codec
-        )
+        // Note: NDI SDK handles encoding internally, no separate encoder needed
 
         // Start NDI sender
         try ndiManager?.start()
@@ -398,9 +391,6 @@ class AppCoordinator: ObservableObject {
 
         // Stop capture
         await captureManager?.stopCapture()
-
-        // Stop encoder
-        encoderManager?.stop()
 
         // Stop NDI
         ndiManager?.stop()
@@ -457,7 +447,9 @@ class AppCoordinator: ObservableObject {
     }
 
     func forceKeyframe() {
-        encoderManager?.forceKeyframe()
+        // Note: NDI SDK handles encoding internally. Keyframe control would need
+        // to be implemented through NDI SDK if available.
+        print("⚠️ Force keyframe not available (NDI SDK handles encoding)")
     }
 
     // MARK: - Capabilities
