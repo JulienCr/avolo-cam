@@ -456,6 +456,7 @@ actor CaptureManager: NSObject {
 
         // Apply exposure settings based on mode combination
         if needsExposureUpdate {
+            print("🔧 Applying exposure update: ISO=\(currentISOMode.rawValue)(\(Int(targetISO))), Shutter=\(currentShutterMode.rawValue)")
             applyExposureSettings(
                 device: device,
                 isoMode: currentISOMode,
@@ -463,6 +464,8 @@ actor CaptureManager: NSObject {
                 shutterMode: currentShutterMode,
                 targetDuration: targetDuration
             )
+        } else {
+            print("🔧 No exposure update needed")
         }
 
         // Focus
