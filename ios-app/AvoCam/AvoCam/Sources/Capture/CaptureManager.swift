@@ -383,6 +383,8 @@ actor CaptureManager: NSObject {
                     print("✅ White balance set to auto")
                 }
             case .manual:
+                print("🔍 WB checks: locked=\(device.isWhiteBalanceModeSupported(.locked)), customGains=\(device.isLockingWhiteBalanceWithCustomDeviceGainsSupported), hasKelvin=\(settings.wbKelvin != nil)")
+
                 if device.isWhiteBalanceModeSupported(.locked),
                     device.isLockingWhiteBalanceWithCustomDeviceGainsSupported,
                     let sceneCCT_K = settings.wbKelvin  // API sends physical scene CCT
@@ -409,8 +411,16 @@ actor CaptureManager: NSObject {
                     print("✅ WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
                     print("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
                     print("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
-                } else if !device.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
-                    print("⚠️ Device does not support locking white balance with custom gains")
+                } else {
+                    if !device.isWhiteBalanceModeSupported(.locked) {
+                        print("❌ Device does not support locked white balance mode")
+                    }
+                    if !device.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
+                        print("❌ Device does not support locking white balance with custom gains")
+                    }
+                    if settings.wbKelvin == nil {
+                        print("❌ No white balance kelvin value provided")
+                    }
                 }
             }
         }
@@ -519,12 +529,16 @@ actor CaptureManager: NSObject {
         shutterMode: ExposureMode,
         targetDuration: CMTime
     ) {
+        print("🔍 applyExposureSettings: mode=(\(isoMode), \(shutterMode)), custom supported=\(device.isExposureModeSupported(.custom))")
+
         switch (isoMode, shutterMode) {
         case (.auto, .auto):
             // Both auto - use continuous auto exposure
             if device.isExposureModeSupported(.continuousAutoExposure) {
                 device.exposureMode = .continuousAutoExposure
                 print("✅ Exposure: Both auto (continuous)")
+            } else {
+                print("❌ Device does not support continuous auto exposure")
             }
 
         case (.manual, .auto):
@@ -536,6 +550,8 @@ actor CaptureManager: NSObject {
                 device.setExposureModeCustom(
                     duration: autoShutter, iso: targetISO, completionHandler: nil)
                 print("✅ Exposure: Manual ISO (\(Int(targetISO))), auto shutter (1/\(framerate * 2))")
+            } else {
+                print("❌ Device does not support custom exposure mode")
             }
 
         case (.auto, .manual):
@@ -548,6 +564,8 @@ actor CaptureManager: NSObject {
                     ? String(format: "%.3fs", targetDuration.seconds)
                     : "1/\(Int(1.0 / targetDuration.seconds))"
                 print("✅ Exposure: Auto ISO (\(Int(currentDeviceISO))), manual shutter (\(shutterDisplay))")
+            } else {
+                print("❌ Device does not support custom exposure mode")
             }
 
         case (.manual, .manual):
@@ -559,6 +577,8 @@ actor CaptureManager: NSObject {
                     ? String(format: "%.3fs", targetDuration.seconds)
                     : "1/\(Int(1.0 / targetDuration.seconds))"
                 print("✅ Exposure: Manual ISO (\(Int(targetISO))), manual shutter (\(shutterDisplay))")
+            } else {
+                print("❌ Device does not support custom exposure mode")
             }
         }
     }
