@@ -30,17 +30,11 @@ actor CaptureManager: NSObject {
     private var currentLens: String = "wide"  // "wide", "ultra_wide", "telephoto"
     private var isUsingVirtualDevice: Bool = false  // Track if we're using a multi-camera virtual device
 
-    // Manual control state tracking
-    private var currentWBMode: WhiteBalanceMode = .auto
+    // Exposure state tracking
     private var currentISOMode: ExposureMode = .auto
     private var currentISO: Float = 0
     private var currentShutterMode: ExposureMode = .auto
     private var currentShutterS: Double = 0
-
-    // Computed property: true if any manual control is active (requires physical camera)
-    private var needsPhysicalCamera: Bool {
-        return currentWBMode == .manual || currentISOMode == .manual || currentShutterMode == .manual
-    }
 
     // MARK: - Public Access
 
@@ -360,33 +354,7 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // Check if switching between manual and auto modes (requires device change)
-        let wasUsingPhysicalCamera = needsPhysicalCamera
-
-        // Update mode tracking to determine if we'll need physical camera
-        if let wbMode = settings.wbMode {
-            currentWBMode = wbMode
-        }
-        if let isoMode = settings.isoMode {
-            currentISOMode = isoMode
-        }
-        if let shutterMode = settings.shutterMode {
-            currentShutterMode = shutterMode
-        }
-
-        let nowNeedsPhysicalCamera = needsPhysicalCamera
-
-        // If manual control state changed, we need to switch between virtual/physical device
-        if wasUsingPhysicalCamera != nowNeedsPhysicalCamera {
-            needsReconfigure = true
-            if nowNeedsPhysicalCamera {
-                print("📷 Manual controls enabled - switching to physical camera")
-            } else {
-                print("📷 All controls now auto - switching to virtual camera for smooth zoom")
-            }
-        }
-
-        // Reconfigure session if camera position changed, lens switch, or manual mode changed
+        // Reconfigure session if camera position changed or lens switch
         if needsReconfigure {
             let resolution = currentResolution ?? "1920x1080"  // Default to 1080p
             let framerate = currentFramerate ?? 30  // Default to 30fps
@@ -803,30 +771,18 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     // MARK: - Helper Functions
 
     /// Returns prioritized device types for discovery
-    /// Virtual devices don't support manual WB/ISO/shutter, so we use physical cameras when manual controls are active
+    /// Always use physical cameras to support full manual control (WB/ISO/shutter)
+    /// Virtual devices don't support custom exposure or custom WB gains
     private func prioritizedDeviceTypes(for position: AVCaptureDevice.Position) -> [AVCaptureDevice.DeviceType] {
         if position == .back {
-            if needsPhysicalCamera {
-                // Manual controls active - use physical cameras only
-                // Virtual devices (Triple/Dual) don't support custom exposure or custom WB gains
-                print("📷 Manual controls active - using physical cameras")
-                return [
-                    .builtInWideAngleCamera,
-                    .builtInUltraWideCamera,
-                    .builtInTelephotoCamera
-                ]
-            } else {
-                // Auto mode - prefer virtual devices for smooth zoom/lens switching
-                print("📷 Auto mode - using virtual devices for smooth zoom")
-                return [
-                    .builtInTripleCamera,
-                    .builtInDualWideCamera,
-                    .builtInDualCamera,
-                    .builtInWideAngleCamera,
-                    .builtInUltraWideCamera,
-                    .builtInTelephotoCamera
-                ]
-            }
+            // Always use physical cameras for full manual control support
+            // Lens switching handled via reconfiguration
+            print("📷 Using physical cameras for full manual control")
+            return [
+                .builtInWideAngleCamera,
+                .builtInUltraWideCamera,
+                .builtInTelephotoCamera
+            ]
         } else {
             // Front camera: typically only wide available
             return [.builtInWideAngleCamera]
