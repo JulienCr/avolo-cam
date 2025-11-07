@@ -728,6 +728,21 @@ class NetworkServer {
                             <input type="number" id="zoom" value="1.0" min="1.0" max="10.0" step="0.1">
                         </div>
                     </div>
+                    <div class="settings-row">
+                        <label for="camera-position">Camera Position</label>
+                        <select id="camera-position">
+                            <option value="back">Back</option>
+                            <option value="front">Front</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label for="lens">Lens</label>
+                        <select id="lens">
+                            <option value="wide">Wide Angle</option>
+                            <option value="ultra_wide">Ultra Wide</option>
+                            <option value="telephoto">Telephoto</option>
+                        </select>
+                    </div>
                     <button id="btn-apply-settings" class="btn-primary">Apply Settings</button>
                 </div>
 
@@ -833,6 +848,16 @@ class NetworkServer {
                                 document.getElementById('zoom').value = current.zoom_factor;
                                 document.getElementById('zoom-slider').value = current.zoom_factor;
                                 document.getElementById('zoom-value').textContent = current.zoom_factor;
+                            }
+
+                            // Camera position
+                            if (current.camera_position) {
+                                document.getElementById('camera-position').value = current.camera_position;
+                            }
+
+                            // Lens
+                            if (current.lens) {
+                                document.getElementById('lens').value = current.lens;
                             }
                         }
                     } catch (e) {
@@ -984,7 +1009,9 @@ class NetworkServer {
                         wb_mode: document.getElementById('wb-mode').value,
                         iso_mode: document.getElementById('iso-mode').value,
                         shutter_mode: document.getElementById('shutter-mode').value,
-                        zoom_factor: parseFloat(document.getElementById('zoom').value)
+                        zoom_factor: parseFloat(document.getElementById('zoom').value),
+                        camera_position: document.getElementById('camera-position').value,
+                        lens: document.getElementById('lens').value
                     };
                     if (settings.wb_mode === 'manual') {
                         settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
