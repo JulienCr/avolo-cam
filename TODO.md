@@ -8,11 +8,13 @@
 ## ✅ COMPLETED FEATURES
 
 ### Phase 1: Critical Fixes
+
 - [x] **Tauri Models Fixed** - Added missing `iso_mode` and `shutter_mode` fields to match iOS API
 - [x] **Settings Persistence Fixed** - `get_all_cameras()` now fetches fresh status instead of returning stale cache
 - [x] **WebSocket Reconnection Improved** - Increased max attempts from 5→100, capped exponential backoff at 30s
 
 ### Phase 2: Camera Lens Selection (Backend Complete)
+
 - [x] **iOS CaptureManager** - Full lens switching implementation
   - Support for wide/ultra_wide/telephoto lenses
   - Support for front/back camera positions
@@ -24,11 +26,13 @@
 - [x] **Tauri Models** - Synced with iOS API (camera_position, lens fields)
 
 ### Phase 4: Code Cleanup
+
 - [x] **Removed EncoderManager** - Deleted 376 lines of unused code
   - NDI SDK handles encoding internally, no separate encoder needed
   - Simplified architecture
 
 ### Phase 5: Live Settings Editing
+
 - [x] **Tauri Controller** - Removed Apply button, added 300ms debouncing
   - Settings update automatically as user adjusts controls
   - Visual "Saving..." indicator
@@ -38,6 +42,7 @@
   - Matches Tauri controller behavior
 
 ### Phase 6: Camera Persistence
+
 - [x] **Tauri Controller** - Camera configurations persist across app restarts
   - Cameras saved to JSON file in app data directory
   - Automatic save when cameras added/removed
@@ -49,44 +54,53 @@
 ## 🔴 KNOWN ISSUES (Critical)
 
 ### 1. Camera Lens Switching Not Working
+
 **Status:** ✅ FIXED (Commit: b46b519)
 **Description:** Selecting different camera positions (front/back) or lenses (wide/ultra_wide/telephoto) has no effect. Nothing happens when user changes these settings.
 
 **Affected:**
+
 - iOS embedded WebUI
 - Tauri controller
 - iOS app UI (if implemented)
 
 **Possible Causes:**
+
 - CaptureManager may not be properly reconfiguring the session
 - Fallback logic might be preventing actual lens switch
 - Device capabilities not being queried correctly
 - API request may not be reaching CaptureManager
 
 **Fixed By:**
+
 - ✅ Use default resolution/framerate (1080p30) when not set yet
 - ✅ Remove early return in fallback device logic
 - ✅ Add extensive logging for debugging
 - ✅ Proper device discovery and configuration
 
 ### 2. Automatic Camera Detection Not Working (Tauri)
+
 **Status:** ✅ FIXED (Commit: 1d8f368)
 **Description:** mDNS discovery in Tauri controller is not automatically finding cameras on the network.
 
 **Affected:**
+
 - Tauri controller camera discovery
 
 **Current State:**
+
 - Users must manually add cameras (IP, port, token)
 - Auto-discovery feature exists but doesn't find cameras
 
 **Possible Causes:**
+
 - mDNS service type mismatch (`_avolocam._tcp.local` vs `_avolocam._tcp.local.`)
 - Firewall blocking mDNS traffic
 - iOS Bonjour service not advertising correctly
 - Network configuration issues (VLAN, multicast routing)
 
 **Fixed By:**
+
 - ✅ Add discoveredCameras state and UI
 - ✅ Call discover_cameras() on mount and every 10 seconds
 - ✅ Display discovered cameras with "Add" buttons
@@ -94,10 +108,12 @@
 - ✅ Proper visual feedback during discovery
 
 ### 3. WebSocket Connection Failures (Tauri)
+
 **Status:** ✅ FIXED (Commit: b46b519)
 **Description:** Persistent WebSocket connection errors in Tauri controller console
 
 **Error Logs:**
+
 ```
 [2025-11-07T12:30:08Z ERROR avocam_controller::camera_client] WebSocket connection error: Failed to connect to WebSocket
 [2025-11-07T12:30:12Z ERROR avocam_controller::camera_client] WebSocket connection error: Failed to connect to WebSocket
@@ -105,16 +121,19 @@
 ```
 
 **Affected:**
+
 - Tauri controller real-time telemetry
 - Live updates for FPS, bitrate, battery, etc.
 
 **Possible Causes:**
+
 - Authentication token not being passed correctly in WebSocket upgrade
 - URL format incorrect (`ws://ip:port/ws` vs `ws://ip:port/ws?token=...`)
 - iOS WebSocket server not accepting connections
 - CORS or connection rejection by iOS server
 
 **Debug Steps Needed:**
+
 - [ ] Check WebSocket URL format in `camera_client.rs` line 214
 - [ ] Verify iOS NetworkServer is accepting WebSocket connections
 - [ ] Test WebSocket connection manually (e.g., with `websocat` tool)
@@ -132,13 +151,16 @@ _No items currently in progress. All critical features completed!_
 ## 📋 TODO (Priority Order)
 
 ### HIGH PRIORITY (Fix Broken Features)
-1. **[ ] Fix Camera Lens Switching**
+
+1. **[x] Fix Camera Lens Switching**
+
    - Debug why camera position/lens changes don't work
    - Add logging to trace execution path
    - Test on physical device with multiple lenses
    - Verify session reconfiguration is happening
 
 2. **[ ] Fix WebSocket Connection Issues**
+
    - Debug connection failure causes
    - Fix authentication token passing
    - Verify iOS WebSocket server is working
@@ -151,12 +173,15 @@ _No items currently in progress. All critical features completed!_
    - Check network configuration
 
 ### MEDIUM PRIORITY (Feature Completion)
+
 4. **[x] iOS WebUI Live Editing** ✅ COMPLETE
+
    - Remove Apply button
    - Add JavaScript debouncing (300ms)
    - Add saving indicator
 
 5. **[x] Camera Persistence (Tauri)** ✅ COMPLETE
+
    - Save discovered cameras to `cameras.json`
    - Load cameras on app startup
    - Merge with live mDNS discoveries
@@ -168,12 +193,15 @@ _No items currently in progress. All critical features completed!_
    - UI for profile management
 
 ### LOW PRIORITY (Nice to Have)
+
 7. **[ ] Resolution/Framerate Picker**
+
    - Query available formats from device
    - Dynamic UI based on capabilities
    - Replace fixed presets with dynamic selection
 
 8. **[ ] Screen Blackout Mode (iOS)**
+
    - Real screen blackout (not just dim)
    - UIScreen.brightness = 0 + black fullscreen view
    - Toggle in settings
@@ -190,17 +218,20 @@ _No items currently in progress. All critical features completed!_
 ### Camera Lens Switching Issue
 
 **Test Steps:**
+
 1. Open iOS WebUI or Tauri controller
 2. Change camera position from "Back" to "Front"
 3. Expected: Preview switches to front camera
 4. Actual: Nothing happens
 
 **Where to Look:**
+
 - `ios-app/AvoCam/AvoCam/Sources/Capture/CaptureManager.swift:227-254` - Camera switching logic
 - `ios-app/AvoCam/AvoCam/Sources/AppCoordinator.swift:406-457` - Settings update handler
 - Network logs to verify API request is received
 
 **Quick Test:**
+
 ```bash
 # Send camera switch request manually
 curl -X POST http://<iOS-IP>:8888/api/v1/camera \
@@ -212,6 +243,7 @@ curl -X POST http://<iOS-IP>:8888/api/v1/camera \
 ### WebSocket Connection Issue
 
 **Test Steps:**
+
 1. Launch Tauri controller
 2. Add camera manually (IP, port, token)
 3. Check console logs
@@ -219,10 +251,12 @@ curl -X POST http://<iOS-IP>:8888/api/v1/camera \
 5. Actual: Connection error repeatedly
 
 **Where to Look:**
+
 - `tauri-controller/src-tauri/src/camera_client.rs:206-252` - WebSocket connection logic
 - `ios-app/AvoCam/AvoCam/Sources/Network/NetworkServer.swift` - WebSocket server handler
 
 **Quick Test:**
+
 ```bash
 # Test WebSocket connection manually
 websocat ws://<iOS-IP>:8888/ws
@@ -234,16 +268,19 @@ wscat -c ws://<iOS-IP>:8888/ws
 ### mDNS Discovery Issue
 
 **Test Steps:**
+
 1. Start iOS app (should advertise mDNS service)
 2. Launch Tauri controller
 3. Expected: Camera appears automatically
 4. Actual: No cameras found
 
 **Where to Look:**
+
 - `ios-app/AvoCam/AvoCam/Sources/Network/BonjourService.swift:24-62` - mDNS advertisement
 - `tauri-controller/src-tauri/src/camera_discovery.rs` - mDNS browsing
 
 **Quick Test:**
+
 ```bash
 # Check if iOS is advertising service (run on macOS)
 dns-sd -B _avolocam._tcp
@@ -264,6 +301,7 @@ dns-sd -B _avolocam._tcp
 **Lines Removed:** ~390 (mostly EncoderManager deletion)
 
 **Modified Files:**
+
 ```
 ios-app/AvoCam/AvoCam/Sources/
   ├── AppCoordinator.swift
@@ -287,16 +325,19 @@ tauri-controller/src/
 ## 🎯 NEXT STEPS
 
 ### Immediate Actions (Today)
+
 1. **Debug camera lens switching** - Add extensive logging, test on device
 2. **Debug WebSocket connection** - Verify URL format and authentication
 3. **Debug mDNS discovery** - Use command-line tools to verify service
 
 ### Short Term (This Week)
+
 4. Complete iOS WebUI live editing
 5. Implement camera persistence in Tauri
 6. Add comprehensive error logging for debugging
 
 ### Long Term (Next Week)
+
 7. Profile management feature
 8. Resolution/framerate picker
 9. End-to-end testing
@@ -323,6 +364,7 @@ tauri-controller/src/
 ---
 
 **For Questions/Issues:** Check logs in:
+
 - iOS: Xcode console when running on device
 - Tauri: Terminal where app was launched
 - WebSocket: Browser dev console (for WebUI)

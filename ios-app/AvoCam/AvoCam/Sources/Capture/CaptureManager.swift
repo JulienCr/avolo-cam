@@ -85,8 +85,8 @@ actor CaptureManager: NSObject {
                         session.outputs.forEach { session.removeOutput($0) }
                     }
 
-                    // Discover device using prioritized list (prefer virtual devices for back camera)
-                    let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition)
+                    // Discover device using prioritized list (requested lens first)
+                    let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition, requestedLens: self.currentLens)
                     print("🔍 Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
                     print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
 
@@ -160,7 +160,8 @@ actor CaptureManager: NSObject {
                         try device.lockForConfiguration()
                         device.videoZoomFactor = zoomFactor
                         device.unlockForConfiguration()
-                        print("✅ Applied zoom factor \(zoomFactor) for lens '\(self.currentLens)'")
+                        let uiZoom = zoomFactor / 2.0
+                        print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(self.currentLens)'")
                     }
 
                     // Restart session if it was running before reconfiguration
@@ -433,6 +434,7 @@ actor CaptureManager: NSObject {
         // Check if ISO mode/value changed
         if let isoMode = settings.isoMode {
             print("🔧 ISO mode change requested: \(isoMode)")
+            currentISOMode = isoMode  // Update tracked mode
             needsExposureUpdate = true
         }
         if let iso = settings.iso, currentISOMode == .manual {
@@ -445,6 +447,7 @@ actor CaptureManager: NSObject {
         // Check if shutter mode/value changed
         if let shutterMode = settings.shutterMode {
             print("🔧 Shutter mode change requested: \(shutterMode)")
+            currentShutterMode = shutterMode  // Update tracked mode
             needsExposureUpdate = true
         }
         if let shutterS = settings.shutterS, currentShutterMode == .manual {
@@ -490,29 +493,39 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // Zoom: handle both explicit zoom factor and lens-based zoom (virtual devices)
-        if let zoomFactor = settings.zoomFactor {
-            // Explicit zoom factor requested
+        // Zoom: handle both explicit zoom factor and lens-based zoom
+        // IMPORTANT: For physical cameras, lens parameter takes precedence over zoom_factor
+        // When switching physical lenses, we reset to base zoom (1.0x on that lens)
+        if settings.lens != nil && !isUsingVirtualDevice {
+            // Physical lens switch - reset to base zoom for that lens
+            let baseZoom: CGFloat = 1.0
+            let clampedZoom = min(max(baseZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
+            device.videoZoomFactor = clampedZoom
+            print("✅ Physical lens '\(currentLens)' at base zoom \(String(format: "%.1f", clampedZoom))x (no digital zoom)")
+        } else if let zoomFactor = settings.zoomFactor {
+            // Explicit zoom factor requested (for virtual devices or fine-tuning physical cameras)
             let clampedZoom = min(max(zoomFactor, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
 
             // Update currentLens to reflect which lens is now active (for virtual devices)
+            let uiZoom = clampedZoom / 2.0
             if isUsingVirtualDevice {
                 let detectedLens = lensForZoomFactor(clampedZoom, device: device)
                 if detectedLens != currentLens {
                     currentLens = detectedLens
-                    print("✅ Applied zoom factor \(clampedZoom), auto-detected lens: '\(currentLens)'")
+                    print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x), auto-detected lens: '\(currentLens)'")
                 } else {
-                    print("✅ Applied zoom factor \(clampedZoom) (lens: '\(currentLens)')")
+                    print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) (lens: '\(currentLens)')")
                 }
             } else {
-                print("✅ Applied zoom factor \(clampedZoom)")
+                print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x)")
             }
         } else if settings.lens != nil, isUsingVirtualDevice, let lensZoom = zoomFactorForLens(currentLens, device: device) {
             // Lens changed, apply appropriate zoom for virtual device
             let clampedZoom = min(max(lensZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
-            print("✅ Applied lens-based zoom factor: \(clampedZoom) for lens '\(currentLens)'")
+            let uiZoom = clampedZoom / 2.0
+            print("✅ Applied lens-based zoom: \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) for lens '\(currentLens)'")
         }
 
         print("✅ Camera settings updated")
@@ -773,16 +786,39 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     /// Returns prioritized device types for discovery
     /// Always use physical cameras to support full manual control (WB/ISO/shutter)
     /// Virtual devices don't support custom exposure or custom WB gains
-    private func prioritizedDeviceTypes(for position: AVCaptureDevice.Position) -> [AVCaptureDevice.DeviceType] {
+    private func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
         if position == .back {
             // Always use physical cameras for full manual control support
             // Lens switching handled via reconfiguration
-            print("📷 Using physical cameras for full manual control")
-            return [
+
+            // Map requested lens to device type
+            let requestedType: AVCaptureDevice.DeviceType
+            switch requestedLens {
+            case "ultra_wide":
+                requestedType = .builtInUltraWideCamera
+            case "telephoto":
+                requestedType = .builtInTelephotoCamera
+            default:  // "wide"
+                requestedType = .builtInWideAngleCamera
+            }
+
+            // Build prioritized list: requested lens first, then fallbacks
+            var types: [AVCaptureDevice.DeviceType] = [requestedType]
+
+            // Add fallbacks (other physical cameras)
+            let fallbacks: [AVCaptureDevice.DeviceType] = [
                 .builtInWideAngleCamera,
                 .builtInUltraWideCamera,
                 .builtInTelephotoCamera
             ]
+            for type in fallbacks {
+                if type != requestedType {
+                    types.append(type)
+                }
+            }
+
+            print("📷 Requesting \(requestedLens) lens first, fallbacks: \(types.map { $0.rawValue })")
+            return types
         } else {
             // Front camera: typically only wide available
             return [.builtInWideAngleCamera]

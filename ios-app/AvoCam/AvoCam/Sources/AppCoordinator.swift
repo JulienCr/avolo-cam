@@ -557,7 +557,8 @@ class AppCoordinator: ObservableObject {
     private func persistSettings(_ settings: CurrentSettings) {
         if let data = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(data, forKey: "camera_settings")
-            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+            let uiZoom = settings.zoomFactor / 2.0  // Convert device zoom to UI zoom
+            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
         }
     }
 
