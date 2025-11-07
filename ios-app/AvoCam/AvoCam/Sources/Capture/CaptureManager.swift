@@ -22,6 +22,10 @@ actor CaptureManager: NSObject {
     private var currentResolution: String?
     private var currentFramerate: Int?
 
+    // Camera position and lens tracking
+    private var currentCameraPosition: AVCaptureDevice.Position = .back
+    private var currentLens: String = "wide"  // "wide", "ultra_wide", "telephoto"
+
     // Exposure state tracking
     private var currentISOMode: ExposureMode = .auto
     private var currentISO: Float = 0
@@ -73,13 +77,26 @@ actor CaptureManager: NSObject {
         }
 
         // Get video device using discovery session (more robust than default lookup)
+        let deviceType = deviceTypeForLens(currentLens)
         let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera],
+            deviceTypes: [deviceType],
             mediaType: .video,
-            position: .back
+            position: currentCameraPosition
         )
         guard let device = discovery.devices.first else {
-            throw CaptureError.deviceNotAvailable
+            // Fallback to wide angle if requested lens not available
+            let fallbackDiscovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera],
+                mediaType: .video,
+                position: currentCameraPosition
+            )
+            guard let fallbackDevice = fallbackDiscovery.devices.first else {
+                throw CaptureError.deviceNotAvailable
+            }
+            videoDevice = fallbackDevice
+            currentLens = "wide"
+            print("⚠️ Requested lens '\(currentLens)' not available, using wide angle")
+            return
         }
 
         videoDevice = device
@@ -208,6 +225,34 @@ actor CaptureManager: NSObject {
     // MARK: - Camera Settings
 
     func updateSettings(_ settings: CameraSettingsRequest) async throws {
+        // Handle camera/lens switching first (requires session reconfiguration)
+        var needsReconfigure = false
+
+        if let cameraPosition = settings.cameraPosition {
+            let newPosition: AVCaptureDevice.Position = (cameraPosition == "front") ? .front : .back
+            if newPosition != currentCameraPosition {
+                currentCameraPosition = newPosition
+                needsReconfigure = true
+                print("📷 Switching to \(cameraPosition) camera")
+            }
+        }
+
+        if let lens = settings.lens {
+            if lens != currentLens {
+                currentLens = lens
+                needsReconfigure = true
+                print("📷 Switching to \(lens) lens")
+            }
+        }
+
+        // Reconfigure session if camera/lens changed
+        if needsReconfigure, let resolution = currentResolution, let framerate = currentFramerate {
+            try await configure(resolution: resolution, framerate: framerate)
+            // After reconfiguration, we have a new device, so return early
+            // (Other settings will be applied in next call or defaults will be used)
+            return
+        }
+
         guard let device = videoDevice else {
             throw CaptureError.deviceNotAvailable
         }
@@ -545,6 +590,21 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     ) {
         // Log dropped frames
         print("⚠️ Dropped frame")
+    }
+
+    // MARK: - Helper Functions
+
+    private func deviceTypeForLens(_ lens: String) -> AVCaptureDevice.DeviceType {
+        switch lens {
+        case "ultra_wide":
+            return .builtInUltraWideCamera
+        case "telephoto":
+            return .builtInTelephotoCamera
+        case "wide":
+            fallthrough
+        default:
+            return .builtInWideAngleCamera
+        }
     }
 }
 

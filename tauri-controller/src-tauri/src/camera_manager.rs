@@ -111,7 +111,28 @@ impl CameraManager {
     }
 
     pub async fn get_all_cameras(&self) -> Vec<CameraInfo> {
-        self.cameras.values().map(|c| c.info.clone()).collect()
+        let mut result = Vec::new();
+
+        for (id, camera) in &self.cameras {
+            let mut info = camera.info.clone();
+
+            // Fetch fresh status from camera
+            match camera.client.read().await.get_status().await {
+                Ok(status) => {
+                    info.status = Some(status);
+                    info.connection_state = ConnectionState::Connected;
+                }
+                Err(e) => {
+                    log::warn!("Failed to get status for camera {}: {}", id, e);
+                    info.connection_state = ConnectionState::Error;
+                    // Keep existing status if available
+                }
+            }
+
+            result.push(info);
+        }
+
+        result
     }
 
     pub async fn update_camera_alias(&mut self, camera_id: &str, alias: String) -> Result<()> {

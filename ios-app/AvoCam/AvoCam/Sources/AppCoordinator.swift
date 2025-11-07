@@ -444,6 +444,12 @@ class AppCoordinator: ObservableObject {
         if let zoomFactor = settings.zoomFactor {
             current.zoomFactor = zoomFactor
         }
+        if let cameraPosition = settings.cameraPosition {
+            current.cameraPosition = cameraPosition
+        }
+        if let lens = settings.lens {
+            current.lens = lens
+        }
 
         currentSettings = current
         // Persist settings so they survive page refresh
@@ -498,7 +504,9 @@ class AppCoordinator: ObservableObject {
                 shutterMode: .auto,
                 shutterS: 0.0,
                 focusMode: .auto,
-                zoomFactor: 1.0
+                zoomFactor: 1.0,
+                cameraPosition: "back",
+                lens: "wide"
             )
             currentSettings = newSettings
             persistSettings(newSettings)
@@ -519,7 +527,9 @@ class AppCoordinator: ObservableObject {
             shutterMode: .auto,
             shutterS: 0.0,
             focusMode: .auto,
-            zoomFactor: 1.0
+            zoomFactor: 1.0,
+            cameraPosition: "back",
+            lens: "wide"
         )
     }
 

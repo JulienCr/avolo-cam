@@ -12,7 +12,8 @@ use crate::models::*;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const WS_RECONNECT_DELAY: Duration = Duration::from_secs(2);
-const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+const MAX_RECONNECT_ATTEMPTS: u32 = 100; // High limit, effectively unlimited
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30); // Cap backoff at 30s
 
 pub struct CameraClient {
     base_url: String,
@@ -174,9 +175,11 @@ impl CameraClient {
                     }
                 }
 
-                // Exponential backoff
-                let delay = WS_RECONNECT_DELAY * 2_u32.pow(reconnect_attempts.min(5));
-                log::info!("Reconnecting in {:?}", delay);
+                // Exponential backoff with cap
+                let backoff_multiplier = 2_u32.pow(reconnect_attempts.min(5));
+                let calculated_delay = WS_RECONNECT_DELAY * backoff_multiplier;
+                let delay = calculated_delay.min(MAX_RECONNECT_DELAY);
+                log::info!("Reconnecting in {:?} (attempt {}/{})", delay, reconnect_attempts, MAX_RECONNECT_ATTEMPTS);
                 tokio::time::sleep(delay).await;
 
                 // Check if we should stop reconnecting
