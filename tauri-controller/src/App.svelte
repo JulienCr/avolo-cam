@@ -17,8 +17,10 @@
 
   // State
   let cameras = [];
+  let discoveredCameras = [];
   let selectedCameras = new Set();
   let loading = true;
+  let discovering = false;
   let error = null;
 
   // Manual add dialog
@@ -29,19 +31,58 @@
 
   // Refresh cameras periodically
   let refreshInterval;
+  let discoveryInterval;
 
   onMount(async () => {
     await refreshCameras();
+    await discoverCameras(); // Initial discovery
+
     refreshInterval = setInterval(refreshCameras, 2000); // Refresh every 2 seconds
+    discoveryInterval = setInterval(discoverCameras, 10000); // Re-discover every 10 seconds
   });
 
   onDestroy(() => {
     if (refreshInterval) {
       clearInterval(refreshInterval);
     }
+    if (discoveryInterval) {
+      clearInterval(discoveryInterval);
+    }
   });
 
   // MARK: - Camera Management
+
+  async function discoverCameras() {
+    try {
+      discovering = true;
+      discoveredCameras = await invoke('discover_cameras');
+      console.log('Discovered cameras:', discoveredCameras);
+    } catch (e) {
+      console.error('Failed to discover cameras:', e);
+    } finally {
+      discovering = false;
+    }
+  }
+
+  async function addDiscoveredCamera(discovered) {
+    // For now, we need a token. In the future, we could prompt for it or use a default
+    // For testing, let's prompt the user
+    const token = prompt(`Enter bearer token for ${discovered.alias}:`, '');
+    if (!token) return;
+
+    try {
+      await invoke('add_camera_manual', {
+        ip: discovered.ip,
+        port: discovered.port,
+        token: token
+      });
+      await refreshCameras();
+      // Remove from discovered list
+      discoveredCameras = discoveredCameras.filter(c => c.alias !== discovered.alias);
+    } catch (e) {
+      alert(`Failed to add camera: ${e}`);
+    }
+  }
 
   async function refreshCameras() {
     try {
@@ -311,6 +352,28 @@
           <button class="primary" on:click={groupStartStream}>▶️ Start All</button>
           <button on:click={groupStopStream}>⏹ Stop All</button>
         </div>
+      </div>
+    {/if}
+
+    <!-- Discovered Cameras -->
+    {#if discoveredCameras.length > 0}
+      <div class="discovered-section">
+        <h2>📡 Discovered Cameras ({discoveredCameras.length})</h2>
+        <div class="discovered-grid">
+          {#each discoveredCameras as discovered (discovered.alias)}
+            <div class="discovered-card">
+              <div class="discovered-info">
+                <strong>{discovered.alias}</strong>
+                <small>{discovered.ip}:{discovered.port}</small>
+              </div>
+              <button on:click={() => addDiscoveredCamera(discovered)} class="btn-add">+ Add</button>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {:else if discovering}
+      <div class="discovering-message">
+        <p>🔍 Discovering cameras on the network...</p>
       </div>
     {/if}
 
@@ -721,5 +784,84 @@
 
   .dialog-buttons button {
     flex: 1;
+  }
+
+  /* Discovered Cameras */
+  .discovered-section {
+    margin-bottom: 30px;
+  }
+
+  .discovered-section h2 {
+    font-size: 18px;
+    margin-bottom: 15px;
+    color: #667eea;
+  }
+
+  .discovered-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 10px;
+  }
+
+  .discovered-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: #f8f9fa;
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+
+  .discovered-card:hover {
+    background: #e9ecef;
+    border-color: #667eea;
+  }
+
+  .discovered-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .discovered-info strong {
+    color: #333;
+    font-size: 14px;
+  }
+
+  .discovered-info small {
+    color: #666;
+    font-size: 12px;
+  }
+
+  .btn-add {
+    padding: 6px 12px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-add:hover {
+    background: #5568d3;
+  }
+
+  .discovering-message {
+    padding: 20px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  .discovering-message p {
+    margin: 0;
+    color: #856404;
   }
 </style>
