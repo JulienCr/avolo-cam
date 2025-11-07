@@ -309,6 +309,10 @@ actor CaptureManager: NSObject {
         print("🔧 CaptureManager.updateSettings called")
         print("   Camera position request: \(settings.cameraPosition ?? "nil")")
         print("   Lens request: \(settings.lens ?? "nil")")
+        print("   WB mode: \(settings.wbMode?.rawValue ?? "nil"), kelvin: \(settings.wbKelvin?.description ?? "nil")")
+        print("   ISO mode: \(settings.isoMode?.rawValue ?? "nil"), value: \(settings.iso?.description ?? "nil")")
+        print("   Shutter mode: \(settings.shutterMode?.rawValue ?? "nil"), value: \(settings.shutterS?.description ?? "nil")")
+        print("   Zoom factor: \(settings.zoomFactor?.description ?? "nil")")
         print("   Current position: \(currentCameraPosition == .back ? "back" : "front")")
         print("   Current lens: \(currentLens)")
         print("   Current resolution: \(currentResolution ?? "nil")")
@@ -371,6 +375,7 @@ actor CaptureManager: NSObject {
 
         // White balance
         if let wbMode = settings.wbMode {
+            print("🔧 Applying white balance mode: \(wbMode)")
             switch wbMode {
             case .auto:
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
@@ -417,10 +422,12 @@ actor CaptureManager: NSObject {
 
         // Update ISO mode/value if specified
         if let isoMode = settings.isoMode {
+            print("🔧 ISO mode change requested: \(isoMode)")
             currentISOMode = isoMode
             needsExposureUpdate = true
         }
         if let iso = settings.iso, currentISOMode == .manual {
+            print("🔧 ISO value change requested: \(iso)")
             currentISO = Float(iso)
             targetISO = min(max(currentISO, device.activeFormat.minISO), device.activeFormat.maxISO)
             needsExposureUpdate = true
@@ -428,10 +435,12 @@ actor CaptureManager: NSObject {
 
         // Update shutter mode/value if specified
         if let shutterMode = settings.shutterMode {
+            print("🔧 Shutter mode change requested: \(shutterMode)")
             currentShutterMode = shutterMode
             needsExposureUpdate = true
         }
         if let shutterS = settings.shutterS, currentShutterMode == .manual {
+            print("🔧 Shutter speed change requested: \(shutterS)s")
             currentShutterS = shutterS
             let minD = device.activeFormat.minExposureDuration
             let maxD = device.activeFormat.maxExposureDuration
