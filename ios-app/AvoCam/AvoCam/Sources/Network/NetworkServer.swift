@@ -1046,11 +1046,16 @@ class NetworkServer {
                         isSaving = true;
                         document.getElementById('saving-indicator').style.display = 'block';
 
+                        // Get selected lens from active button
+                        const activeLensBtn = document.querySelector('.lens-btn.active');
+                        const selectedLens = activeLensBtn ? activeLensBtn.dataset.lens : 'wide';
+
                         const settings = {
                             wb_mode: document.getElementById('wb-mode').value,
                             iso_mode: document.getElementById('iso-mode').value,
                             shutter_mode: document.getElementById('shutter-mode').value,
                             zoom_factor: parseFloat(document.getElementById('zoom').value),
+                            lens: selectedLens,  // Send lens parameter for physical camera switching
                             camera_position: document.getElementById('camera-position').value
                         };
                         if (settings.wb_mode === 'manual') {

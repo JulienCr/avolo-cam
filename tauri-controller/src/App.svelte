@@ -208,6 +208,7 @@
         iso_mode: cameraSettings.iso_mode,
         shutter_mode: cameraSettings.shutter_mode,
         zoom_factor: parseFloat(cameraSettings.zoom_factor),
+        lens: selectedLens,  // Send lens parameter for physical camera switching
         camera_position: cameraSettings.camera_position
       };
 
