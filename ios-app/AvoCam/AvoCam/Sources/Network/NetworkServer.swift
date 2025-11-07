@@ -743,7 +743,9 @@ class NetworkServer {
                             <option value="telephoto">Telephoto</option>
                         </select>
                     </div>
-                    <button id="btn-apply-settings" class="btn-primary">Apply Settings</button>
+                    <div id="saving-indicator" style="text-align: center; padding: 12px; color: #667eea; font-weight: 500; display: none;">
+                        ⏳ Saving...
+                    </div>
                 </div>
 
                 <div class="info-text">
@@ -1004,44 +1006,92 @@ class NetworkServer {
                     }
                 });
 
-                document.getElementById('btn-apply-settings').addEventListener('click', async () => {
-                    const settings = {
-                        wb_mode: document.getElementById('wb-mode').value,
-                        iso_mode: document.getElementById('iso-mode').value,
-                        shutter_mode: document.getElementById('shutter-mode').value,
-                        zoom_factor: parseFloat(document.getElementById('zoom').value),
-                        camera_position: document.getElementById('camera-position').value,
-                        lens: document.getElementById('lens').value
+                // Debouncing function for live settings updates
+                let saveTimeout = null;
+                let isSaving = false;
+
+                function debounce(func, delay) {
+                    return function(...args) {
+                        clearTimeout(saveTimeout);
+                        saveTimeout = setTimeout(() => func(...args), delay);
                     };
-                    if (settings.wb_mode === 'manual') {
-                        settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
-                        settings.wb_tint = parseFloat(document.getElementById('wb-tint').value);
+                }
+
+                async function updateCameraSettings() {
+                    if (isSaving) return;
+
+                    try {
+                        isSaving = true;
+                        document.getElementById('saving-indicator').style.display = 'block';
+
+                        const settings = {
+                            wb_mode: document.getElementById('wb-mode').value,
+                            iso_mode: document.getElementById('iso-mode').value,
+                            shutter_mode: document.getElementById('shutter-mode').value,
+                            zoom_factor: parseFloat(document.getElementById('zoom').value),
+                            camera_position: document.getElementById('camera-position').value,
+                            lens: document.getElementById('lens').value
+                        };
+                        if (settings.wb_mode === 'manual') {
+                            settings.wb_kelvin = parseInt(document.getElementById('wb-kelvin').value);
+                            settings.wb_tint = parseFloat(document.getElementById('wb-tint').value);
+                        }
+                        if (settings.iso_mode === 'manual') {
+                            settings.iso = parseInt(document.getElementById('iso').value);
+                        }
+                        if (settings.shutter_mode === 'manual') {
+                            settings.shutter_s = parseFloat(document.getElementById('shutter').value);
+                        }
+                        await apiCall('/api/v1/camera', 'POST', settings);
+
+                        setTimeout(() => {
+                            document.getElementById('saving-indicator').style.display = 'none';
+                        }, 500);
+                    } catch (e) {
+                        console.error('Failed to update settings:', e);
+                        document.getElementById('saving-indicator').style.display = 'none';
+                    } finally {
+                        isSaving = false;
                     }
-                    if (settings.iso_mode === 'manual') {
-                        settings.iso = parseInt(document.getElementById('iso').value);
-                    }
-                    if (settings.shutter_mode === 'manual') {
-                        settings.shutter_s = parseFloat(document.getElementById('shutter').value);
-                    }
-                    await apiCall('/api/v1/camera', 'POST', settings);
-                });
+                }
+
+                const debouncedUpdateSettings = debounce(updateCameraSettings, 300);
 
                 // Show/hide WB manual controls based on mode
                 document.getElementById('wb-mode').addEventListener('change', (e) => {
                     const isManual = e.target.value === 'manual';
                     document.getElementById('wb-manual-controls').style.display = isManual ? 'block' : 'none';
+                    debouncedUpdateSettings();
                 });
 
                 // Show/hide ISO manual controls based on mode
                 document.getElementById('iso-mode').addEventListener('change', (e) => {
                     const isManual = e.target.value === 'manual';
                     document.getElementById('iso-manual-controls').style.display = isManual ? 'block' : 'none';
+                    debouncedUpdateSettings();
                 });
 
                 // Show/hide shutter manual controls based on mode
                 document.getElementById('shutter-mode').addEventListener('change', (e) => {
                     const isManual = e.target.value === 'manual';
                     document.getElementById('shutter-manual-controls').style.display = isManual ? 'block' : 'none';
+                    debouncedUpdateSettings();
+                });
+
+                // Camera position change
+                document.getElementById('camera-position').addEventListener('change', () => {
+                    debouncedUpdateSettings();
+                });
+
+                // Lens change
+                document.getElementById('lens').addEventListener('change', () => {
+                    debouncedUpdateSettings();
+                });
+
+                // Auto-update on slider/input changes
+                ['wb-kelvin', 'wb-tint', 'iso', 'shutter', 'zoom'].forEach(id => {
+                    document.getElementById(id).addEventListener('input', debouncedUpdateSettings);
+                    document.getElementById(id + '-slider').addEventListener('input', debouncedUpdateSettings);
                 });
 
                 // Initialize
