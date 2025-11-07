@@ -16,6 +16,9 @@ actor CaptureManager: NSObject {
     private var videoDevice: AVCaptureDevice?
     private var videoInput: AVCaptureDeviceInput?
     private var videoOutput: AVCaptureVideoDataOutput?
+
+    // Serial queue for all session mutations (beginConfiguration/commitConfiguration, add/remove input/output, start/stop)
+    private let sessionQueue = DispatchQueue(label: "com.avocam.capture.session", qos: .userInteractive)
     private let outputQueue = DispatchQueue(label: "com.avocam.capture.output")
 
     private var frameCallback: ((CMSampleBuffer) -> Void)?
@@ -25,6 +28,7 @@ actor CaptureManager: NSObject {
     // Camera position and lens tracking
     private var currentCameraPosition: AVCaptureDevice.Position = .back
     private var currentLens: String = "wide"  // "wide", "ultra_wide", "telephoto"
+    private var isUsingVirtualDevice: Bool = false  // Track if we're using a multi-camera virtual device
 
     // Exposure state tracking
     private var currentISOMode: ExposureMode = .auto
@@ -56,113 +60,132 @@ actor CaptureManager: NSObject {
         currentResolution = resolution
         currentFramerate = framerate
 
-        // Stop existing session if running
-        let wasRunning = captureSession?.isRunning ?? false
-        if wasRunning {
-            captureSession?.stopRunning()
-        }
+        // All session mutations must run on serial sessionQueue
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(throwing: CaptureError.sessionNotConfigured)
+                    return
+                }
 
-        // Setup capture session (reuse existing or create new)
-        let session = captureSession ?? AVCaptureSession()
-        session.sessionPreset = .inputPriority  // We'll manually set format
+                do {
+                    // Stop existing session if running
+                    let wasRunning = self.captureSession?.isRunning ?? false
+                    if wasRunning {
+                        self.captureSession?.stopRunning()
+                    }
 
-        // Begin atomic configuration
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
+                    // Setup capture session (reuse existing or create new)
+                    let session = self.captureSession ?? AVCaptureSession()
+                    session.sessionPreset = .inputPriority  // We'll manually set format
 
-        // Remove existing inputs/outputs if reconfiguring
-        if captureSession != nil {
-            session.inputs.forEach { session.removeInput($0) }
-            session.outputs.forEach { session.removeOutput($0) }
-        }
+                    // Begin atomic configuration
+                    session.beginConfiguration()
 
-        // Get video device using discovery session (more robust than default lookup)
-        let deviceType = deviceTypeForLens(currentLens)
-        print("🔍 Looking for device: position=\(currentCameraPosition == .back ? "back" : "front"), lens=\(currentLens), deviceType=\(deviceType)")
+                    // Remove existing inputs/outputs if reconfiguring
+                    if self.captureSession != nil {
+                        session.inputs.forEach { session.removeInput($0) }
+                        session.outputs.forEach { session.removeOutput($0) }
+                    }
 
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [deviceType],
-            mediaType: .video,
-            position: currentCameraPosition
-        )
+                    // Discover device using prioritized list (prefer virtual devices for back camera)
+                    let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition)
+                    print("🔍 Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
+                    print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
 
-        let device: AVCaptureDevice
-        if let foundDevice = discovery.devices.first {
-            print("✅ Found requested camera device: \(foundDevice.localizedName)")
-            device = foundDevice
-        } else {
-            // Fallback to wide angle if requested lens not available
-            print("⚠️ Requested lens '\(currentLens)' not available for \(currentCameraPosition == .back ? "back" : "front") camera")
-            let fallbackDiscovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.builtInWideAngleCamera],
-                mediaType: .video,
-                position: currentCameraPosition
-            )
-            guard let fallbackDevice = fallbackDiscovery.devices.first else {
-                print("❌ No camera device available at all!")
-                throw CaptureError.deviceNotAvailable
+                    let discovery = AVCaptureDevice.DiscoverySession(
+                        deviceTypes: deviceTypes,
+                        mediaType: .video,
+                        position: self.currentCameraPosition
+                    )
+
+                    guard let device = discovery.devices.first else {
+                        session.commitConfiguration()
+                        print("❌ No camera device available!")
+                        continuation.resume(throwing: CaptureError.deviceNotAvailable)
+                        return
+                    }
+
+                    print("✅ Found camera device: \(device.localizedName)")
+
+                    // Check if using virtual device (can switch lenses via zoom)
+                    self.isUsingVirtualDevice = [
+                        AVCaptureDevice.DeviceType.builtInTripleCamera,
+                        .builtInDualWideCamera,
+                        .builtInDualCamera
+                    ].contains(device.deviceType)
+
+                    if self.isUsingVirtualDevice {
+                        print("✅ Using virtual device - lens switching via zoom")
+                        print("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
+                    }
+
+                    self.videoDevice = device
+
+                    // Create device input
+                    let input = try AVCaptureDeviceInput(device: device)
+                    guard session.canAddInput(input) else {
+                        session.commitConfiguration()
+                        throw CaptureError.cannotAddInput
+                    }
+                    session.addInput(input)
+                    self.videoInput = input
+
+                    // Configure device format (must be sync on sessionQueue)
+                    try self.configureFormatSync(device: device, resolution: resolution, framerate: framerate)
+
+                    // Create video output
+                    let output = AVCaptureVideoDataOutput()
+                    output.videoSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String:
+                            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                    ]
+                    output.alwaysDiscardsLateVideoFrames = true
+                    output.setSampleBufferDelegate(self, queue: self.outputQueue)
+
+                    guard session.canAddOutput(output) else {
+                        session.commitConfiguration()
+                        throw CaptureError.cannotAddOutput
+                    }
+                    session.addOutput(output)
+                    self.videoOutput = output
+
+                    // Configure connection (orientation, stabilization)
+                    self.configureConnection(output.connection(with: .video))
+
+                    // Commit configuration
+                    session.commitConfiguration()
+
+                    self.captureSession = session
+
+                    // Apply lens zoom if using virtual device
+                    if self.isUsingVirtualDevice, let zoomFactor = self.zoomFactorForLens(self.currentLens, device: device) {
+                        try device.lockForConfiguration()
+                        device.videoZoomFactor = zoomFactor
+                        device.unlockForConfiguration()
+                        print("✅ Applied zoom factor \(zoomFactor) for lens '\(self.currentLens)'")
+                    }
+
+                    // Restart session if it was running before reconfiguration
+                    if wasRunning {
+                        session.startRunning()
+                        print("✅ Restarted capture session after reconfiguration")
+                    }
+
+                    continuation.resume()
+                } catch {
+                    print("❌ Configuration failed: \(error)")
+                    continuation.resume(throwing: error)
+                }
             }
-            print("✅ Using fallback wide angle camera: \(fallbackDevice.localizedName)")
-            device = fallbackDevice
-            currentLens = "wide"  // Update to reflect actual lens in use
-        }
-
-        videoDevice = device
-
-        // Create device input
-        let input = try AVCaptureDeviceInput(device: device)
-        guard session.canAddInput(input) else {
-            throw CaptureError.cannotAddInput
-        }
-        session.addInput(input)
-        videoInput = input
-
-        // Configure device format
-        try await configureFormat(device: device, resolution: resolution, framerate: framerate)
-
-        // Create video output
-        let output = AVCaptureVideoDataOutput()
-        output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String:
-                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        ]
-        output.alwaysDiscardsLateVideoFrames = true
-        output.setSampleBufferDelegate(self, queue: outputQueue)
-
-        guard session.canAddOutput(output) else {
-            throw CaptureError.cannotAddOutput
-        }
-        session.addOutput(output)
-        videoOutput = output
-
-        // Configure color space (Rec.709 Full) and orientation
-        if let connection = output.connection(with: .video) {
-            if connection.isVideoStabilizationSupported {
-                connection.preferredVideoStabilizationMode = .off  // For lowest latency
-            }
-
-            // Lock video orientation to landscape
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .landscapeRight
-            }
-        }
-
-        captureSession = session
-        // commitConfiguration() called via defer
-
-        // Restart session if it was running before reconfiguration
-        if wasRunning {
-            session.startRunning()
-            print("✅ Restarted capture session after reconfiguration")
         }
     }
 
-    private func configureFormat(device: AVCaptureDevice, resolution: String, framerate: Int)
-        async throws
-    {
+    /// Synchronous format configuration for use on sessionQueue
+    private func configureFormatSync(device: AVCaptureDevice, resolution: String, framerate: Int) throws {
         let dimensions = try parseResolution(resolution)
 
-        // Find matching format
+        // Find matching format using best-fit logic
         guard
             let format = findFormat(
                 for: device, width: Int(dimensions.width), height: Int(dimensions.height),
@@ -179,30 +202,85 @@ actor CaptureManager: NSObject {
         device.activeVideoMinFrameDuration = frameDuration
         device.activeVideoMaxFrameDuration = frameDuration
 
-        // Attach color space metadata (Rec.709 Full)
-        // Note: This is handled at the sample buffer level in the output delegate
-
         device.unlockForConfiguration()
 
         print("✅ Configured format: \(format.formatDescription)")
     }
 
+    /// Configure connection properties (orientation, stabilization)
+    private func configureConnection(_ connection: AVCaptureConnection?) {
+        guard let connection = connection else { return }
+
+        // Disable stabilization for lowest latency
+        if connection.isVideoStabilizationSupported {
+            connection.preferredVideoStabilizationMode = .off
+        }
+
+        // Lock video orientation to landscape
+        if connection.isVideoOrientationSupported {
+            connection.videoOrientation = .landscapeRight
+        }
+    }
+
+    /// Best-fit format chooser: tolerant to per-lens constraints
+    /// 1. Filter by resolution (exact > nearest larger > nearest smaller)
+    /// 2. Within those, pick format supporting requested fps (or closest not exceeding maxFrameRate)
     private func findFormat(for device: AVCaptureDevice, width: Int, height: Int, framerate: Int)
         -> AVCaptureDevice.Format?
     {
-        return device.formats.first { format in
-            let description = format.formatDescription
-            let dimensions = CMVideoFormatDescriptionGetDimensions(description)
+        let targetPixels = width * height
 
-            guard dimensions.width == width && dimensions.height == height else {
-                return false
+        // Separate formats by resolution match type
+        var exactMatch: [AVCaptureDevice.Format] = []
+        var largerMatch: [AVCaptureDevice.Format] = []
+        var smallerMatch: [AVCaptureDevice.Format] = []
+
+        for format in device.formats {
+            let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let w = Int(dims.width)
+            let h = Int(dims.height)
+
+            if w == width && h == height {
+                exactMatch.append(format)
+            } else {
+                let pixels = w * h
+                if pixels > targetPixels {
+                    largerMatch.append(format)
+                } else {
+                    smallerMatch.append(format)
+                }
             }
+        }
 
-            // Check if framerate is supported
+        // Sort larger/smaller by distance from target
+        largerMatch.sort { abs($0.formatPixelCount - targetPixels) < abs($1.formatPixelCount - targetPixels) }
+        smallerMatch.sort { abs($0.formatPixelCount - targetPixels) < abs($1.formatPixelCount - targetPixels) }
+
+        // Try exact, then larger, then smaller
+        let candidates = exactMatch + largerMatch + smallerMatch
+
+        // Within candidates, pick the one that best matches framerate
+        for format in candidates {
             let ranges = format.videoSupportedFrameRateRanges
-            return ranges.contains { range in
-                Double(framerate) >= range.minFrameRate && Double(framerate) <= range.maxFrameRate
+            for range in ranges {
+                if Double(framerate) >= range.minFrameRate && Double(framerate) <= range.maxFrameRate {
+                    return format
+                }
             }
+        }
+
+        // If no exact fps match, pick first candidate with closest fps not exceeding maxFrameRate
+        return candidates.first { format in
+            format.videoSupportedFrameRateRanges.contains { range in
+                range.maxFrameRate >= Double(framerate) * 0.9  // 10% tolerance
+            }
+        } ?? candidates.first  // Last resort: any format
+    }
+
+    private extension AVCaptureDevice.Format {
+        var formatPixelCount: Int {
+            let dims = CMVideoFormatDescriptionGetDimensions(self.formatDescription)
+            return Int(dims.width) * Int(dims.height)
         }
     }
 
@@ -215,12 +293,17 @@ actor CaptureManager: NSObject {
 
         self.frameCallback = frameCallback
 
-        // Start session if not already running (for preview)
-        if !session.isRunning {
-            session.startRunning()
-            print("▶️ Capture session started")
-        } else {
-            print("▶️ Frame callback attached (session already running for preview)")
+        // Start session on sessionQueue if not already running
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            sessionQueue.async {
+                if !session.isRunning {
+                    session.startRunning()
+                    print("▶️ Capture session started")
+                } else {
+                    print("▶️ Frame callback attached (session already running for preview)")
+                }
+                continuation.resume()
+            }
         }
     }
 
@@ -241,7 +324,7 @@ actor CaptureManager: NSObject {
         print("   Current resolution: \(currentResolution ?? "nil")")
         print("   Current framerate: \(currentFramerate?.description ?? "nil")")
 
-        // Handle camera/lens switching first (requires session reconfiguration)
+        // Handle camera position change (requires session reconfiguration)
         var needsReconfigure = false
 
         if let cameraPosition = settings.cameraPosition {
@@ -255,17 +338,29 @@ actor CaptureManager: NSObject {
             }
         }
 
+        // Handle lens change
         if let lens = settings.lens {
-            if lens != currentLens {
-                currentLens = lens
-                needsReconfigure = true
-                print("📷 Switching to \(lens) lens - reconfigure needed")
+            // Guard: front camera only supports wide
+            if currentCameraPosition == .front && lens != "wide" {
+                print("⚠️ Front camera only supports 'wide' lens, ignoring request for '\(lens)'")
+            } else if lens != currentLens {
+                // Check if we can switch via zoom (virtual device) or need reconfiguration
+                if isUsingVirtualDevice {
+                    // Switch lens via zoom factor without reconfiguration
+                    currentLens = lens
+                    print("📷 Switching to \(lens) lens via zoom")
+                } else {
+                    // Non-virtual device, need reconfiguration
+                    currentLens = lens
+                    needsReconfigure = true
+                    print("📷 Switching to \(lens) lens - reconfigure needed")
+                }
             } else {
                 print("📷 Lens unchanged (\(lens))")
             }
         }
 
-        // Reconfigure session if camera/lens changed
+        // Reconfigure session if camera position changed or non-virtual lens switch
         if needsReconfigure {
             let resolution = currentResolution ?? "1920x1080"  // Default to 1080p
             let framerate = currentFramerate ?? 30  // Default to 30fps
@@ -273,8 +368,6 @@ actor CaptureManager: NSObject {
             print("🔄 Reconfiguring capture session with \(resolution) @ \(framerate)fps")
             try await configure(resolution: resolution, framerate: framerate)
             print("✅ Camera/lens reconfiguration complete")
-            // After reconfiguration, we have a new device, so return early
-            // (Other settings will be applied in next call or defaults will be used)
             return
         }
 
@@ -384,10 +477,17 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // Zoom
+        // Zoom: handle both explicit zoom factor and lens-based zoom (virtual devices)
         if let zoomFactor = settings.zoomFactor {
+            // Explicit zoom factor requested
             let clampedZoom = min(max(zoomFactor, 1.0), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
+            print("✅ Applied explicit zoom factor: \(clampedZoom)")
+        } else if settings.lens != nil, isUsingVirtualDevice, let lensZoom = zoomFactorForLens(currentLens, device: device) {
+            // Lens changed, apply appropriate zoom for virtual device
+            let clampedZoom = min(max(lensZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
+            device.videoZoomFactor = clampedZoom
+            print("✅ Applied lens-based zoom factor: \(clampedZoom) for lens '\(currentLens)'")
         }
 
         print("✅ Camera settings updated")
@@ -500,18 +600,33 @@ actor CaptureManager: NSObject {
             (3840, 2160, "3840x2160"),
         ]
 
+        // Determine available lenses based on camera position
+        let availableLenses: [String]
+        if currentCameraPosition == .front {
+            // Front camera: only wide available
+            availableLenses = ["wide"]
+        } else if isUsingVirtualDevice {
+            // Back camera with virtual device: all lenses via zoom
+            availableLenses = ["wide", "ultra_wide", "telephoto"]
+        } else {
+            // Back camera without virtual device: only current lens
+            availableLenses = [currentLens]
+        }
+
         for (width, height, resString) in commonResolutions {
             let supportedFPS = getAvailableFramerates(for: device, width: width, height: height)
 
             if !supportedFPS.isEmpty {
-                capabilities.append(
-                    Capability(
-                        resolution: resString,
-                        fps: supportedFPS,
-                        codec: ["h264", "hevc"],
-                        lens: "wide",
-                        maxZoom: Double(device.activeFormat.videoMaxZoomFactor)
-                    ))
+                for lens in availableLenses {
+                    capabilities.append(
+                        Capability(
+                            resolution: resString,
+                            fps: supportedFPS,
+                            codec: ["h264", "hevc"],
+                            lens: lens,
+                            maxZoom: Double(device.activeFormat.videoMaxZoomFactor)
+                        ))
+                }
             }
         }
 
@@ -620,16 +735,43 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
     // MARK: - Helper Functions
 
-    private func deviceTypeForLens(_ lens: String) -> AVCaptureDevice.DeviceType {
+    /// Returns prioritized device types for discovery, preferring virtual devices for back camera
+    private func prioritizedDeviceTypes(for position: AVCaptureDevice.Position) -> [AVCaptureDevice.DeviceType] {
+        if position == .back {
+            // Prefer virtual devices that can switch optics via zoom
+            return [
+                .builtInTripleCamera,
+                .builtInDualWideCamera,
+                .builtInDualCamera,
+                .builtInWideAngleCamera,
+                .builtInUltraWideCamera,
+                .builtInTelephotoCamera
+            ]
+        } else {
+            // Front camera: typically only wide available
+            return [.builtInWideAngleCamera]
+        }
+    }
+
+    /// Get zoom factors for lens switching on virtual devices
+    private func zoomFactorForLens(_ lens: String, device: AVCaptureDevice) -> CGFloat? {
+        guard isUsingVirtualDevice else { return nil }
+
+        // Use virtualDeviceSwitchOverVideoZoomFactors if available
+        let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors.map { $0.doubleValue }
+
         switch lens {
         case "ultra_wide":
-            return .builtInUltraWideCamera
+            // Ultra-wide is typically < 1.0x (or explicit switch factor)
+            return 0.5
         case "telephoto":
-            return .builtInTelephotoCamera
+            // Telephoto is typically >= 2.0x (or last switch factor)
+            return switchFactors.last ?? 2.0
         case "wide":
             fallthrough
         default:
-            return .builtInWideAngleCamera
+            // Wide is typically 1.0x
+            return 1.0
         }
     }
 }
