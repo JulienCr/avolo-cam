@@ -214,11 +214,27 @@ async fn connect_websocket_internal<F>(
 where
     F: Fn(WebSocketTelemetryMessage) + Send + Sync + 'static,
 {
-    let url = format!("{}?token={}", ws_url, token);
-    let (ws_stream, _) = connect_async(&url).await
+    // Build request with Authorization header (Bearer token)
+    use tokio_tungstenite::tungstenite::http::Request;
+
+    let request = Request::builder()
+        .uri(ws_url)
+        .header("Host", ws_url.split("//").nth(1).unwrap_or(ws_url).split('/').next().unwrap_or(ws_url))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+        .header("Authorization", format!("Bearer {}", token))
+        .body(())
+        .context("Failed to build WebSocket request")?;
+
+    log::info!("Connecting to WebSocket: {}", ws_url);
+    log::debug!("Authorization: Bearer {}", token);
+
+    let (ws_stream, response) = connect_async(request).await
         .context("Failed to connect to WebSocket")?;
 
-    log::info!("WebSocket connected: {}", ws_url);
+    log::info!("WebSocket connected successfully: {} (status: {})", ws_url, response.status());
 
     let (_write, mut read) = ws_stream.split();
 

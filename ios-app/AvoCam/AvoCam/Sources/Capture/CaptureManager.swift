@@ -78,25 +78,33 @@ actor CaptureManager: NSObject {
 
         // Get video device using discovery session (more robust than default lookup)
         let deviceType = deviceTypeForLens(currentLens)
+        print("🔍 Looking for device: position=\(currentCameraPosition == .back ? "back" : "front"), lens=\(currentLens), deviceType=\(deviceType)")
+
         let discovery = AVCaptureDevice.DiscoverySession(
             deviceTypes: [deviceType],
             mediaType: .video,
             position: currentCameraPosition
         )
-        guard let device = discovery.devices.first else {
+
+        let device: AVCaptureDevice
+        if let foundDevice = discovery.devices.first {
+            print("✅ Found requested camera device: \(foundDevice.localizedName)")
+            device = foundDevice
+        } else {
             // Fallback to wide angle if requested lens not available
+            print("⚠️ Requested lens '\(currentLens)' not available for \(currentCameraPosition == .back ? "back" : "front") camera")
             let fallbackDiscovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [.builtInWideAngleCamera],
                 mediaType: .video,
                 position: currentCameraPosition
             )
             guard let fallbackDevice = fallbackDiscovery.devices.first else {
+                print("❌ No camera device available at all!")
                 throw CaptureError.deviceNotAvailable
             }
-            videoDevice = fallbackDevice
-            currentLens = "wide"
-            print("⚠️ Requested lens '\(currentLens)' not available, using wide angle")
-            return
+            print("✅ Using fallback wide angle camera: \(fallbackDevice.localizedName)")
+            device = fallbackDevice
+            currentLens = "wide"  // Update to reflect actual lens in use
         }
 
         videoDevice = device
@@ -225,6 +233,14 @@ actor CaptureManager: NSObject {
     // MARK: - Camera Settings
 
     func updateSettings(_ settings: CameraSettingsRequest) async throws {
+        print("🔧 CaptureManager.updateSettings called")
+        print("   Camera position request: \(settings.cameraPosition ?? "nil")")
+        print("   Lens request: \(settings.lens ?? "nil")")
+        print("   Current position: \(currentCameraPosition == .back ? "back" : "front")")
+        print("   Current lens: \(currentLens)")
+        print("   Current resolution: \(currentResolution ?? "nil")")
+        print("   Current framerate: \(currentFramerate?.description ?? "nil")")
+
         // Handle camera/lens switching first (requires session reconfiguration)
         var needsReconfigure = false
 
@@ -233,7 +249,9 @@ actor CaptureManager: NSObject {
             if newPosition != currentCameraPosition {
                 currentCameraPosition = newPosition
                 needsReconfigure = true
-                print("📷 Switching to \(cameraPosition) camera")
+                print("📷 Switching to \(cameraPosition) camera - reconfigure needed")
+            } else {
+                print("📷 Camera position unchanged (\(cameraPosition))")
             }
         }
 
@@ -241,19 +259,27 @@ actor CaptureManager: NSObject {
             if lens != currentLens {
                 currentLens = lens
                 needsReconfigure = true
-                print("📷 Switching to \(lens) lens")
+                print("📷 Switching to \(lens) lens - reconfigure needed")
+            } else {
+                print("📷 Lens unchanged (\(lens))")
             }
         }
 
         // Reconfigure session if camera/lens changed
-        if needsReconfigure, let resolution = currentResolution, let framerate = currentFramerate {
+        if needsReconfigure {
+            let resolution = currentResolution ?? "1920x1080"  // Default to 1080p
+            let framerate = currentFramerate ?? 30  // Default to 30fps
+
+            print("🔄 Reconfiguring capture session with \(resolution) @ \(framerate)fps")
             try await configure(resolution: resolution, framerate: framerate)
+            print("✅ Camera/lens reconfiguration complete")
             // After reconfiguration, we have a new device, so return early
             // (Other settings will be applied in next call or defaults will be used)
             return
         }
 
         guard let device = videoDevice else {
+            print("❌ No video device available")
             throw CaptureError.deviceNotAvailable
         }
 
