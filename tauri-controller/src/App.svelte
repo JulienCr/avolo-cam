@@ -115,7 +115,9 @@
     iso: 400,
     shutter_mode: 'auto',
     shutter_s: 0.01,
-    zoom_factor: 1.0
+    zoom_factor: 1.0,
+    camera_position: 'back',
+    lens: 'wide'
   };
 
   function openSettings(cameraId) {
@@ -132,6 +134,8 @@
       cameraSettings.shutter_mode = current.shutter_mode || 'auto';
       cameraSettings.shutter_s = current.shutter_s || 0.01;
       cameraSettings.zoom_factor = current.zoom_factor || 1.0;
+      cameraSettings.camera_position = current.camera_position || 'back';
+      cameraSettings.lens = current.lens || 'wide';
     }
 
     showSettingsDialog = true;
@@ -146,7 +150,9 @@
         wb_mode: cameraSettings.wb_mode,
         iso_mode: cameraSettings.iso_mode,
         shutter_mode: cameraSettings.shutter_mode,
-        zoom_factor: parseFloat(cameraSettings.zoom_factor)
+        zoom_factor: parseFloat(cameraSettings.zoom_factor),
+        camera_position: cameraSettings.camera_position,
+        lens: cameraSettings.lens
       };
 
       // Add manual values only when in manual mode
@@ -418,6 +424,21 @@
               </div>
             </label>
           {/if}
+          <label>
+            Camera Position:
+            <select bind:value={cameraSettings.camera_position}>
+              <option value="back">Back</option>
+              <option value="front">Front</option>
+            </select>
+          </label>
+          <label>
+            Lens:
+            <select bind:value={cameraSettings.lens}>
+              <option value="wide">Wide Angle</option>
+              <option value="ultra_wide">Ultra Wide</option>
+              <option value="telephoto">Telephoto</option>
+            </select>
+          </label>
           <label>
             Zoom Factor:
             <input type="number" bind:value={cameraSettings.zoom_factor} min="1.0" max="10.0" step="0.1" />
