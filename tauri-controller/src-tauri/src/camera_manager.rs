@@ -1,7 +1,9 @@
 //! Manager for multiple camera clients with group control
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 
@@ -11,10 +13,39 @@ use crate::models::*;
 
 const MAX_CONCURRENT_OPERATIONS: usize = 10;
 
+// MARK: - Persistence
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedCamera {
+    id: String,
+    alias: String,
+    ip: String,
+    port: u16,
+    token: String,
+}
+
+impl PersistedCamera {
+    fn from_camera_info(info: &CameraInfo) -> Self {
+        Self {
+            id: info.id.clone(),
+            alias: info.alias.clone(),
+            ip: info.ip.clone(),
+            port: info.port,
+            token: info.token.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CamerasPersistence {
+    cameras: Vec<PersistedCamera>,
+}
+
 pub struct CameraManager {
     cameras: HashMap<String, Camera>,
     discovery: Option<CameraDiscovery>,
     operation_semaphore: Arc<Semaphore>,
+    persistence_file_path: Option<PathBuf>,
 }
 
 struct Camera {
@@ -28,7 +59,74 @@ impl CameraManager {
             cameras: HashMap::new(),
             discovery: None,
             operation_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_OPERATIONS)),
+            persistence_file_path: None,
         }
+    }
+
+    /// Set the persistence file path and load any saved cameras
+    pub async fn set_persistence_path(&mut self, path: PathBuf) -> Result<()> {
+        self.persistence_file_path = Some(path);
+        self.load_cameras_from_disk().await?;
+        Ok(())
+    }
+
+    /// Save all cameras to disk
+    async fn save_cameras_to_disk(&self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            return Ok(()); // No persistence path set
+        };
+
+        let persisted_cameras: Vec<PersistedCamera> = self.cameras
+            .values()
+            .map(|camera| PersistedCamera::from_camera_info(&camera.info))
+            .collect();
+
+        let persistence = CamerasPersistence {
+            cameras: persisted_cameras,
+        };
+
+        let json = serde_json::to_string_pretty(&persistence)
+            .context("Failed to serialize cameras")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write cameras to disk")?;
+
+        log::info!("Saved {} cameras to {:?}", persistence.cameras.len(), path);
+        Ok(())
+    }
+
+    /// Load cameras from disk and add them to the manager
+    async fn load_cameras_from_disk(&mut self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            return Ok(()); // No persistence path set
+        };
+
+        if !path.exists() {
+            log::info!("No cameras file found at {:?}, starting fresh", path);
+            return Ok(());
+        }
+
+        let json = tokio::fs::read_to_string(path).await
+            .context("Failed to read cameras file")?;
+
+        let persistence: CamerasPersistence = serde_json::from_str(&json)
+            .context("Failed to deserialize cameras")?;
+
+        log::info!("Loading {} cameras from {:?}", persistence.cameras.len(), path);
+
+        for persisted in persistence.cameras {
+            // Try to add camera, but don't fail if one camera fails
+            match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
+                Ok(id) => {
+                    log::info!("Loaded camera: {} ({})", persisted.alias, id);
+                }
+                Err(e) => {
+                    log::warn!("Failed to load camera {}: {}", persisted.alias, e);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // MARK: - Discovery
@@ -96,6 +194,11 @@ impl CameraManager {
 
         log::info!("Added camera: {}", id);
 
+        // Persist to disk
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk: {}", e);
+        }
+
         Ok(id)
     }
 
@@ -104,6 +207,12 @@ impl CameraManager {
             // Disconnect WebSocket
             camera.client.read().await.disconnect_websocket().await;
             log::info!("Removed camera: {}", camera_id);
+
+            // Persist to disk
+            if let Err(e) = self.save_cameras_to_disk().await {
+                log::warn!("Failed to save cameras to disk: {}", e);
+            }
+
             Ok(())
         } else {
             anyhow::bail!("Camera not found: {}", camera_id);
