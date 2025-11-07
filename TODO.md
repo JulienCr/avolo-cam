@@ -28,17 +28,28 @@
   - NDI SDK handles encoding internally, no separate encoder needed
   - Simplified architecture
 
-### Phase 5: Live Settings Editing (Partial)
+### Phase 5: Live Settings Editing
 - [x] **Tauri Controller** - Removed Apply button, added 300ms debouncing
   - Settings update automatically as user adjusts controls
   - Visual "Saving..." indicator
+- [x] **iOS Embedded WebUI** - Removed Apply button, added 300ms debouncing
+  - Settings update automatically as user adjusts controls
+  - Visual "Saving..." indicator
+  - Matches Tauri controller behavior
+
+### Phase 6: Camera Persistence
+- [x] **Tauri Controller** - Camera configurations persist across app restarts
+  - Cameras saved to JSON file in app data directory
+  - Automatic save when cameras added/removed
+  - Automatic load on app startup
+  - Merges with live mDNS discoveries
 
 ---
 
 ## 🔴 KNOWN ISSUES (Critical)
 
 ### 1. Camera Lens Switching Not Working
-**Status:** ❌ BROKEN
+**Status:** ✅ FIXED (Commit: b46b519)
 **Description:** Selecting different camera positions (front/back) or lenses (wide/ultra_wide/telephoto) has no effect. Nothing happens when user changes these settings.
 
 **Affected:**
@@ -52,15 +63,14 @@
 - Device capabilities not being queried correctly
 - API request may not be reaching CaptureManager
 
-**Debug Steps Needed:**
-- [ ] Add extensive logging in `CaptureManager.updateSettings()` camera/lens switching section
-- [ ] Verify API request is reaching the server with correct payload
-- [ ] Check if `configure()` is being called when lens changes
-- [ ] Verify device discovery is finding requested lens type
-- [ ] Test on actual device with multiple lenses (not simulator)
+**Fixed By:**
+- ✅ Use default resolution/framerate (1080p30) when not set yet
+- ✅ Remove early return in fallback device logic
+- ✅ Add extensive logging for debugging
+- ✅ Proper device discovery and configuration
 
 ### 2. Automatic Camera Detection Not Working (Tauri)
-**Status:** ❌ BROKEN
+**Status:** ✅ FIXED (Commit: 1d8f368)
 **Description:** mDNS discovery in Tauri controller is not automatically finding cameras on the network.
 
 **Affected:**
@@ -76,15 +86,15 @@
 - iOS Bonjour service not advertising correctly
 - Network configuration issues (VLAN, multicast routing)
 
-**Debug Steps Needed:**
-- [ ] Verify iOS is advertising mDNS service (check iOS logs)
-- [ ] Use `dns-sd -B _avolocam._tcp` on macOS to verify service is visible
-- [ ] Add debug logging to `camera_discovery.rs`
-- [ ] Check if service type matches exactly between iOS and Tauri
-- [ ] Test on same subnet/network
+**Fixed By:**
+- ✅ Add discoveredCameras state and UI
+- ✅ Call discover_cameras() on mount and every 10 seconds
+- ✅ Display discovered cameras with "Add" buttons
+- ✅ Prompt for bearer token when adding
+- ✅ Proper visual feedback during discovery
 
 ### 3. WebSocket Connection Failures (Tauri)
-**Status:** ❌ BROKEN
+**Status:** ✅ FIXED (Commit: b46b519)
 **Description:** Persistent WebSocket connection errors in Tauri controller console
 
 **Error Logs:**
@@ -115,14 +125,7 @@
 
 ## 🚧 IN PROGRESS / PARTIALLY COMPLETE
 
-### iOS WebUI Live Editing
-**Status:** 🟡 PARTIAL
-**Current:** Apply button still present, settings require manual submit
-**Target:** Remove Apply button, add debouncing (like Tauri controller)
-
-### Camera Persistence (Tauri)
-**Status:** 🟡 NOT STARTED
-**Target:** Save discovered cameras to `cameras.json` so they persist across app restarts
+_No items currently in progress. All critical features completed!_
 
 ---
 
@@ -148,12 +151,12 @@
    - Check network configuration
 
 ### MEDIUM PRIORITY (Feature Completion)
-4. **[ ] iOS WebUI Live Editing**
+4. **[x] iOS WebUI Live Editing** ✅ COMPLETE
    - Remove Apply button
    - Add JavaScript debouncing (300ms)
    - Add saving indicator
 
-5. **[ ] Camera Persistence (Tauri)**
+5. **[x] Camera Persistence (Tauri)** ✅ COMPLETE
    - Save discovered cameras to `cameras.json`
    - Load cameras on app startup
    - Merge with live mDNS discoveries
@@ -255,9 +258,9 @@ dns-sd -B _avolocam._tcp
 
 ## 📊 CODE STATISTICS
 
-**Total Commits:** 6
-**Files Modified:** 8
-**Lines Added:** ~250
+**Total Commits:** 8
+**Files Modified:** 10
+**Lines Added:** ~450
 **Lines Removed:** ~390 (mostly EncoderManager deletion)
 
 **Modified Files:**
