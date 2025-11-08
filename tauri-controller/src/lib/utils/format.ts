@@ -2,7 +2,7 @@
  * Format bitrate from bps to human-readable Mbps
  */
 export function formatBitrate(bitrate: number): string {
-  return (bitrate / 1000000).toFixed(1) + ' Mbps';
+  return (bitrate / 1000000).toFixed(1);
 }
 
 /**
