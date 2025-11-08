@@ -15,6 +15,8 @@ struct StatusResponse: Codable {
     let current: CurrentSettings
     let telemetry: Telemetry
     let capabilities: [Capability]
+    let tallyProgram: Bool?
+    let tallyPreview: Bool?
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -22,6 +24,8 @@ struct StatusResponse: Codable {
         case current
         case telemetry
         case capabilities
+        case tallyProgram = "tally_program"
+        case tallyPreview = "tally_preview"
     }
 }
 
@@ -277,6 +281,28 @@ struct AliasUpdateResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case alias
         case requiresRestart = "requires_restart"
+    }
+}
+
+// MARK: - Torch Control
+
+struct TorchLevelResponse: Codable {
+    let currentLevel: Float
+    let defaultLevel: Float
+    let deviceModel: String
+
+    enum CodingKeys: String, CodingKey {
+        case currentLevel = "current_level"
+        case defaultLevel = "default_level"
+        case deviceModel = "device_model"
+    }
+}
+
+struct TorchLevelUpdateRequest: Codable {
+    let level: Float?  // nil to reset to default
+
+    enum CodingKeys: String, CodingKey {
+        case level
     }
 }
 

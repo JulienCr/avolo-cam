@@ -31,6 +31,7 @@ class AppCoordinator: ObservableObject {
     private var networkServer: NetworkServer?
     private var telemetryCollector: TelemetryCollector
     private var bonjourService: BonjourService?
+    private var tallyPoller: NDITallyPoller?
 
     // MARK: - Configuration
 
@@ -73,6 +74,19 @@ class AppCoordinator: ObservableObject {
         // Initialize components
         captureManager = CaptureManager()
         ndiManager = NDIManager(alias: cameraAlias)
+
+        // Initialize tally poller (requires ndiManager)
+        if let ndiManager = ndiManager {
+            tallyPoller = NDITallyPoller(ndiManager: ndiManager)
+
+            // Log torch level at startup
+            Task {
+                let torchLevel = await tallyPoller?.getTorchLevel() ?? 0.03
+                let defaultLevel = await tallyPoller?.getDefaultTorchLevel() ?? 0.03
+                let deviceModel = await tallyPoller?.getDeviceModel() ?? "Unknown"
+                print("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
+            }
+        }
 
         // Detect local IP address
         detectLocalIPAddress()
@@ -197,6 +211,7 @@ class AppCoordinator: ObservableObject {
         }
 
         // Stop all services
+        tallyPoller?.stop()
         bonjourService?.stop()
         networkServer?.stop()
 
@@ -389,6 +404,9 @@ class AppCoordinator: ObservableObject {
 
         isStreaming = true
 
+        // Start tally poller for torch control
+        tallyPoller?.start()
+
         // Update current settings
         updateCurrentSettings(from: request)
     }
@@ -397,6 +415,9 @@ class AppCoordinator: ObservableObject {
         guard isStreaming else { return }
 
         print("⏹ Stopping stream")
+
+        // Stop tally poller (turns off torch)
+        tallyPoller?.stop()
 
         // Stop capture
         await captureManager?.stopCapture()
@@ -464,12 +485,17 @@ class AppCoordinator: ObservableObject {
     // MARK: - Status
 
     func getStatus() async -> StatusResponse {
+        // Get current tally state if streaming
+        let tallyState = isStreaming ? tallyPoller?.getCurrentState() : nil
+
         return StatusResponse(
             alias: cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
             current: currentSettings ?? createDefaultSettings(),
             telemetry: telemetry ?? createDefaultTelemetry(),
-            capabilities: await getCapabilities()
+            capabilities: await getCapabilities(),
+            tallyProgram: tallyState?.program,
+            tallyPreview: tallyState?.preview
         )
     }
 
@@ -712,5 +738,46 @@ extension AppCoordinator: NetworkRequestHandler {
     func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
         let result = try await updateAlias(request.alias)
         return AliasUpdateResponse(alias: result.alias, requiresRestart: result.requiresRestart)
+    }
+
+    func handleGetTorchLevel() async -> TorchLevelResponse {
+        guard let tallyPoller = tallyPoller else {
+            // Return default values if tally poller not initialized
+            return TorchLevelResponse(
+                currentLevel: 0.03,
+                defaultLevel: 0.03,
+                deviceModel: "Unknown"
+            )
+        }
+
+        let currentLevel = await tallyPoller.getTorchLevel()
+        let defaultLevel = await tallyPoller.getDefaultTorchLevel()
+        let deviceModel = await tallyPoller.getDeviceModel()
+
+        return TorchLevelResponse(
+            currentLevel: currentLevel,
+            defaultLevel: defaultLevel,
+            deviceModel: deviceModel
+        )
+    }
+
+    func handleUpdateTorchLevel(_ request: TorchLevelUpdateRequest) async throws -> TorchLevelResponse {
+        guard let tallyPoller = tallyPoller else {
+            throw NSError(domain: "com.avocam", code: 500, userInfo: [NSLocalizedDescriptionKey: "Tally poller not initialized"])
+        }
+
+        if let level = request.level {
+            // Set custom level
+            let success = await tallyPoller.setTorchLevel(level)
+            if !success {
+                throw NSError(domain: "com.avocam", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid torch level (must be 0.01-1.0)"])
+            }
+        } else {
+            // Reset to default
+            await tallyPoller.resetTorchToDefault()
+        }
+
+        // Return updated values
+        return await handleGetTorchLevel()
     }
 }
