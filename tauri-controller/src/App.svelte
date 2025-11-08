@@ -6,6 +6,7 @@
   import AddCameraDialog from '$lib/components/organisms/AddCameraDialog.svelte';
   import ProfileDialog from '$lib/components/organisms/ProfileDialog.svelte';
   import CameraSettingsDialog from '$lib/components/organisms/CameraSettingsDialog.svelte';
+  import StreamSettingsDialog from '$lib/components/organisms/StreamSettingsDialog.svelte';
   import Card from '$lib/components/atoms/Card.svelte';
   import Button from '$lib/components/atoms/Button.svelte';
 
@@ -28,12 +29,16 @@
     showAddDialog,
     showProfileDialog,
     showSettingsDialog,
+    showStreamSettingsDialog,
     settingsCameraId,
+    streamSettingsCameraId,
     selectedCameraIds,
     selectionCount,
     toggleCameraSelection,
     openSettingsDialog,
     closeSettingsDialog,
+    openStreamSettingsDialog,
+    closeStreamSettingsDialog,
   } from '$lib/stores/ui';
 
   import {
@@ -150,8 +155,8 @@
     }
   }
 
-  // Settings Dialog
-  function handleOpenSettings(cameraId: string) {
+  // Camera Settings Dialog
+  function handleOpenCameraSettings(cameraId: string) {
     // Load current settings from camera
     const camera = $cameras.find((c) => c.id === cameraId);
     if (camera?.status?.current) {
@@ -172,10 +177,14 @@
       $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
     }
 
+    openSettingsDialog(cameraId);
+  }
+
+  // Stream Settings Dialog
+  function handleOpenStreamSettings(cameraId: string) {
     // Ensure stream settings exist
     getStreamSettings(cameraId);
-
-    openSettingsDialog(cameraId);
+    openStreamSettingsDialog(cameraId);
   }
 
   // Debounced settings update
@@ -283,14 +292,9 @@
       alert(`Failed to add camera: ${e}`);
     }
   }
-
-  // Reactive stream settings for current camera
-  $: currentStreamSettings = $settingsCameraId
-    ? getStreamSettings($settingsCameraId)
-    : { resolution: '1920x1080', framerate: 30, bitrate: 10000000, codec: 'h264' };
 </script>
 
-<main class="container mx-auto max-w-7xl px-4 py-6">
+<main class="container mx-auto max-w-7xl px-4 py-6 dark:bg-gray-900">
   <StatusBar
     onAddCamera={() => ($showAddDialog = true)}
     onProfiles={() => ($showProfileDialog = true)}
@@ -298,17 +302,17 @@
   />
 
   {#if $error}
-    <div class="mb-4 rounded-lg bg-red-50 p-4 text-red-700">
+    <div class="mb-4 rounded-lg bg-red-50 p-4 text-red-700 dark:bg-red-900/20 dark:text-red-400">
       Error: {$error}
     </div>
   {/if}
 
   {#if $loading}
-    <div class="py-20 text-center text-gray-500">Loading cameras...</div>
+    <div class="py-20 text-center text-gray-500 dark:text-gray-400">Loading cameras...</div>
   {:else if $cameras.length === 0}
     <div class="py-20 text-center">
-      <p class="text-lg text-gray-600">No cameras found</p>
-      <p class="mt-2 text-sm text-gray-500">Add a camera manually or ensure cameras are on the same network</p>
+      <p class="text-lg text-gray-600 dark:text-gray-300">No cameras found</p>
+      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Add a camera manually or ensure cameras are on the same network</p>
     </div>
   {:else}
     <!-- Group Controls -->
@@ -325,7 +329,7 @@
     <!-- Discovered Cameras -->
     {#if $discoveredCameras.length > 0}
       <div class="mb-6">
-        <h2 class="mb-3 text-lg font-semibold text-primary-600">
+        <h2 class="mb-3 text-lg font-semibold text-primary-600 dark:text-primary-400">
           📡 Discovered Cameras ({$discoveredCameras.length})
         </h2>
         <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -333,8 +337,8 @@
             <Card padding="sm">
               <div class="flex items-center justify-between">
                 <div class="flex flex-col">
-                  <strong class="text-sm text-gray-900">{discovered.alias}</strong>
-                  <small class="text-xs text-gray-500">{discovered.ip}:{discovered.port}</small>
+                  <strong class="text-sm text-gray-900 dark:text-gray-100">{discovered.alias}</strong>
+                  <small class="text-xs text-gray-500 dark:text-gray-400">{discovered.ip}:{discovered.port}</small>
                 </div>
                 <Button
                   variant="primary"
@@ -349,7 +353,7 @@
         </div>
       </div>
     {:else if $discovering}
-      <div class="mb-6 rounded-lg bg-yellow-50 p-4 text-center text-yellow-800">
+      <div class="mb-6 rounded-lg bg-yellow-50 p-4 text-center text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
         🔍 Discovering cameras on the network...
       </div>
     {/if}
@@ -363,7 +367,8 @@
           onToggleSelection={() => toggleCameraSelection(camera.id)}
           onStart={() => handleStartStream(camera.id)}
           onStop={() => handleStopStream(camera.id)}
-          onSettings={() => handleOpenSettings(camera.id)}
+          onCameraSettings={() => handleOpenCameraSettings(camera.id)}
+          onStreamSettings={() => handleOpenStreamSettings(camera.id)}
           onRemove={() => handleRemoveCamera(camera.id)}
           onForceKeyframe={() => handleForceKeyframe(camera.id)}
         />
@@ -387,11 +392,17 @@
 {#if $settingsCameraId}
   <CameraSettingsDialog
     bind:open={$showSettingsDialog}
-    cameraId={$settingsCameraId}
-    bind:streamSettings={$cameraStreamSettings[$settingsCameraId]}
     bind:cameraSettings={$currentCameraSettings}
     onMeasureWB={handleMeasureWB}
     measuring={$measuringWB}
     saving={$savingSettings}
+  />
+{/if}
+
+{#if $streamSettingsCameraId}
+  <StreamSettingsDialog
+    bind:open={$showStreamSettingsDialog}
+    cameraId={$streamSettingsCameraId}
+    bind:settings={$cameraStreamSettings[$streamSettingsCameraId]}
   />
 {/if}

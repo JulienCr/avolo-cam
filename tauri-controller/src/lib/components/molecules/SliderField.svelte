@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createSlider, melt } from '@melt-ui/svelte';
   import Toggle from '../atoms/Toggle.svelte';
 
   export let label: string;
@@ -16,101 +17,58 @@
   $: isDisabled = disabled || isAuto;
   $: displayValue = isAuto ? 'Auto' : `${value}${unit}`;
 
+  const {
+    elements: { root, range, thumb },
+    states: { value: sliderValue },
+  } = createSlider({
+    value: [value],
+    min,
+    max,
+    step,
+    disabled: isDisabled,
+  });
+
+  // Sync with parent
+  $: sliderValue.set([value]);
+  $: value = $sliderValue[0];
+
   function handleModeToggle() {
     autoMode = isAuto ? 'manual' : 'auto';
   }
 </script>
 
-<div class="flex flex-col gap-2">
+<div class="flex flex-col gap-2.5">
   <!-- Header -->
   <div class="flex items-center justify-between">
-    <span class="text-sm font-medium text-gray-700">{label}</span>
+    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
     <div class="flex items-center gap-3">
-      <span class="text-sm font-semibold text-primary-600 min-w-[60px] text-right">
+      <span class="min-w-[65px] text-right text-sm font-semibold tabular-nums text-primary-600 dark:text-primary-400">
         {displayValue}
       </span>
       <Toggle checked={!isAuto} {disabled} label="Toggle manual mode" on:click={handleModeToggle} />
     </div>
   </div>
 
-  <!-- Slider Container -->
-  <div class="transition-opacity duration-300 {isDisabled ? 'opacity-40 pointer-events-none' : ''}">
-    <div class="relative flex h-8 w-full items-center">
-      <div class="h-2 w-full rounded-full bg-gray-200">
-        <div class="h-full rounded-full bg-gradient-to-r from-gray-200 via-primary-500 to-gray-200" />
-      </div>
+  <!-- Slider -->
+  <div class="transition-opacity duration-200 {isDisabled ? 'opacity-40 pointer-events-none' : ''}">
+    <div use:melt={$root} class="relative flex h-5 w-full items-center">
+      <!-- Track -->
+      <span class="block h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
+        <!-- Range -->
+        <span use:melt={$range} class="block h-full rounded-full bg-primary-500 dark:bg-primary-400" />
+      </span>
 
-      <input
-        type="range"
-        bind:value
-        {min}
-        {max}
-        {step}
-        disabled={isDisabled}
-        class="slider-input"
-        aria-label={label}
+      <!-- Thumb -->
+      <span
+        use:melt={$thumb()}
+        class="block h-4 w-4 rounded-full border-2 border-primary-500 bg-white shadow-md transition-all hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 active:scale-105 disabled:cursor-not-allowed dark:border-primary-400 dark:bg-gray-900 dark:focus:ring-offset-gray-800"
       />
     </div>
 
     <!-- Min/Max Labels -->
-    <div class="flex justify-between mt-1">
-      <span class="text-xs text-gray-500">{minLabel}</span>
-      <span class="text-xs text-gray-500">{maxLabel}</span>
+    <div class="mt-1.5 flex justify-between px-0.5">
+      <span class="text-xs text-gray-500 dark:text-gray-400">{minLabel}</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">{maxLabel}</span>
     </div>
   </div>
 </div>
-
-<style>
-  .slider-input {
-    position: absolute;
-    width: 100%;
-    height: 2rem;
-    top: 50%;
-    transform: translateY(-50%);
-    appearance: none;
-    background: transparent;
-    outline: none;
-    cursor: pointer;
-  }
-
-  .slider-input::-webkit-slider-thumb {
-    appearance: none;
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 50%;
-    background: white;
-    border: 3px solid #667eea;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .slider-input::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
-  }
-
-  .slider-input::-webkit-slider-thumb:active {
-    transform: scale(1.15);
-  }
-
-  .slider-input::-moz-range-thumb {
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 50%;
-    background: white;
-    border: 3px solid #667eea;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .slider-input::-moz-range-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
-  }
-
-  .slider-input:disabled {
-    cursor: not-allowed;
-  }
-</style>
