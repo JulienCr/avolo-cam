@@ -4,7 +4,7 @@
   import Button from '../atoms/Button.svelte';
   import Checkbox from '../atoms/Checkbox.svelte';
   import TelemetryBadge from '../molecules/TelemetryBadge.svelte';
-  import { formatBattery, formatTemperature } from '$lib/utils/format';
+  import { formatBattery, formatTemperature, formatBitrate } from '$lib/utils/format';
 
   export let camera: Camera;
   export let selected = false;
@@ -75,9 +75,10 @@
     <!-- Telemetry -->
     {#if telemetry}
       <div class="flex items-center gap-3">
-        <div class="flex-1 grid grid-cols-2 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+        <div class="flex-1 grid grid-cols-3 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
           <TelemetryBadge label="Battery" value={formatBattery(telemetry.battery)} />
           <TelemetryBadge label="Temp" value={formatTemperature(telemetry.temp_c)} />
+          <TelemetryBadge label="Bitrate" value={formatBitrate(telemetry.bitrate)} />
         </div>
         {#if hasDroppedFrames}
           <div class="flex items-center gap-2 rounded-lg bg-yellow-50 px-3 py-2 dark:bg-yellow-900/20" title="{droppedFrames} frames dropped">

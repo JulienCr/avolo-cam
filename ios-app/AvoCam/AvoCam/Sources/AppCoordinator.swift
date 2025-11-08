@@ -311,12 +311,12 @@ class AppCoordinator: ObservableObject {
         // Get NDI telemetry stats (FPS, sent frames, dropped frames)
         let ndiStats = ndiManager?.getTelemetryStats() ?? (fps: 0.0, sentFrames: 0, droppedFrames: 0)
 
-        // Get configured bitrate from current settings (or default to 0)
-        let configuredBitrate = currentSettings?.bitrate ?? 0
+        // Use real network bitrate from interface statistics
+        let networkBitrate = systemTelemetry.networkBitrate
 
         self.telemetry = Telemetry(
             fps: ndiStats.fps,
-            bitrate: configuredBitrate,
+            bitrate: networkBitrate,
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
