@@ -69,6 +69,11 @@
   onMount(async () => {
     await loadProfiles();
     startAutoRefresh(2000);
+    // Auto-discover and add cameras on startup after a short delay
+    // to allow mDNS discovery to complete
+    setTimeout(async () => {
+      await discoverCamerasAction();
+    }, 2000);
   });
 
   onDestroy(() => {

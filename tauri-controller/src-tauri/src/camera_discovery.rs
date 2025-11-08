@@ -46,8 +46,11 @@ impl CameraDiscovery {
                             .trim_end_matches('.')
                             .to_string();
 
-                        // Get IP address
-                        let ip = if let Some(addr) = info.get_addresses().iter().next() {
+                        // Get IP address (prefer IPv4)
+                        let ip = if let Some(addr) = info.get_addresses().iter().find(|a| a.is_ipv4()) {
+                            addr.to_string()
+                        } else if let Some(addr) = info.get_addresses().iter().next() {
+                            // Fallback to any address if no IPv4 found
                             addr.to_string()
                         } else {
                             log::warn!("No IP address found for {}", alias);
@@ -69,10 +72,12 @@ impl CameraDiscovery {
 
                         let camera = DiscoveredCamera {
                             alias: alias.clone(),
-                            ip,
+                            ip: ip.clone(),
                             port,
                             txt_records,
                         };
+
+                        log::info!("Parsed camera: alias={}, ip={}, port={}", alias, ip, port);
 
                         // Add to discovered list
                         discovered.write().await.insert(alias, camera);

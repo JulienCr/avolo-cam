@@ -44,9 +44,10 @@ export async function discoverCamerasAction(): Promise<void> {
       );
     });
 
-    // Auto-add new cameras using token from TXT records
+    // Auto-add new cameras using token from TXT records (token is optional)
     for (const discovered of newCameras) {
       const token = discovered.txt_records?.token || '';
+
       try {
         await api.addCameraManual(discovered.ip, discovered.port, token);
         console.log(`Auto-added camera: ${discovered.alias}`);
