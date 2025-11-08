@@ -75,6 +75,14 @@ export async function groupUpdateSettings(
   return invoke('group_update_settings', { cameraIds, settings });
 }
 
+export async function startAllCameras(): Promise<GroupOperationResult[]> {
+  return invoke('start_all_cameras');
+}
+
+export async function stopAllCameras(): Promise<GroupOperationResult[]> {
+  return invoke('stop_all_cameras');
+}
+
 // Profiles
 export async function getProfiles(): Promise<Profile[]> {
   return invoke('get_profiles');

@@ -158,6 +158,47 @@
     }
   }
 
+  // Start/Stop All Actions
+  async function handleStartAllCameras() {
+    if ($cameras.length === 0) {
+      alert('No cameras available');
+      return;
+    }
+
+    try {
+      const results = await api.startAllCameras();
+
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        alert(`Failed to start ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+      }
+
+      await refreshCameras();
+    } catch (e) {
+      alert(`Start all cameras failed: ${e}`);
+    }
+  }
+
+  async function handleStopAllCameras() {
+    if ($cameras.length === 0) {
+      alert('No cameras available');
+      return;
+    }
+
+    try {
+      const results = await api.stopAllCameras();
+
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        alert(`Failed to stop ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+      }
+
+      await refreshCameras();
+    } catch (e) {
+      alert(`Stop all cameras failed: ${e}`);
+    }
+  }
+
   // Camera Settings Dialog
   function handleOpenCameraSettings(cameraId: string) {
     // Load current settings from camera
@@ -324,6 +365,8 @@
     onRefresh={refreshCameras}
     onDiscover={discoverCamerasAction}
     onSettings={() => ($showAppSettingsDialog = true)}
+    onStartAll={handleStartAllCameras}
+    onStopAll={handleStopAllCameras}
     discovering={$discovering}
   />
 

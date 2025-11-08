@@ -175,6 +175,24 @@ async fn group_update_settings(
 }
 
 #[tauri::command]
+async fn start_all_cameras(
+    state: State<'_, AppState>,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.start_all_cameras().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_all_cameras(
+    state: State<'_, AppState>,
+) -> Result<Vec<GroupCommandResult>, String> {
+    let manager = state.camera_manager.read().await;
+    manager.stop_all_cameras().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn update_camera_alias(
     state: State<'_, AppState>,
     camera_id: String,
@@ -373,6 +391,8 @@ fn main() {
             group_start_stream,
             group_stop_stream,
             group_update_settings,
+            start_all_cameras,
+            stop_all_cameras,
             update_camera_alias,
             save_profile,
             get_profiles,
