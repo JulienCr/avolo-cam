@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { appSettings, saveAppSettings, deleteCamerasData, savingAppSettings } from '$lib/stores/appSettings';
   import { refreshCameras } from '$lib/stores/cameras';
   import Button from '../atoms/Button.svelte';
   import Card from '../atoms/Card.svelte';
-  import { sendNotification } from '@tauri-apps/plugin-notification';
+  import { invoke } from '@tauri-apps/api/core';
 
   export let onClose: () => void;
 
@@ -11,6 +12,53 @@
   let temperatureThreshold = $appSettings.alerts.temperature.temperatureThreshold;
   let cpuEnabled = $appSettings.alerts.cpu.enabled;
   let cpuThreshold = $appSettings.alerts.cpu.cpuThreshold;
+  let batteryLowEnabled = $appSettings.alerts.batteryLow.enabled;
+  let batteryLowThreshold = $appSettings.alerts.batteryLow.batteryLowThreshold;
+  let batteryCriticalEnabled = $appSettings.alerts.batteryCritical.enabled;
+  let batteryCriticalThreshold = $appSettings.alerts.batteryCritical.batteryCriticalThreshold;
+
+  let notificationPermissionGranted = false;
+  let checkingPermission = true;
+  let requestingPermission = false;
+
+  const testMessages = [
+    { title: 'Test Notification', body: 'Notifications are working!' },
+    { title: 'Alert Test', body: 'This is a test alert from AvoCam Controller' },
+    { title: 'System Check', body: 'Notification system is operational' },
+    { title: 'Camera Alert', body: 'Test: Camera #1 temperature is high' },
+    { title: 'Battery Warning', body: 'Test: Camera #2 battery is low' },
+  ];
+
+  onMount(async () => {
+    await checkNotificationPermission();
+  });
+
+  async function checkNotificationPermission() {
+    try {
+      checkingPermission = true;
+      notificationPermissionGranted = await invoke<boolean>('check_notification_permission');
+    } catch (e) {
+      console.error('Failed to check notification permission:', e);
+    } finally {
+      checkingPermission = false;
+    }
+  }
+
+  async function requestNotificationPermission() {
+    try {
+      requestingPermission = true;
+      notificationPermissionGranted = await invoke<boolean>('request_notification_permission');
+      if (notificationPermissionGranted) {
+        alert('Notification permission granted!');
+      } else {
+        alert('Notification permission was denied. Please enable it in your system settings.');
+      }
+    } catch (e) {
+      alert('Failed to request notification permission: ' + e);
+    } finally {
+      requestingPermission = false;
+    }
+  }
 
   async function handleSave() {
     try {
@@ -19,12 +67,30 @@
           temperature: {
             enabled: temperatureEnabled,
             temperatureThreshold,
-            cpuThreshold: 0, // Not used for temperature alerts
+            cpuThreshold: 0,
+            batteryLowThreshold: 0,
+            batteryCriticalThreshold: 0,
           },
           cpu: {
             enabled: cpuEnabled,
-            temperatureThreshold: 0, // Not used for CPU alerts
+            temperatureThreshold: 0,
             cpuThreshold,
+            batteryLowThreshold: 0,
+            batteryCriticalThreshold: 0,
+          },
+          batteryLow: {
+            enabled: batteryLowEnabled,
+            temperatureThreshold: 0,
+            cpuThreshold: 0,
+            batteryLowThreshold,
+            batteryCriticalThreshold: 0,
+          },
+          batteryCritical: {
+            enabled: batteryCriticalEnabled,
+            temperatureThreshold: 0,
+            cpuThreshold: 0,
+            batteryLowThreshold: 0,
+            batteryCriticalThreshold,
           },
         },
       });
@@ -50,11 +116,24 @@
 
   async function handleTestNotification() {
     try {
-      await sendNotification({
-        title: '🔔 Test Notification',
-        body: 'This is a test notification from AvoCam Controller. Alerts are working correctly!',
+      console.log('Test notification clicked, permission:', notificationPermissionGranted);
+
+      if (!notificationPermissionGranted) {
+        alert('Notification permission not granted. Please enable notifications first.');
+        return;
+      }
+
+      const randomMessage = testMessages[Math.floor(Math.random() * testMessages.length)];
+      console.log('Sending notification:', randomMessage);
+
+      await invoke('send_test_notification', {
+        title: randomMessage.title,
+        body: randomMessage.body
       });
+
+      console.log('Notification sent successfully');
     } catch (e) {
+      console.error('Notification error:', e);
       alert('Failed to send test notification: ' + e);
     }
   }
@@ -76,76 +155,133 @@
 
     <!-- Alerts Section -->
     <div class="mb-6">
-      <h3 class="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">🔔 Alerts</h3>
+      <h3 class="mb-3 text-lg font-semibold text-gray-900 dark:text-gray-100">🔔 Alerts</h3>
 
-      <!-- Temperature Alert -->
-      <div class="mb-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-        <div class="mb-3 flex items-center justify-between">
-          <label class="flex items-center gap-2">
+      <!-- Permission Warning (only if not granted) -->
+      {#if !checkingPermission && !notificationPermissionGranted}
+        <div class="mb-3 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-800 dark:bg-orange-950">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-orange-600 dark:text-orange-400">⚠ Notification permission not granted</span>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              on:click={requestNotificationPermission}
+              disabled={requestingPermission}
+            >
+              {requestingPermission ? 'Requesting...' : 'Enable'}
+            </Button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Compact Alert Grid -->
+      <div class="space-y-2">
+        <!-- Temperature Alert -->
+        <div class="flex items-center gap-3 rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+          <label class="flex items-center gap-2 min-w-[140px]">
             <input
               type="checkbox"
               bind:checked={temperatureEnabled}
               class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
-            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-              Temperature Alert
-            </span>
+            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">Temperature</span>
           </label>
+          <div class="flex items-center gap-2 flex-1">
+            <span class="text-xs text-gray-600 dark:text-gray-400">&gt;</span>
+            <input
+              type="number"
+              bind:value={temperatureThreshold}
+              disabled={!temperatureEnabled}
+              min="30"
+              max="60"
+              class="w-16 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
+            />
+            <span class="text-xs text-gray-600 dark:text-gray-400">°C</span>
+          </div>
         </div>
-        <div class="flex items-center gap-3">
-          <label class="text-sm text-gray-600 dark:text-gray-400">Threshold:</label>
-          <input
-            type="number"
-            bind:value={temperatureThreshold}
-            disabled={!temperatureEnabled}
-            min="30"
-            max="60"
-            class="w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
-          />
-          <span class="text-sm text-gray-600 dark:text-gray-400">°C</span>
-        </div>
-        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Get notified when camera temperature exceeds this value
-        </p>
-      </div>
 
-      <!-- CPU Alert -->
-      <div class="mb-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-        <div class="mb-3 flex items-center justify-between">
-          <label class="flex items-center gap-2">
+        <!-- CPU Alert -->
+        <div class="flex items-center gap-3 rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+          <label class="flex items-center gap-2 min-w-[140px]">
             <input
               type="checkbox"
               bind:checked={cpuEnabled}
               class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
-            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-              CPU Alert
-            </span>
+            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">CPU</span>
           </label>
+          <div class="flex items-center gap-2 flex-1">
+            <span class="text-xs text-gray-600 dark:text-gray-400">&gt;</span>
+            <input
+              type="number"
+              bind:value={cpuThreshold}
+              disabled={!cpuEnabled}
+              min="50"
+              max="200"
+              class="w-16 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
+            />
+            <span class="text-xs text-gray-600 dark:text-gray-400">%</span>
+          </div>
         </div>
-        <div class="flex items-center gap-3">
-          <label class="text-sm text-gray-600 dark:text-gray-400">Threshold:</label>
-          <input
-            type="number"
-            bind:value={cpuThreshold}
-            disabled={!cpuEnabled}
-            min="50"
-            max="200"
-            class="w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
-          />
-          <span class="text-sm text-gray-600 dark:text-gray-400">%</span>
+
+        <!-- Battery Low Alert -->
+        <div class="flex items-center gap-3 rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+          <label class="flex items-center gap-2 min-w-[140px]">
+            <input
+              type="checkbox"
+              bind:checked={batteryLowEnabled}
+              class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">Battery Low</span>
+          </label>
+          <div class="flex items-center gap-2 flex-1">
+            <span class="text-xs text-gray-600 dark:text-gray-400">&lt;</span>
+            <input
+              type="number"
+              bind:value={batteryLowThreshold}
+              disabled={!batteryLowEnabled}
+              min="10"
+              max="50"
+              class="w-16 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
+            />
+            <span class="text-xs text-gray-600 dark:text-gray-400">%</span>
+          </div>
         </div>
-        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Get notified when camera CPU usage exceeds this value
-        </p>
+
+        <!-- Battery Critical Alert -->
+        <div class="flex items-center gap-3 rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+          <label class="flex items-center gap-2 min-w-[140px]">
+            <input
+              type="checkbox"
+              bind:checked={batteryCriticalEnabled}
+              class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">Battery Critical</span>
+          </label>
+          <div class="flex items-center gap-2 flex-1">
+            <span class="text-xs text-gray-600 dark:text-gray-400">&lt;</span>
+            <input
+              type="number"
+              bind:value={batteryCriticalThreshold}
+              disabled={!batteryCriticalEnabled}
+              min="5"
+              max="25"
+              class="w-16 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-700"
+            />
+            <span class="text-xs text-gray-600 dark:text-gray-400">%</span>
+          </div>
+        </div>
       </div>
 
       <!-- Test Notification -->
-      <div class="flex justify-center">
+      <div class="flex justify-center mt-3">
         <Button
           variant="secondary"
           size="sm"
           on:click={handleTestNotification}
+          disabled={!notificationPermissionGranted}
         >
           🔔 Test Notification
         </Button>

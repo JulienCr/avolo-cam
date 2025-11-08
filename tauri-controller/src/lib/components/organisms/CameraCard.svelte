@@ -197,10 +197,12 @@
         <div
           class="flex-1 grid grid-cols-4 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50"
         >
-          <TelemetryBadge
-            label="Battery"
-            value={formatBattery(telemetry.battery)}
-          />
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Battery</span>
+            <span class="text-sm font-semibold text-gray-900 dark:text-white">
+              {#if telemetry.charging_state === 'charging' || telemetry.charging_state === 'full'}⚡{/if}{formatBattery(telemetry.battery)}
+            </span>
+          </div>
           <div class="flex flex-col gap-1">
             <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Temp</span>
             <span class="text-sm font-semibold text-gray-900 dark:text-white {getTempColor(telemetry.temp_c)}">

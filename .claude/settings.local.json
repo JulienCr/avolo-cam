@@ -25,7 +25,10 @@
       "Bash(pnpm add:*)",
       "Bash(cargo clippy:*)",
       "Bash(RUST_LOG=info pnpm run tauri:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(pnpm check:*)",
+      "Bash(pnpm run build:*)",
+      "Bash(pnpm run tauri:build:*)"
     ],
     "deny": [],
     "ask": []

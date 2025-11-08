@@ -241,6 +241,10 @@ pub struct AlertSettings {
     pub temperature_threshold: f64,
     #[serde(rename = "cpuThreshold")]
     pub cpu_threshold: f64,
+    #[serde(rename = "batteryLowThreshold")]
+    pub battery_low_threshold: f64,
+    #[serde(rename = "batteryCriticalThreshold")]
+    pub battery_critical_threshold: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +256,10 @@ pub struct AppSettings {
 pub struct AlertsConfig {
     pub temperature: AlertSettings,
     pub cpu: AlertSettings,
+    #[serde(rename = "batteryLow")]
+    pub battery_low: AlertSettings,
+    #[serde(rename = "batteryCritical")]
+    pub battery_critical: AlertSettings,
 }
 
 impl Default for AppSettings {
@@ -261,12 +269,30 @@ impl Default for AppSettings {
                 temperature: AlertSettings {
                     enabled: true,
                     temperature_threshold: 40.0,
-                    cpu_threshold: 0.0, // Not used for temperature
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 0.0,
                 },
                 cpu: AlertSettings {
                     enabled: true,
-                    temperature_threshold: 0.0, // Not used for CPU
+                    temperature_threshold: 0.0,
                     cpu_threshold: 100.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 0.0,
+                },
+                battery_low: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0,
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 25.0,
+                    battery_critical_threshold: 0.0,
+                },
+                battery_critical: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0,
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 10.0,
                 },
             },
         }

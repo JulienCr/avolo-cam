@@ -9,8 +9,8 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": "dmg",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
@@ -43,9 +43,5 @@
       "csp": null
     }
   },
-  "plugins": {
-    "notification": {
-      "default": ["allow-notify", "allow-request-permission", "allow-is-permission-granted"]
-    }
-  }
+  "plugins": {}
 }

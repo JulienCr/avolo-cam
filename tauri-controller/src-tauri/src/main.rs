@@ -7,7 +7,7 @@ mod camera_client;
 mod camera_manager;
 
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Manager, State, AppHandle};
 use tokio::sync::RwLock;
 
 use camera_manager::CameraManager;
@@ -258,6 +258,56 @@ async fn delete_cameras_data(
         .map_err(|e| e.to_string())
 }
 
+// Notification permission commands
+
+#[tauri::command]
+async fn check_notification_permission(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .permission_state()
+        .map(|state| state == tauri_plugin_notification::PermissionState::Granted)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn request_notification_permission(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .request_permission()
+        .map(|state| state == tauri_plugin_notification::PermissionState::Granted)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn send_test_notification(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    log::info!("Sending test notification: {} - {}", title, body);
+
+    // Try to get permission state first
+    let permission = app.notification().permission_state();
+    log::info!("Current permission state: {:?}", permission);
+
+    let result = app.notification()
+        .builder()
+        .title(&title)
+        .body(&body)
+        .show();
+
+    match &result {
+        Ok(notification_id) => {
+            log::info!("Notification sent successfully with ID: {:?}", notification_id);
+        },
+        Err(e) => {
+            log::error!("Failed to send notification: {}", e);
+        }
+    }
+
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -331,6 +381,9 @@ fn main() {
             get_app_settings,
             save_app_settings,
             delete_cameras_data,
+            check_notification_permission,
+            request_notification_permission,
+            send_test_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
