@@ -127,6 +127,8 @@ pub struct CameraProfile {
 
 // MARK: - WebSocket Messages
 
+/// Telemetry message sent from iOS camera to controller via WebSocket (1Hz)
+/// This is the Server→Client direction of the WebSocket protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketTelemetryMessage {
     pub fps: f64,
@@ -140,7 +142,32 @@ pub struct WebSocketTelemetryMessage {
     pub charging_state: ChargingState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Command message to be sent from controller to iOS camera via WebSocket
+/// This is the Client→Server direction of the WebSocket protocol
+///
+/// **Status:** Defined but not yet implemented (LOT C - Image Quality & Ops)
+///
+/// **Purpose:** Enable low-latency camera control commands via WebSocket
+/// instead of HTTP POST. Useful for real-time adjustments like manual focus/zoom.
+///
+/// **Example payload:**
+/// ```json
+/// {
+///   "op": "set",
+///   "camera": {
+///     "focus_mode": "manual",
+///     "zoom_factor": 2.0
+///   }
+/// }
+/// ```
+///
+/// **To implement:**
+/// 1. Modify `CameraClient::connect_websocket()` to support bidirectional communication
+/// 2. Add iOS WebSocket handler for incoming commands in `WebSocketHandler.swift`
+/// 3. Add Tauri command `send_camera_command_ws()` for frontend to use
+///
+/// See [DEAD_CODE_ANALYSIS.md](../../DEAD_CODE_ANALYSIS.md#1-websocketcommandmessage) for full implementation guide
+#[allow(dead_code)]
 pub struct WebSocketCommandMessage {
     pub op: String,
     pub camera: Option<CameraSettingsRequest>,

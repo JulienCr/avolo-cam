@@ -22,7 +22,8 @@
       "Bash(git commit:*)",
       "Bash(git log:*)",
       "Bash(pnpm install:*)",
-      "Bash(pnpm add:*)"
+      "Bash(pnpm add:*)",
+      "Bash(cargo clippy:*)"
     ],
     "deny": [],
     "ask": []

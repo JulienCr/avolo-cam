@@ -184,7 +184,7 @@ impl CameraClient {
                 tokio::time::sleep(delay).await;
 
                 // Check if we should stop reconnecting
-                if let Ok(_) = rx.try_recv() {
+                if rx.try_recv().is_ok() {
                     log::info!("Stop signal received, ending WebSocket reconnection");
                     break;
                 }
@@ -201,6 +201,11 @@ impl CameraClient {
         // Send stop signal through channel if available
     }
 
+    /// Query WebSocket connection state
+    ///
+    /// **TODO (LOT B):** Expose this to frontend for connection status indicators
+    /// See [DEAD_CODE_ANALYSIS.md](../../DEAD_CODE_ANALYSIS.md#3-is_connected-method) for implementation guide
+    #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
         *self.connected.read().await
     }

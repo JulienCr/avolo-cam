@@ -4,13 +4,11 @@ use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::models::DiscoveredCamera;
 
 const SERVICE_TYPE: &str = "_avolocam._tcp.local.";
-const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct CameraDiscovery {
     daemon: ServiceDaemon,
@@ -110,77 +108,6 @@ impl CameraDiscovery {
     /// Get currently discovered cameras
     pub async fn get_discovered(&self) -> Vec<DiscoveredCamera> {
         self.discovered.read().await.values().cloned().collect()
-    }
-
-    /// Perform one-time discovery scan
-    pub async fn scan_once(&self) -> Result<Vec<DiscoveredCamera>> {
-        // Clear previous discoveries
-        self.discovered.write().await.clear();
-
-        // Start browsing
-        let receiver = self.daemon.browse(SERVICE_TYPE)
-            .context("Failed to start mDNS browse")?;
-
-        let discovered = self.discovered.clone();
-
-        // Process events for a limited time
-        let process_task = tokio::spawn(async move {
-            let timeout = tokio::time::sleep(DISCOVERY_TIMEOUT);
-            tokio::pin!(timeout);
-
-            loop {
-                tokio::select! {
-                    Ok(event) = receiver.recv_async() => {
-                        match event {
-                            ServiceEvent::ServiceResolved(info) => {
-                                let alias = info.get_fullname()
-                                    .trim_end_matches(SERVICE_TYPE)
-                                    .trim_end_matches('.')
-                                    .to_string();
-
-                                if let Some(ip) = info.get_addresses().iter().next() {
-                                    let mut txt_records = HashMap::new();
-                                    for prop in info.get_properties().iter() {
-                                        if let Some(val) = prop.val() {
-                                            txt_records.insert(
-                                                prop.key().to_string(),
-                                                String::from_utf8_lossy(val).to_string(),
-                                            );
-                                        }
-                                    }
-
-                                    let camera = DiscoveredCamera {
-                                        alias: alias.clone(),
-                                        ip: ip.to_string(),
-                                        port: info.get_port(),
-                                        txt_records,
-                                    };
-
-                                    discovered.write().await.insert(alias, camera);
-                                }
-                            }
-                            ServiceEvent::ServiceRemoved(_, fullname) => {
-                                let alias = fullname
-                                    .trim_end_matches(SERVICE_TYPE)
-                                    .trim_end_matches('.')
-                                    .to_string();
-                                discovered.write().await.remove(&alias);
-                            }
-                            _ => {}
-                        }
-                    }
-                    () = &mut timeout => {
-                        log::debug!("Discovery scan timeout");
-                        break;
-                    }
-                }
-            }
-        });
-
-        process_task.await
-            .context("Discovery task failed")?;
-
-        Ok(self.get_discovered().await)
     }
 
     /// Stop browsing
