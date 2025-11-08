@@ -320,7 +320,7 @@ impl CameraManager {
     pub async fn remove_camera(&mut self, camera_id: &str) -> Result<()> {
         if let Some(camera) = self.cameras.remove(camera_id) {
             // Disconnect WebSocket
-            camera.client.read().await.disconnect_websocket().await;
+            camera.client.write().await.disconnect_websocket().await;
             log::info!("Removed camera: {}", camera_id);
 
             // Persist to disk

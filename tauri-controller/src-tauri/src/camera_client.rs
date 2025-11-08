@@ -12,14 +12,14 @@ use crate::models::*;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const WS_RECONNECT_DELAY: Duration = Duration::from_secs(2);
-const MAX_RECONNECT_ATTEMPTS: u32 = 100; // High limit, effectively unlimited
+const MAX_RECONNECT_ATTEMPTS: u32 = 1000; // Very high limit for production use
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30); // Cap backoff at 30s
 
 pub struct CameraClient {
     base_url: String,
     token: String,
     http_client: Client,
-    ws_tx: Option<mpsc::UnboundedSender<WebSocketTelemetryMessage>>,
+    ws_stop_tx: Option<mpsc::UnboundedSender<()>>, // Channel to stop WebSocket reconnection
     connected: Arc<RwLock<bool>>,
 }
 
@@ -36,7 +36,7 @@ impl CameraClient {
             base_url,
             token,
             http_client,
-            ws_tx: None,
+            ws_stop_tx: None,
             connected: Arc::new(RwLock::new(false)),
         }
     }
@@ -161,55 +161,75 @@ impl CameraClient {
         let connected = self.connected.clone();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.ws_tx = Some(tx);
+        self.ws_stop_tx = Some(tx);
 
         // Spawn WebSocket connection task with reconnection logic
         tokio::spawn(async move {
             let mut reconnect_attempts = 0;
+            let mut first_connection = true;
 
             loop {
-                log::info!("Connecting to WebSocket: {}", ws_url);
+                log::info!("Connecting to WebSocket: {} (attempt {}/{})",
+                    ws_url, reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
 
                 match connect_websocket_internal(&ws_url, &token, &telemetry_callback).await {
                     Ok(_) => {
                         log::info!("WebSocket connection ended normally");
-                        reconnect_attempts = 0;
+                        *connected.write().await = true;
+                        reconnect_attempts = 0; // Reset on successful connection
+                        first_connection = false;
                     }
                     Err(e) => {
                         log::error!("WebSocket connection error: {}", e);
+                        *connected.write().await = false;
                         reconnect_attempts += 1;
 
                         if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
                             log::error!("Max reconnection attempts reached, giving up");
-                            *connected.write().await = false;
                             break;
                         }
                     }
+                }
+
+                // Check if we should stop reconnecting before sleeping
+                if rx.try_recv().is_ok() {
+                    log::info!("Stop signal received, ending WebSocket reconnection");
+                    *connected.write().await = false;
+                    break;
                 }
 
                 // Exponential backoff with cap
                 let backoff_multiplier = 2_u32.pow(reconnect_attempts.min(5));
                 let calculated_delay = WS_RECONNECT_DELAY * backoff_multiplier;
                 let delay = calculated_delay.min(MAX_RECONNECT_DELAY);
-                log::info!("Reconnecting in {:?} (attempt {}/{})", delay, reconnect_attempts, MAX_RECONNECT_ATTEMPTS);
+
+                if reconnect_attempts > 0 {
+                    log::info!("Reconnecting in {:?} (attempt {}/{})",
+                        delay, reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
+                }
+
                 tokio::time::sleep(delay).await;
 
-                // Check if we should stop reconnecting
+                // Check again after sleep
                 if rx.try_recv().is_ok() {
-                    log::info!("Stop signal received, ending WebSocket reconnection");
+                    log::info!("Stop signal received during backoff, ending WebSocket reconnection");
+                    *connected.write().await = false;
                     break;
                 }
             }
         });
 
-        *self.connected.write().await = true;
-
         Ok(())
     }
 
-    pub async fn disconnect_websocket(&self) {
+    pub async fn disconnect_websocket(&mut self) {
         *self.connected.write().await = false;
+
         // Send stop signal through channel if available
+        if let Some(tx) = self.ws_stop_tx.take() {
+            let _ = tx.send(()); // Ignore error if receiver already dropped
+            log::info!("Sent stop signal to WebSocket reconnection task");
+        }
     }
 
     /// Query WebSocket connection state
