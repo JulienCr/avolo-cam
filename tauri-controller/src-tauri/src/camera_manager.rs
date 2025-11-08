@@ -52,6 +52,7 @@ pub struct CameraManager {
     operation_semaphore: Arc<Semaphore>,
     persistence_file_path: Option<PathBuf>,
     profiles_file_path: Option<PathBuf>,
+    settings_file_path: Option<PathBuf>,
 }
 
 struct Camera {
@@ -67,6 +68,7 @@ impl CameraManager {
             operation_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_OPERATIONS)),
             persistence_file_path: None,
             profiles_file_path: None,
+            settings_file_path: None,
         }
     }
 
@@ -74,11 +76,12 @@ impl CameraManager {
     pub async fn set_persistence_path(&mut self, path: PathBuf) -> Result<()> {
         self.persistence_file_path = Some(path.clone());
 
-        // Set profiles path in same directory
-        let profiles_path = path.parent()
-            .ok_or_else(|| anyhow::anyhow!("Invalid persistence path"))?
-            .join("profiles.json");
-        self.profiles_file_path = Some(profiles_path);
+        // Set profiles and settings paths in same directory
+        let parent_dir = path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid persistence path"))?;
+
+        self.profiles_file_path = Some(parent_dir.join("profiles.json"));
+        self.settings_file_path = Some(parent_dir.join("settings.json"));
 
         self.load_cameras_from_disk().await?;
         Ok(())
@@ -242,6 +245,66 @@ impl CameraManager {
 
         log::info!("Loaded {} profiles from {:?}", persistence.profiles.len(), path);
         Ok(persistence.profiles)
+    }
+
+    // MARK: - App Settings Management
+
+    /// Get app settings from disk (or defaults if not found)
+    pub async fn get_app_settings(&self) -> Result<AppSettings> {
+        let Some(path) = &self.settings_file_path else {
+            log::warn!("Settings path not set, returning defaults");
+            return Ok(AppSettings::default());
+        };
+
+        if !path.exists() {
+            log::info!("No settings file found at {:?}, returning defaults", path);
+            return Ok(AppSettings::default());
+        }
+
+        let json = tokio::fs::read_to_string(path).await
+            .context("Failed to read settings file")?;
+
+        let settings: AppSettings = serde_json::from_str(&json)
+            .context("Failed to deserialize settings")?;
+
+        log::info!("Loaded app settings from {:?}", path);
+        Ok(settings)
+    }
+
+    /// Save app settings to disk
+    pub async fn save_app_settings(&mut self, settings: AppSettings) -> Result<()> {
+        let Some(path) = &self.settings_file_path else {
+            anyhow::bail!("Settings path not set");
+        };
+
+        let json = serde_json::to_string_pretty(&settings)
+            .context("Failed to serialize settings")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write settings to disk")?;
+
+        log::info!("Saved app settings to {:?}", path);
+        Ok(())
+    }
+
+    /// Delete cameras.json file (useful for resetting the app)
+    pub async fn delete_cameras_data(&mut self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            anyhow::bail!("Cameras persistence path not set");
+        };
+
+        if path.exists() {
+            tokio::fs::remove_file(path).await
+                .context("Failed to delete cameras file")?;
+            log::info!("Deleted cameras data file: {:?}", path);
+        } else {
+            log::info!("Cameras data file does not exist: {:?}", path);
+        }
+
+        // Clear in-memory cameras
+        self.cameras.clear();
+
+        Ok(())
     }
 
     // MARK: - Discovery

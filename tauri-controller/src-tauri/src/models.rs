@@ -231,3 +231,44 @@ pub struct GroupCommandResult {
     pub success: bool,
     pub error: Option<String>,
 }
+
+// MARK: - App Settings
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertSettings {
+    pub enabled: bool,
+    #[serde(rename = "temperatureThreshold")]
+    pub temperature_threshold: f64,
+    #[serde(rename = "cpuThreshold")]
+    pub cpu_threshold: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub alerts: AlertsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertsConfig {
+    pub temperature: AlertSettings,
+    pub cpu: AlertSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            alerts: AlertsConfig {
+                temperature: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 40.0,
+                    cpu_threshold: 0.0, // Not used for temperature
+                },
+                cpu: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0, // Not used for CPU
+                    cpu_threshold: 100.0,
+                },
+            },
+        }
+    }
+}

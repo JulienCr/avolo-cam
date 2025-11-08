@@ -63,12 +63,15 @@
     deleteProfileAction,
   } from '$lib/stores/profiles';
 
+  import { loadAppSettings } from '$lib/stores/appSettings';
+
   import * as api from '$lib/utils/api';
   import { debounce } from '$lib/utils/debounce';
   import { DEFAULT_CAMERA_SETTINGS } from '$lib/types/settings';
 
   // Lifecycle
   onMount(async () => {
+    await loadAppSettings();
     await loadProfiles();
     startAutoRefresh(2000);
     // Auto-discover and add cameras on startup after a short delay

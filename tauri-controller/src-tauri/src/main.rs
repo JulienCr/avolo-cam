@@ -228,6 +228,36 @@ async fn apply_profile(
         .map_err(|e| e.to_string())
 }
 
+// App settings commands
+
+#[tauri::command]
+async fn get_app_settings(
+    state: State<'_, AppState>,
+) -> Result<AppSettings, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_app_settings().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_app_settings(
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.save_app_settings(settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_cameras_data(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.delete_cameras_data().await
+        .map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -298,6 +328,9 @@ fn main() {
             get_profiles,
             delete_profile,
             apply_profile,
+            get_app_settings,
+            save_app_settings,
+            delete_cameras_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
