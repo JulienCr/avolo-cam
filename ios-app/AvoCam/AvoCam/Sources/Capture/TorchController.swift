@@ -15,7 +15,7 @@ actor TorchController {
     // MARK: - Properties
 
     private var currentState: Bool = false
-    private let torchLevel: Float = 0.01  // Minimum level to avoid glare/heat
+    private let torchLevel: Float = 0.03  // Minimum level to avoid glare/heat
     private let logger = Logger(subsystem: "com.avocam.torch", category: "TorchController")
 
     // MARK: - Public API
@@ -66,7 +66,8 @@ actor TorchController {
         currentState = false
 
         guard let device = AVCaptureDevice.default(for: .video),
-              device.hasTorch else { return }
+            device.hasTorch
+        else { return }
 
         do {
             try device.lockForConfiguration()

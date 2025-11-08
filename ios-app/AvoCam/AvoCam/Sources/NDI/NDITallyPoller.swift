@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import os.log
 
 /// Polls NDI tally state at 10-20Hz and controls torch accordingly
