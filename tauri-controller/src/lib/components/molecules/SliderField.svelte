@@ -20,17 +20,17 @@
   const {
     elements: { root, range, thumb },
     states: { value: sliderValue },
+    options: { disabled: sliderDisabled },
   } = createSlider({
-    value: [value],
     min,
     max,
     step,
-    disabled: isDisabled,
   });
 
   // Sync with parent
   $: sliderValue.set([value]);
   $: value = $sliderValue[0];
+  $: sliderDisabled.set(isDisabled);
 
   function handleModeToggle() {
     autoMode = isAuto ? 'manual' : 'auto';
