@@ -309,7 +309,7 @@ class AppCoordinator: ObservableObject {
         let systemTelemetry = await telemetryCollector.collect()
 
         // Get NDI telemetry stats (FPS, sent frames, dropped frames)
-        let ndiStats = ndiManager?.getTelemetryStats() ?? (0.0, 0, 0)
+        let ndiStats = ndiManager?.getTelemetryStats() ?? (fps: 0.0, sentFrames: 0, droppedFrames: 0)
 
         // Get configured bitrate from current settings (or default to 0)
         let configuredBitrate = currentSettings?.bitrate ?? 0
