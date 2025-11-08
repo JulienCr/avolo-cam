@@ -9,7 +9,7 @@
   const {
     elements: { portalled, overlay, content, title: dialogTitle, close },
     states: { open: dialogOpen },
-  } = createDialog({ open });
+  } = createDialog();
 
   $: dialogOpen.set(open);
   $: open = $dialogOpen;
