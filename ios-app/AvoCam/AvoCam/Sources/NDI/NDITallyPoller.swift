@@ -115,4 +115,31 @@ class NDITallyPoller {
     func getCurrentState() -> (program: Bool, preview: Bool) {
         return currentTallyState
     }
+
+    // MARK: - Torch Configuration
+
+    /// Get current torch level
+    func getTorchLevel() async -> Float {
+        return await torchController.getTorchLevel()
+    }
+
+    /// Set torch level (0.01 - 1.0)
+    func setTorchLevel(_ level: Float) async -> Bool {
+        return await torchController.setTorchLevel(level)
+    }
+
+    /// Get device-specific default torch level
+    func getDefaultTorchLevel() async -> Float {
+        return await torchController.getDefaultTorchLevel()
+    }
+
+    /// Reset torch level to device default
+    func resetTorchToDefault() async {
+        await torchController.resetToDefault()
+    }
+
+    /// Get device model identifier
+    func getDeviceModel() async -> String {
+        return await torchController.getDeviceModel()
+    }
 }

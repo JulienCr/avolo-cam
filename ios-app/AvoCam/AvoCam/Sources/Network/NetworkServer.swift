@@ -23,6 +23,8 @@ protocol NetworkRequestHandler: AnyObject {
     func handleScreenBrightness(_ request: ScreenBrightnessRequest)
     func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse
     func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse
+    func handleGetTorchLevel() async -> TorchLevelResponse
+    func handleUpdateTorchLevel(_ request: TorchLevelUpdateRequest) async throws -> TorchLevelResponse
 }
 
 // MARK: - Network Server
@@ -279,6 +281,12 @@ class NetworkServer {
         case ("PUT", "/api/v1/settings/alias"):
             return await handleUpdateAlias(body: body)
 
+        case ("GET", "/api/v1/torch/level"):
+            return await handleGetTorchLevel()
+
+        case ("PUT", "/api/v1/torch/level"):
+            return await handlePutTorchLevel(body: body)
+
         case ("GET", "/api/v1/logs.zip"):
             return handleLogsDownload()
 
@@ -472,6 +480,44 @@ class NetworkServer {
         } catch {
             print("❌ Alias update failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription))
+        }
+    }
+
+    private func handleGetTorchLevel() async -> HTTPResponse {
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        let response = await handler.handleGetTorchLevel()
+        guard let jsonData = try? JSONEncoder().encode(response) else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode torch level"))
+        }
+
+        return HTTPResponse(status: 200, body: jsonData)
+    }
+
+    private func handlePutTorchLevel(body: Data?) async -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(TorchLevelUpdateRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid torch level request"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        do {
+            let response = try await handler.handleUpdateTorchLevel(request)
+            print("✅ Torch level updated to: \(response.currentLevel)")
+
+            guard let jsonData = try? JSONEncoder().encode(response) else {
+                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
+            }
+
+            return HTTPResponse(status: 200, body: jsonData)
+        } catch {
+            print("❌ Torch level update failed: \(error.localizedDescription)")
+            return HTTPResponse(status: 500, body: errorJSON(code: "TORCH_UPDATE_FAILED", message: error.localizedDescription))
         }
     }
 
@@ -829,6 +875,37 @@ class NetworkServer {
                     </div>
                 </div>
 
+                <div class="card">
+                    <h2>Tally Torch Settings</h2>
+                    <div class="status-grid" style="grid-template-columns: 1fr;">
+                        <div class="status-item">
+                            <div class="status-label">Device Model</div>
+                            <div id="device-model" class="status-value" style="font-size: 14px;">--</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Current Level</div>
+                            <div id="current-torch-level" class="status-value">--</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Default Level</div>
+                            <div id="default-torch-level" class="status-value">--</div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <label for="torch-level">Torch Brightness: <span id="torch-level-value">0.03</span></label>
+                        <div class="slider-group">
+                            <input type="range" id="torch-level-slider" value="0.03" min="0.01" max="1.0" step="0.01">
+                            <input type="number" id="torch-level" value="0.03" min="0.01" max="1.0" step="0.01">
+                        </div>
+                    </div>
+                    <button id="btn-reset-torch" class="btn-secondary">🔄 Reset to Default</button>
+                    <div id="torch-feedback" style="margin-top: 12px; font-size: 12px; display: none;"></div>
+                    <div class="info-text" style="margin-top: 12px;">
+                        Torch turns ON at this level when camera is on program (NDI tally).
+                        Lower values reduce glare and heat.
+                    </div>
+                </div>
+
                 <div class="info-text">
                     Use the Tauri Controller app for multi-camera management
                 </div>
@@ -871,6 +948,26 @@ class NetworkServer {
                     } catch (e) {
                         console.error('Failed to connect:', e);
                         setTimeout(connectWebSocket, 2000);
+                    }
+                }
+
+                // Load torch settings and populate form
+                async function loadTorchSettings() {
+                    try {
+                        const torchData = await apiCall('/api/v1/torch/level');
+                        console.log('Torch settings loaded:', torchData);
+
+                        // Update display values
+                        document.getElementById('device-model').textContent = torchData.device_model || 'Unknown';
+                        document.getElementById('current-torch-level').textContent = torchData.current_level.toFixed(2);
+                        document.getElementById('default-torch-level').textContent = torchData.default_level.toFixed(2);
+
+                        // Update controls
+                        document.getElementById('torch-level').value = torchData.current_level;
+                        document.getElementById('torch-level-slider').value = torchData.current_level;
+                        document.getElementById('torch-level-value').textContent = torchData.current_level.toFixed(2);
+                    } catch (e) {
+                        console.error('Failed to load torch settings:', e);
                     }
                 }
 
@@ -1020,6 +1117,7 @@ class NetworkServer {
                 syncSlider('iso-slider', 'iso', 'iso-value');
                 syncSlider('shutter-slider', 'shutter', 'shutter-value', formatShutterSpeed);
                 syncSlider('zoom-slider', 'zoom', 'zoom-value');
+                syncSlider('torch-level-slider', 'torch-level', 'torch-level-value', (v) => parseFloat(v).toFixed(2));
 
                 // Event handlers
                 document.getElementById('btn-start').addEventListener('click', async () => {
@@ -1078,6 +1176,79 @@ class NetworkServer {
                         feedbackEl.style.display = 'block';
                         btn.disabled = false;
                         btn.textContent = '💾 Save';
+                    }
+                });
+
+                // Torch level update handler (debounced)
+                let torchUpdateTimeout = null;
+                async function updateTorchLevel() {
+                    const level = parseFloat(document.getElementById('torch-level').value);
+                    const feedbackEl = document.getElementById('torch-feedback');
+
+                    try {
+                        feedbackEl.style.display = 'none';
+                        const result = await apiCall('/api/v1/torch/level', 'PUT', { level });
+
+                        // Update display values
+                        document.getElementById('current-torch-level').textContent = result.current_level.toFixed(2);
+                        document.getElementById('default-torch-level').textContent = result.default_level.toFixed(2);
+
+                        feedbackEl.textContent = '✅ Torch level updated!';
+                        feedbackEl.style.color = '#10b981';
+                        feedbackEl.style.display = 'block';
+
+                        setTimeout(() => {
+                            feedbackEl.style.display = 'none';
+                        }, 3000);
+                    } catch (e) {
+                        feedbackEl.textContent = '❌ Failed to update: ' + e.message;
+                        feedbackEl.style.color = '#ef4444';
+                        feedbackEl.style.display = 'block';
+                    }
+                }
+
+                const debouncedTorchUpdate = debounce(updateTorchLevel, 500);
+
+                document.getElementById('torch-level').addEventListener('input', debouncedTorchUpdate);
+                document.getElementById('torch-level-slider').addEventListener('input', debouncedTorchUpdate);
+
+                document.getElementById('btn-reset-torch').addEventListener('click', async () => {
+                    const feedbackEl = document.getElementById('torch-feedback');
+                    const btn = document.getElementById('btn-reset-torch');
+
+                    try {
+                        btn.disabled = true;
+                        btn.textContent = '⏳ Resetting...';
+                        feedbackEl.style.display = 'none';
+
+                        const result = await apiCall('/api/v1/torch/level', 'PUT', { level: null });
+
+                        // Update display values
+                        document.getElementById('device-model').textContent = result.device_model || 'Unknown';
+                        document.getElementById('current-torch-level').textContent = result.current_level.toFixed(2);
+                        document.getElementById('default-torch-level').textContent = result.default_level.toFixed(2);
+
+                        // Update controls
+                        document.getElementById('torch-level').value = result.current_level;
+                        document.getElementById('torch-level-slider').value = result.current_level;
+                        document.getElementById('torch-level-value').textContent = result.current_level.toFixed(2);
+
+                        feedbackEl.textContent = '✅ Reset to default level!';
+                        feedbackEl.style.color = '#10b981';
+                        feedbackEl.style.display = 'block';
+
+                        btn.disabled = false;
+                        btn.textContent = '🔄 Reset to Default';
+
+                        setTimeout(() => {
+                            feedbackEl.style.display = 'none';
+                        }, 3000);
+                    } catch (e) {
+                        feedbackEl.textContent = '❌ Failed to reset: ' + e.message;
+                        feedbackEl.style.color = '#ef4444';
+                        feedbackEl.style.display = 'block';
+                        btn.disabled = false;
+                        btn.textContent = '🔄 Reset to Default';
                     }
                 });
 
@@ -1281,6 +1452,7 @@ class NetworkServer {
 
                 // Initialize
                 loadCameraStatus();
+                loadTorchSettings();
                 connectWebSocket();
             </script>
         </body>

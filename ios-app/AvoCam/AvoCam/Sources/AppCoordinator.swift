@@ -78,6 +78,14 @@ class AppCoordinator: ObservableObject {
         // Initialize tally poller (requires ndiManager)
         if let ndiManager = ndiManager {
             tallyPoller = NDITallyPoller(ndiManager: ndiManager)
+
+            // Log torch level at startup
+            Task {
+                let torchLevel = await tallyPoller?.getTorchLevel() ?? 0.03
+                let defaultLevel = await tallyPoller?.getDefaultTorchLevel() ?? 0.03
+                let deviceModel = await tallyPoller?.getDeviceModel() ?? "Unknown"
+                print("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
+            }
         }
 
         // Detect local IP address
@@ -730,5 +738,46 @@ extension AppCoordinator: NetworkRequestHandler {
     func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
         let result = try await updateAlias(request.alias)
         return AliasUpdateResponse(alias: result.alias, requiresRestart: result.requiresRestart)
+    }
+
+    func handleGetTorchLevel() async -> TorchLevelResponse {
+        guard let tallyPoller = tallyPoller else {
+            // Return default values if tally poller not initialized
+            return TorchLevelResponse(
+                currentLevel: 0.03,
+                defaultLevel: 0.03,
+                deviceModel: "Unknown"
+            )
+        }
+
+        let currentLevel = await tallyPoller.getTorchLevel()
+        let defaultLevel = await tallyPoller.getDefaultTorchLevel()
+        let deviceModel = await tallyPoller.getDeviceModel()
+
+        return TorchLevelResponse(
+            currentLevel: currentLevel,
+            defaultLevel: defaultLevel,
+            deviceModel: deviceModel
+        )
+    }
+
+    func handleUpdateTorchLevel(_ request: TorchLevelUpdateRequest) async throws -> TorchLevelResponse {
+        guard let tallyPoller = tallyPoller else {
+            throw NSError(domain: "com.avocam", code: 500, userInfo: [NSLocalizedDescriptionKey: "Tally poller not initialized"])
+        }
+
+        if let level = request.level {
+            // Set custom level
+            let success = await tallyPoller.setTorchLevel(level)
+            if !success {
+                throw NSError(domain: "com.avocam", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid torch level (must be 0.01-1.0)"])
+            }
+        } else {
+            // Reset to default
+            await tallyPoller.resetTorchToDefault()
+        }
+
+        // Return updated values
+        return await handleGetTorchLevel()
     }
 }

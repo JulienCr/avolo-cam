@@ -284,6 +284,28 @@ struct AliasUpdateResponse: Codable {
     }
 }
 
+// MARK: - Torch Control
+
+struct TorchLevelResponse: Codable {
+    let currentLevel: Float
+    let defaultLevel: Float
+    let deviceModel: String
+
+    enum CodingKeys: String, CodingKey {
+        case currentLevel = "current_level"
+        case defaultLevel = "default_level"
+        case deviceModel = "device_model"
+    }
+}
+
+struct TorchLevelUpdateRequest: Codable {
+    let level: Float?  // nil to reset to default
+
+    enum CodingKeys: String, CodingKey {
+        case level
+    }
+}
+
 // MARK: - Error Response
 
 struct ErrorResponse: Codable {
