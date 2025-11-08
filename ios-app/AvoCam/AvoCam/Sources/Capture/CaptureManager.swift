@@ -327,10 +327,9 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // Disable torch/flash (prevents unnecessary power monitoring)
-        if device.hasTorch && device.torchMode != .off {
-            device.torchMode = .off
-        }
+        // NOTE: Torch is now managed by TorchController for NDI tally indication
+        // Torch will be turned on/off based on program tally state
+        // Only disable flash (not needed for tally)
         if device.hasFlash && device.flashMode != .off {
             device.flashMode = .off
         }
@@ -343,7 +342,7 @@ actor CaptureManager: NSObject {
         // Disable subject area change monitoring (reduces KVO overhead)
         device.isSubjectAreaChangeMonitoringEnabled = false
 
-        print("✅ PERF: Sensor optimizations applied (torch off, bias locked, subject monitoring off)")
+        print("✅ PERF: Sensor optimizations applied (bias locked, subject monitoring off, torch managed by tally)")
     }
 
     /// Configure connection properties (orientation, stabilization)

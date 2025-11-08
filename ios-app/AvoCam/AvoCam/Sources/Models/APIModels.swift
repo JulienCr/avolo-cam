@@ -15,6 +15,8 @@ struct StatusResponse: Codable {
     let current: CurrentSettings
     let telemetry: Telemetry
     let capabilities: [Capability]
+    let tallyProgram: Bool?
+    let tallyPreview: Bool?
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -22,6 +24,8 @@ struct StatusResponse: Codable {
         case current
         case telemetry
         case capabilities
+        case tallyProgram = "tally_program"
+        case tallyPreview = "tally_preview"
     }
 }
 

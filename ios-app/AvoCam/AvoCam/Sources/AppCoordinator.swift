@@ -31,6 +31,7 @@ class AppCoordinator: ObservableObject {
     private var networkServer: NetworkServer?
     private var telemetryCollector: TelemetryCollector
     private var bonjourService: BonjourService?
+    private var tallyPoller: NDITallyPoller?
 
     // MARK: - Configuration
 
@@ -73,6 +74,11 @@ class AppCoordinator: ObservableObject {
         // Initialize components
         captureManager = CaptureManager()
         ndiManager = NDIManager(alias: cameraAlias)
+
+        // Initialize tally poller (requires ndiManager)
+        if let ndiManager = ndiManager {
+            tallyPoller = NDITallyPoller(ndiManager: ndiManager)
+        }
 
         // Detect local IP address
         detectLocalIPAddress()
@@ -197,6 +203,7 @@ class AppCoordinator: ObservableObject {
         }
 
         // Stop all services
+        tallyPoller?.stop()
         bonjourService?.stop()
         networkServer?.stop()
 
@@ -389,6 +396,9 @@ class AppCoordinator: ObservableObject {
 
         isStreaming = true
 
+        // Start tally poller for torch control
+        tallyPoller?.start()
+
         // Update current settings
         updateCurrentSettings(from: request)
     }
@@ -397,6 +407,9 @@ class AppCoordinator: ObservableObject {
         guard isStreaming else { return }
 
         print("⏹ Stopping stream")
+
+        // Stop tally poller (turns off torch)
+        tallyPoller?.stop()
 
         // Stop capture
         await captureManager?.stopCapture()
@@ -464,12 +477,17 @@ class AppCoordinator: ObservableObject {
     // MARK: - Status
 
     func getStatus() async -> StatusResponse {
+        // Get current tally state if streaming
+        let tallyState = isStreaming ? tallyPoller?.getCurrentState() : nil
+
         return StatusResponse(
             alias: cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
             current: currentSettings ?? createDefaultSettings(),
             telemetry: telemetry ?? createDefaultTelemetry(),
-            capabilities: await getCapabilities()
+            capabilities: await getCapabilities(),
+            tallyProgram: tallyState?.program,
+            tallyPreview: tallyState?.preview
         )
     }
 
