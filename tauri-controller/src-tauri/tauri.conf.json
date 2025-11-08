@@ -42,5 +42,10 @@
     "security": {
       "csp": null
     }
+  },
+  "plugins": {
+    "notification": {
+      "default": ["allow-notify", "allow-request-permission", "allow-is-permission-granted"]
+    }
   }
 }
