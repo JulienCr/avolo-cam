@@ -23,6 +23,12 @@
   let discovering = false;
   let error = null;
 
+  // Stream settings
+  let streamResolution = '1920x1080';
+  let streamFramerate = 30;
+  let streamBitrate = 10000000;
+  let streamCodec = 'h264';
+
   // Manual add dialog
   let showAddDialog = false;
   let manualIp = '';
@@ -137,10 +143,10 @@
     try {
       await invoke('start_stream', {
         cameraId,
-        resolution: '1920x1080',
-        framerate: 30,
-        bitrate: 10000000,
-        codec: 'h264'
+        resolution: streamResolution,
+        framerate: streamFramerate,
+        bitrate: streamBitrate,
+        codec: streamCodec
       });
       await refreshCameras();
     } catch (e) {
@@ -365,10 +371,10 @@
     try {
       const results = await invoke('group_start_stream', {
         cameraIds: ids,
-        resolution: '1920x1080',
-        framerate: 30,
-        bitrate: 10000000,
-        codec: 'h264'
+        resolution: streamResolution,
+        framerate: streamFramerate,
+        bitrate: streamBitrate,
+        codec: streamCodec
       });
 
       // Show results
@@ -431,6 +437,50 @@
       <button on:click={refreshCameras}>🔄 Refresh</button>
     </div>
   </header>
+
+  <!-- Stream Settings -->
+  <div class="stream-settings">
+    <h3>Stream Settings</h3>
+    <div class="settings-grid">
+      <label>
+        Resolution:
+        <select bind:value={streamResolution}>
+          <option value="1280x720">1280×720 (720p)</option>
+          <option value="1920x1080">1920×1080 (1080p)</option>
+          <option value="2560x1440">2560×1440 (1440p)</option>
+          <option value="3840x2160">3840×2160 (4K)</option>
+        </select>
+      </label>
+      <label>
+        Framerate:
+        <select bind:value={streamFramerate}>
+          <option value={24}>24 fps</option>
+          <option value={25}>25 fps</option>
+          <option value={30}>30 fps</option>
+          <option value={60}>60 fps</option>
+        </select>
+      </label>
+      <label>
+        Bitrate:
+        <select bind:value={streamBitrate}>
+          <option value={5000000}>5 Mbps</option>
+          <option value={8000000}>8 Mbps</option>
+          <option value={10000000}>10 Mbps</option>
+          <option value={15000000}>15 Mbps</option>
+          <option value={20000000}>20 Mbps</option>
+          <option value={30000000}>30 Mbps</option>
+          <option value={50000000}>50 Mbps</option>
+        </select>
+      </label>
+      <label>
+        Codec:
+        <select bind:value={streamCodec}>
+          <option value="h264">H.264</option>
+          <option value="hevc">H.265/HEVC</option>
+        </select>
+      </label>
+    </div>
+  </div>
 
   {#if error}
     <div class="error">
@@ -1221,5 +1271,59 @@
 
   .btn-delete:active {
     transform: scale(0.98);
+  }
+
+  /* Stream Settings */
+  .stream-settings {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  }
+
+  .stream-settings h3 {
+    margin: 0 0 15px 0;
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+  }
+
+  .settings-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .settings-grid select {
+    padding: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .settings-grid select:hover {
+    border-color: rgba(255, 255, 255, 0.6);
+    background: white;
+  }
+
+  .settings-grid select:focus {
+    outline: none;
+    border-color: white;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
   }
 </style>

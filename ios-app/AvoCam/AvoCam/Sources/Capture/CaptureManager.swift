@@ -645,6 +645,7 @@ actor CaptureManager: NSObject {
         let commonResolutions = [
             (1280, 720, "1280x720"),
             (1920, 1080, "1920x1080"),
+            (2560, 1440, "2560x1440"),
             (3840, 2160, "3840x2160"),
         ]
 
