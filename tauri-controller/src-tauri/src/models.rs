@@ -113,6 +113,7 @@ pub struct CameraSettingsRequest {
     pub focus_mode: Option<FocusMode>,
     pub zoom_factor: Option<f64>,
     pub lens: Option<String>,
+    pub camera_position: Option<String>,
     pub orientation_lock: Option<String>,
 }
 

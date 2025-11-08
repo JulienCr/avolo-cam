@@ -19,11 +19,14 @@
       "Bash(git pull:*)",
       "Bash(xcodebuild -list:*)",
       "Bash(xcodebuild:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)"
     ],
     "deny": [],
     "ask": []
   },
-  "enabledMcpjsonServers": [],
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": []
 }

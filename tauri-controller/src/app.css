@@ -1,13 +1,43 @@
-* {
-  box-sizing: border-box;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Temperature: warm → neutral → cool */
+  --k-2000: #FF8C3A; /* warm tungsten ~2000K */
+  --k-3000: #FFC47E; /* halogen ~3000K */
+  --k-4000: #FFF0D9; /* neutral-warm ~4000K */
+  --k-5500: #F8F9FB; /* daylight neutral */
+  --k-6500: #E6F2FF; /* cool neutral */
+  --k-8000: #A8C8FF; /* cool blue */
+  --k-10000: #6BA1FF; /* deeper blue */
+
+  /* Tint: green ↔ neutral ↔ magenta */
+  --t-green: #1F8F5F;
+  --t-green-soft: #BFE5CF;
+  --t-neutral: #F8F9FB;
+  --t-magenta-soft: #EBC2E7;
+  --t-magenta: #C43BAA;
 }
 
-body {
-  margin: 0;
-  padding: 0;
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply m-0 p-0 font-sans bg-gray-50 text-gray-900 antialiased;
+  }
+
+  #app {
+    @apply w-full min-h-screen;
+  }
 }
 
-#app {
-  width: 100%;
-  min-height: 100vh;
+@layer components {
+  /* Custom component styles if needed */
+}
+
+@layer utilities {
+  /* Custom utilities if needed */
 }
