@@ -1,9 +1,12 @@
 <script lang="ts">
   import { createSwitch, melt } from '@melt-ui/svelte';
+  import { createEventDispatcher } from 'svelte';
 
   export let checked = false;
   export let disabled = false;
   export let label = '';
+
+  const dispatch = createEventDispatcher();
 
   const {
     elements: { root, input },
@@ -11,11 +14,17 @@
   } = createSwitch({
     defaultChecked: checked,
     disabled,
+    onCheckedChange: ({ next }) => {
+      checked = next;
+      dispatch('change', next);
+      return next;
+    },
   });
 
-  // Sync with parent
-  $: switchChecked.set(checked);
-  $: checked = $switchChecked;
+  // Sync external prop changes to internal store
+  $: if (checked !== $switchChecked) {
+    switchChecked.set(checked);
+  }
 </script>
 
 <button

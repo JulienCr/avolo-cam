@@ -1,0 +1,11 @@
+{
+  "name": "avolo-cam",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "tauri:dev": "cd tauri-controller && pnpm tauri:dev",
+    "tauri:dev:verbose": "cd tauri-controller && pnpm tauri:dev:verbose",
+    "tauri:build": "cd tauri-controller && pnpm tauri:build",
+    "tauri": "cd tauri-controller && pnpm tauri"
+  }
+}

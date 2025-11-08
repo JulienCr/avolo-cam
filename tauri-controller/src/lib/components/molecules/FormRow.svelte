@@ -9,7 +9,7 @@
 <div
   class="form-row {layout === 'horizontal'
     ? 'md:flex md:items-center md:gap-4'
-    : 'flex flex-col gap-2'}"
+    : 'flex flex-col gap-1.5'}"
 >
   {#if label}
     <label class="text-sm font-medium text-gray-700 {layout === 'horizontal' ? 'md:w-40 md:flex-shrink-0' : ''}">

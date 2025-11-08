@@ -4,8 +4,9 @@
   import FormRow from '../molecules/FormRow.svelte';
   import Select from '../atoms/Select.svelte';
   import type { StreamSettings } from '$lib/types/settings';
+  import type { Writable } from 'svelte/store';
 
-  export let open = false;
+  export let open: Writable<boolean>;
   export let cameraId: string | null;
   export let settings: StreamSettings;
 
@@ -39,7 +40,7 @@
   ];
 </script>
 
-<Modal bind:open title="Stream Settings" size="md">
+<Modal {open} title="Stream Settings" size="md">
   <div class="flex flex-col gap-5">
     <div class="grid gap-4 sm:grid-cols-2">
       <FormRow label="Resolution" layout="vertical">
@@ -76,10 +77,10 @@
     </div>
 
     <div class="flex justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-700">
-      <Button variant="secondary" size="md" on:click={() => (open = false)}>
+      <Button variant="secondary" size="md" on:click={() => open.set(false)}>
         Close
       </Button>
-      <Button variant="primary" size="md" on:click={() => (open = false)}>
+      <Button variant="primary" size="md" on:click={() => open.set(false)}>
         Apply
       </Button>
     </div>

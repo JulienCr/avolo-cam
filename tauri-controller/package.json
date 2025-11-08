@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "RUST_LOG=info,avocam_controller=debug tauri dev",
+    "tauri:dev:verbose": "RUST_LOG=debug tauri dev",
     "tauri:build": "tauri build"
   },
   "dependencies": {

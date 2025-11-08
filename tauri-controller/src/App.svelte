@@ -157,10 +157,8 @@
 
   // Camera Settings Dialog
   function handleOpenCameraSettings(cameraId: string) {
-    console.log('[App] handleOpenCameraSettings called:', cameraId);
     // Load current settings from camera
     const camera = $cameras.find((c) => c.id === cameraId);
-    console.log('[App] Found camera:', camera);
     if (camera?.status?.current) {
       const current = camera.status.current;
       $currentCameraSettings = {
@@ -179,9 +177,7 @@
       $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
     }
 
-    console.log('[App] Calling openSettingsDialog with:', cameraId);
     openSettingsDialog(cameraId);
-    console.log('[App] After openSettingsDialog, showSettingsDialog =', $showSettingsDialog);
   }
 
   // Stream Settings Dialog
@@ -227,8 +223,21 @@
     }
   }, 300);
 
-  // Watch for settings changes
+  // Watch for settings changes and auto-save with debounce
   $: if ($settingsCameraId && $showSettingsDialog) {
+    // Access all settings properties to create reactive dependencies
+    const _ = [
+      $currentCameraSettings.wb_mode,
+      $currentCameraSettings.wb_kelvin,
+      $currentCameraSettings.wb_tint,
+      $currentCameraSettings.iso_mode,
+      $currentCameraSettings.iso,
+      $currentCameraSettings.shutter_mode,
+      $currentCameraSettings.shutter_s,
+      $currentCameraSettings.zoom_factor,
+      $currentCameraSettings.lens,
+      $currentCameraSettings.camera_position,
+    ];
     debouncedUpdateSettings();
   }
 
@@ -382,10 +391,10 @@
 </main>
 
 <!-- Dialogs -->
-<AddCameraDialog bind:open={$showAddDialog} onAdd={addCameraManualAction} />
+<AddCameraDialog open={showAddDialog} onAdd={addCameraManualAction} />
 
 <ProfileDialog
-  bind:open={$showProfileDialog}
+  open={showProfileDialog}
   profiles={$profiles}
   onSave={handleSaveProfile}
   onApply={handleApplyProfile}
@@ -395,7 +404,7 @@
 
 {#if $settingsCameraId}
   <CameraSettingsDialog
-    bind:open={$showSettingsDialog}
+    open={showSettingsDialog}
     bind:cameraSettings={$currentCameraSettings}
     onMeasureWB={handleMeasureWB}
     measuring={$measuringWB}
@@ -405,7 +414,7 @@
 
 {#if $streamSettingsCameraId}
   <StreamSettingsDialog
-    bind:open={$showStreamSettingsDialog}
+    open={showStreamSettingsDialog}
     cameraId={$streamSettingsCameraId}
     bind:settings={$cameraStreamSettings[$streamSettingsCameraId]}
   />

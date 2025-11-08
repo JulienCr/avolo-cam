@@ -4,8 +4,9 @@
   import Input from '../atoms/Input.svelte';
   import Card from '../atoms/Card.svelte';
   import type { Profile } from '$lib/types/profile';
+  import type { Writable } from 'svelte/store';
 
-  export let open = false;
+  export let open: Writable<boolean>;
   export let profiles: Profile[];
   export let onSave: (name: string) => Promise<void>;
   export let onApply: (profileName: string) => Promise<void>;
@@ -51,7 +52,7 @@
   }
 </script>
 
-<Modal bind:open title="Profile Management" size="lg">
+<Modal {open} title="Profile Management" size="lg">
   <div class="flex flex-col gap-6">
     <!-- Save Current Settings -->
     {#if canSave}
@@ -120,7 +121,7 @@
     </div>
 
     <div class="flex justify-end">
-      <Button variant="secondary" size="md" on:click={() => (open = false)}>
+      <Button variant="secondary" size="md" on:click={() => open.set(false)}>
         Close
       </Button>
     </div>

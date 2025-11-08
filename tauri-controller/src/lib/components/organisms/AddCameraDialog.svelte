@@ -3,8 +3,9 @@
   import FormRow from '../molecules/FormRow.svelte';
   import Input from '../atoms/Input.svelte';
   import Button from '../atoms/Button.svelte';
+  import type { Writable } from 'svelte/store';
 
-  export let open = false;
+  export let open: Writable<boolean>;
   export let onAdd: (ip: string, port: number, token: string) => Promise<void>;
 
   let ip = '';
@@ -20,7 +21,7 @@
       ip = '';
       port = 8888;
       token = '';
-      open = false;
+      open.set(false);
     } catch (e) {
       alert(`Failed to add camera: ${e}`);
     } finally {
@@ -29,7 +30,7 @@
   }
 </script>
 
-<Modal bind:open title="Add Camera Manually" size="md">
+<Modal {open} title="Add Camera Manually" size="md">
   <form on:submit|preventDefault={handleSubmit} class="flex flex-col gap-4">
     <FormRow label="IP Address" layout="vertical" required>
       <Input type="text" bind:value={ip} placeholder="192.168.1.100" required />
@@ -47,7 +48,7 @@
       <Button type="submit" variant="primary" size="md" disabled={submitting} class="flex-1">
         {submitting ? 'Adding...' : 'Add'}
       </Button>
-      <Button type="button" variant="secondary" size="md" on:click={() => (open = false)}>
+      <Button type="button" variant="secondary" size="md" on:click={() => open.set(false)}>
         Cancel
       </Button>
     </div>
