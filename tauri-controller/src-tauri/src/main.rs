@@ -235,6 +235,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Initialize camera manager
             let camera_manager = Arc::new(RwLock::new(CameraManager::new()));
