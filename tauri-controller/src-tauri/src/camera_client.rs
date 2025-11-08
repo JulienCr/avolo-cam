@@ -44,19 +44,30 @@ impl CameraClient {
     // MARK: - HTTP Requests
 
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
-        self.http_client
-            .get(format!("{}{}", self.base_url, path))
-            .header("Authorization", format!("Bearer {}", self.token))
+        let mut request = self.http_client.get(format!("{}{}", self.base_url, path));
+
+        // Only add Authorization header if token is not empty
+        if !self.token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        request
             .send()
             .await
             .context("HTTP GET request failed")
     }
 
     async fn post<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response> {
-        self.http_client
+        let mut request = self.http_client
             .post(format!("{}{}", self.base_url, path))
-            .header("Authorization", format!("Bearer {}", self.token))
-            .json(body)
+            .json(body);
+
+        // Only add Authorization header if token is not empty
+        if !self.token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        request
             .send()
             .await
             .context("HTTP POST request failed")
@@ -220,17 +231,23 @@ async fn connect_websocket_internal<F>(
 where
     F: Fn(WebSocketTelemetryMessage) + Send + Sync + 'static,
 {
-    // Build request with Authorization header (Bearer token)
+    // Build request with Authorization header (Bearer token) if token is provided
     use tokio_tungstenite::tungstenite::http::Request;
 
-    let request = Request::builder()
+    let mut request_builder = Request::builder()
         .uri(ws_url)
         .header("Host", ws_url.split("//").nth(1).unwrap_or(ws_url).split('/').next().unwrap_or(ws_url))
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")
-        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key());
+
+    // Only add Authorization header if token is not empty
+    if !token.is_empty() {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let request = request_builder
         .body(())
         .context("Failed to build WebSocket request")?;
 
