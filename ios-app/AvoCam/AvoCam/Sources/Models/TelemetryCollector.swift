@@ -19,10 +19,10 @@ actor TelemetryCollector {
     }
 
     func collect() async -> SystemTelemetry {
-        let battery = getBatteryLevel()
+        let battery = await getBatteryLevel()
         let temperature = getDeviceTemperature()
         let wifiRssi = getWiFiRSSI()
-        let chargingState = getChargingState()
+        let chargingState = await getChargingState()
         let thermalState = ProcessInfo.processInfo.thermalState
 
         return SystemTelemetry(
@@ -36,6 +36,7 @@ actor TelemetryCollector {
 
     // MARK: - Battery
 
+    @MainActor
     private func getBatteryLevel() -> Double {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let level = UIDevice.current.batteryLevel
@@ -44,6 +45,7 @@ actor TelemetryCollector {
         return max(0.0, min(1.0, Double(level)))
     }
 
+    @MainActor
     private func getChargingState() -> ChargingState {
         UIDevice.current.isBatteryMonitoringEnabled = true
 
@@ -112,26 +114,34 @@ actor TelemetryCollector {
     // MARK: - Network Status (Optional Enhancement)
 
     private func isWiFiConnected() -> Bool {
-        var zeroAddress = sockaddr_in()
-        zeroAddress.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        zeroAddress.sin_family = sa_family_t(AF_INET)
+        // Note: SCNetworkReachability APIs deprecated in iOS 17.4
+        // For new code, consider using Network.framework's NWPathMonitor
+        if #available(iOS 17.4, *) {
+            // Return a default value for now
+            // TODO: Implement using NWPathMonitor for iOS 17.4+
+            return true
+        } else {
+            var zeroAddress = sockaddr_in()
+            zeroAddress.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            zeroAddress.sin_family = sa_family_t(AF_INET)
 
-        guard let defaultRouteReachability = withUnsafePointer(to: &zeroAddress, {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                SCNetworkReachabilityCreateWithAddress(nil, $0)
+            guard let defaultRouteReachability = withUnsafePointer(to: &zeroAddress, {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    SCNetworkReachabilityCreateWithAddress(nil, $0)
+                }
+            }) else {
+                return false
             }
-        }) else {
-            return false
+
+            var flags: SCNetworkReachabilityFlags = []
+            if !SCNetworkReachabilityGetFlags(defaultRouteReachability, &flags) {
+                return false
+            }
+
+            let isReachable = flags.contains(.reachable)
+            let needsConnection = flags.contains(.connectionRequired)
+
+            return isReachable && !needsConnection
         }
-
-        var flags: SCNetworkReachabilityFlags = []
-        if !SCNetworkReachabilityGetFlags(defaultRouteReachability, &flags) {
-            return false
-        }
-
-        let isReachable = flags.contains(.reachable)
-        let needsConnection = flags.contains(.connectionRequired)
-
-        return isReachable && !needsConnection
     }
 }

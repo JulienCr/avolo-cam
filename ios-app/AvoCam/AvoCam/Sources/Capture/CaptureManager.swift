@@ -5,7 +5,7 @@
 //  Manages AVFoundation video capture
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import UIKit
 import os
@@ -38,7 +38,7 @@ actor CaptureManager: NSObject {
     // PERF: os_signpost for latency tracking
     // Safe for nonisolated access - initialized once, read-only thereafter
     private let perfLog = OSLog(subsystem: "com.avocam.capture", category: .pointsOfInterest)
-    private nonisolated(unsafe) lazy var captureSignpostID = OSSignpostID(log: perfLog)
+    private nonisolated(unsafe) var captureSignpostID: OSSignpostID
 
     // Thread-safe frame callback storage (nonisolated to avoid actor hop on hot path)
     // Using @unchecked Sendable as thread safety is guaranteed by OSAllocatedUnfairLock
@@ -61,11 +61,36 @@ actor CaptureManager: NSObject {
     private var currentShutterMode: ExposureMode = .auto
     private var currentShutterS: Double = 0
 
+    // MARK: - Initialization
+
+    override init() {
+        self.captureSignpostID = OSSignpostID(log: perfLog)
+        super.init()
+    }
+
     // MARK: - Public Access
 
     nonisolated func getSession() -> AVCaptureSession? {
         // AVCaptureSession is thread-safe for reading to provide to preview layer
         return captureSession
+    }
+
+    // MARK: - Private Setters for Actor Isolation
+
+    private func setVideoDevice(_ device: AVCaptureDevice) {
+        videoDevice = device
+    }
+
+    private func setVideoInput(_ input: AVCaptureDeviceInput) {
+        videoInput = input
+    }
+
+    private func setVideoOutput(_ output: AVCaptureVideoDataOutput) {
+        videoOutput = output
+    }
+
+    private func setIsUsingVirtualDevice(_ value: Bool) {
+        isUsingVirtualDevice = value
     }
 
     // MARK: - Configuration
@@ -82,6 +107,10 @@ actor CaptureManager: NSObject {
         currentResolution = resolution
         currentFramerate = framerate
 
+        // Capture actor-isolated properties before entering the closure
+        let cameraPosition = currentCameraPosition
+        let lens = currentLens
+
         // All session mutations must run on serial sessionQueue
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             sessionQueue.async { [weak self] in
@@ -90,121 +119,125 @@ actor CaptureManager: NSObject {
                     return
                 }
 
-                do {
-                    // Stop existing session if running
-                    let wasRunning = self.captureSession?.isRunning ?? false
-                    if wasRunning {
-                        self.captureSession?.stopRunning()
-                    }
+                Task {
+                    do {
+                        // Stop existing session if running
+                        let wasRunning = self.captureSession?.isRunning ?? false
+                        if wasRunning {
+                            self.captureSession?.stopRunning()
+                        }
 
-                    // Setup capture session (reuse existing or create new)
-                    let session = self.captureSession ?? AVCaptureSession()
-                    session.sessionPreset = .inputPriority  // We'll manually set format
+                        // Setup capture session (reuse existing or create new)
+                        let session = self.captureSession ?? AVCaptureSession()
+                        session.sessionPreset = .inputPriority  // We'll manually set format
 
-                    // Begin atomic configuration
-                    session.beginConfiguration()
+                        // Begin atomic configuration
+                        session.beginConfiguration()
 
-                    // Disable wide color to prevent implicit conversions (iOS 10+)
-                    if #available(iOS 10.0, *) {
-                        session.automaticallyConfiguresCaptureDeviceForWideColor = false
-                    }
+                        // Disable wide color to prevent implicit conversions (iOS 10+)
+                        if #available(iOS 10.0, *) {
+                            session.automaticallyConfiguresCaptureDeviceForWideColor = false
+                        }
 
-                    // Remove existing inputs/outputs if reconfiguring
-                    if self.captureSession != nil {
-                        session.inputs.forEach { session.removeInput($0) }
-                        session.outputs.forEach { session.removeOutput($0) }
-                    }
+                        // Remove existing inputs/outputs if reconfiguring
+                        if self.captureSession != nil {
+                            session.inputs.forEach { session.removeInput($0) }
+                            session.outputs.forEach { session.removeOutput($0) }
+                        }
 
-                    // Discover device using prioritized list (requested lens first)
-                    let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition, requestedLens: self.currentLens)
-                    print("🔍 Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
-                    print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
+                        // Discover device using prioritized list (requested lens first)
+                        let deviceTypes = self.prioritizedDeviceTypes(for: cameraPosition, requestedLens: lens)
+                        print("🔍 Looking for device: position=\(cameraPosition == .back ? "back" : "front"), lens=\(lens)")
+                        print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
 
-                    let discovery = AVCaptureDevice.DiscoverySession(
-                        deviceTypes: deviceTypes,
-                        mediaType: .video,
-                        position: self.currentCameraPosition
-                    )
+                        let discovery = AVCaptureDevice.DiscoverySession(
+                            deviceTypes: deviceTypes,
+                            mediaType: .video,
+                            position: cameraPosition
+                        )
 
-                    guard let device = discovery.devices.first else {
+                        guard let device = discovery.devices.first else {
+                            session.commitConfiguration()
+                            print("❌ No camera device available!")
+                            continuation.resume(throwing: CaptureError.deviceNotAvailable)
+                            return
+                        }
+
+                        print("✅ Found camera device: \(device.localizedName)")
+
+                        // Check if using virtual device (can switch lenses via zoom)
+                        let isVirtualDevice = [
+                            AVCaptureDevice.DeviceType.builtInTripleCamera,
+                            .builtInDualWideCamera,
+                            .builtInDualCamera
+                        ].contains(device.deviceType)
+
+                        await self.setIsUsingVirtualDevice(isVirtualDevice)
+
+                        if isVirtualDevice {
+                            print("✅ Using virtual device - lens switching via zoom")
+                            print("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
+                        }
+
+                        await self.setVideoDevice(device)
+
+                        // Create device input
+                        let input = try AVCaptureDeviceInput(device: device)
+                        guard session.canAddInput(input) else {
+                            session.commitConfiguration()
+                            throw CaptureError.cannotAddInput
+                        }
+                        session.addInput(input)
+                        await self.setVideoInput(input)
+
+                        // Configure device format (must be sync on sessionQueue)
+                        try await self.configureFormatSync(device: device, resolution: resolution, framerate: framerate)
+
+                        // Create video output
+                        let output = AVCaptureVideoDataOutput()
+                        // NDI requires full range NV12 ('420f' not '420v')
+                        output.videoSettings = [
+                            kCVPixelBufferPixelFormatTypeKey as String:
+                                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                        ]
+                        output.alwaysDiscardsLateVideoFrames = true
+                        output.setSampleBufferDelegate(self, queue: self.outputQueue)
+
+                        guard session.canAddOutput(output) else {
+                            session.commitConfiguration()
+                            throw CaptureError.cannotAddOutput
+                        }
+                        session.addOutput(output)
+                        await self.setVideoOutput(output)
+
+                        // Configure connection (orientation, stabilization)
+                        await self.configureConnection(output.connection(with: .video))
+
+                        // Commit configuration
                         session.commitConfiguration()
-                        print("❌ No camera device available!")
-                        continuation.resume(throwing: CaptureError.deviceNotAvailable)
-                        return
+
+                        self.captureSession = session
+
+                        // Apply lens zoom if using virtual device
+                        if isVirtualDevice, let zoomFactor = await self.zoomFactorForLens(lens, device: device) {
+                            try device.lockForConfiguration()
+                            device.videoZoomFactor = zoomFactor
+                            device.unlockForConfiguration()
+                            let uiZoom = zoomFactor / 2.0
+                            print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(lens)'")
+                        }
+
+                        // Restart session if it was running before reconfiguration
+                        if wasRunning {
+                            session.startRunning()
+                            print("✅ Restarted capture session after reconfiguration")
+                        }
+
+                        continuation.resume()
+                    } catch {
+                        print("❌ Configuration failed: \(error)")
+                        continuation.resume(throwing: error)
                     }
-
-                    print("✅ Found camera device: \(device.localizedName)")
-
-                    // Check if using virtual device (can switch lenses via zoom)
-                    self.isUsingVirtualDevice = [
-                        AVCaptureDevice.DeviceType.builtInTripleCamera,
-                        .builtInDualWideCamera,
-                        .builtInDualCamera
-                    ].contains(device.deviceType)
-
-                    if self.isUsingVirtualDevice {
-                        print("✅ Using virtual device - lens switching via zoom")
-                        print("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
-                    }
-
-                    self.videoDevice = device
-
-                    // Create device input
-                    let input = try AVCaptureDeviceInput(device: device)
-                    guard session.canAddInput(input) else {
-                        session.commitConfiguration()
-                        throw CaptureError.cannotAddInput
-                    }
-                    session.addInput(input)
-                    self.videoInput = input
-
-                    // Configure device format (must be sync on sessionQueue)
-                    try self.configureFormatSync(device: device, resolution: resolution, framerate: framerate)
-
-                    // Create video output
-                    let output = AVCaptureVideoDataOutput()
-                    // NDI requires full range NV12 ('420f' not '420v')
-                    output.videoSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String:
-                            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-                    ]
-                    output.alwaysDiscardsLateVideoFrames = true
-                    output.setSampleBufferDelegate(self, queue: self.outputQueue)
-
-                    guard session.canAddOutput(output) else {
-                        session.commitConfiguration()
-                        throw CaptureError.cannotAddOutput
-                    }
-                    session.addOutput(output)
-                    self.videoOutput = output
-
-                    // Configure connection (orientation, stabilization)
-                    self.configureConnection(output.connection(with: .video))
-
-                    // Commit configuration
-                    session.commitConfiguration()
-
-                    self.captureSession = session
-
-                    // Apply lens zoom if using virtual device
-                    if self.isUsingVirtualDevice, let zoomFactor = self.zoomFactorForLens(self.currentLens, device: device) {
-                        try device.lockForConfiguration()
-                        device.videoZoomFactor = zoomFactor
-                        device.unlockForConfiguration()
-                        let uiZoom = zoomFactor / 2.0
-                        print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(self.currentLens)'")
-                    }
-
-                    // Restart session if it was running before reconfiguration
-                    if wasRunning {
-                        session.startRunning()
-                        print("✅ Restarted capture session after reconfiguration")
-                    }
-
-                    continuation.resume()
-                } catch {
-                    print("❌ Configuration failed: \(error)")
-                    continuation.resume(throwing: error)
                 }
             }
         }
@@ -294,7 +327,7 @@ actor CaptureManager: NSObject {
         )
 
         if status == kCVReturnSuccess, let pool = pool {
-            bufferPoolLock.withLock {
+            bufferPoolLock.withLock { [pool] in
                 pixelBufferPool = pool
             }
 
@@ -327,13 +360,11 @@ actor CaptureManager: NSObject {
             }
         }
 
-        // Disable torch/flash (prevents unnecessary power monitoring)
+        // Disable torch (prevents unnecessary power monitoring)
         if device.hasTorch && device.torchMode != .off {
             device.torchMode = .off
         }
-        if device.hasFlash && device.flashMode != .off {
-            device.flashMode = .off
-        }
+        // Note: flashMode is deprecated for video capture (iOS 10+), only torch mode is relevant
 
         // Lock auto-exposure bias to 0 (prevent continuous adjustment when manual)
         if device.isExposureModeSupported(.locked) || device.isExposureModeSupported(.custom) {
@@ -356,8 +387,14 @@ actor CaptureManager: NSObject {
         }
 
         // Lock video orientation to landscape
-        if connection.isVideoOrientationSupported {
-            connection.videoOrientation = .landscapeRight
+        if #available(iOS 17.0, *) {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90  // landscapeRight
+            }
+        } else {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .landscapeRight
+            }
         }
     }
 
@@ -430,7 +467,7 @@ actor CaptureManager: NSObject {
 
         // Start session on sessionQueue if not already running
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            sessionQueue.async {
+            sessionQueue.async { [session] in
                 if !session.isRunning {
                     session.startRunning()
                     print("▶️ Capture session started")
@@ -915,7 +952,7 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     /// Returns prioritized device types for discovery
     /// Always use physical cameras to support full manual control (WB/ISO/shutter)
     /// Virtual devices don't support custom exposure or custom WB gains
-    private func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
+    private nonisolated func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
         if position == .back {
             // Always use physical cameras for full manual control support
             // Lens switching handled via reconfiguration

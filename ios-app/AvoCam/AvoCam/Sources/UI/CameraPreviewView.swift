@@ -70,31 +70,62 @@ class PreviewUIView: UIView {
     }
 
     private func updateOrientation() {
-        guard let connection = previewLayer.connection, connection.isVideoOrientationSupported else {
+        guard let connection = previewLayer.connection else {
             return
         }
 
         // Map device orientation to video orientation
         let deviceOrientation = UIDevice.current.orientation
-        let videoOrientation: AVCaptureVideoOrientation
 
-        switch deviceOrientation {
-        case .portrait:
-            videoOrientation = .portrait
-        case .portraitUpsideDown:
-            videoOrientation = .portraitUpsideDown
-        case .landscapeLeft:
-            // Note: Device landscape left means video orientation landscape right
-            videoOrientation = .landscapeRight
-        case .landscapeRight:
-            // Note: Device landscape right means video orientation landscape left
-            videoOrientation = .landscapeLeft
-        default:
-            // For unknown/face-up/face-down, keep current orientation
-            return
+        if #available(iOS 17.0, *) {
+            // Use new videoRotationAngle API (iOS 17+)
+            let rotationAngle: CGFloat
+
+            switch deviceOrientation {
+            case .portrait:
+                rotationAngle = 0  // portrait
+            case .portraitUpsideDown:
+                rotationAngle = 180  // portraitUpsideDown
+            case .landscapeLeft:
+                // Note: Device landscape left means video rotation 90 degrees
+                rotationAngle = 90
+            case .landscapeRight:
+                // Note: Device landscape right means video rotation 270 degrees
+                rotationAngle = 270
+            default:
+                // For unknown/face-up/face-down, keep current orientation
+                return
+            }
+
+            if connection.isVideoRotationAngleSupported(rotationAngle) {
+                connection.videoRotationAngle = rotationAngle
+            }
+        } else {
+            // Use deprecated videoOrientation API (iOS < 17)
+            guard connection.isVideoOrientationSupported else {
+                return
+            }
+
+            let videoOrientation: AVCaptureVideoOrientation
+
+            switch deviceOrientation {
+            case .portrait:
+                videoOrientation = .portrait
+            case .portraitUpsideDown:
+                videoOrientation = .portraitUpsideDown
+            case .landscapeLeft:
+                // Note: Device landscape left means video orientation landscape right
+                videoOrientation = .landscapeRight
+            case .landscapeRight:
+                // Note: Device landscape right means video orientation landscape left
+                videoOrientation = .landscapeLeft
+            default:
+                // For unknown/face-up/face-down, keep current orientation
+                return
+            }
+
+            connection.videoOrientation = videoOrientation
         }
-
-        connection.videoOrientation = videoOrientation
     }
 
     func updateSession(_ session: AVCaptureSession?) {

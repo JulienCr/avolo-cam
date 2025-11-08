@@ -1336,7 +1336,7 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
         let methodString = method.rawValue  // Capture method string NOW before reset()
 
         // Handle request asynchronously
-        Task {
+        Task { [context] in
             let response = await server.handleHTTPRequest(
                 path: path,
                 method: methodString,  // Use captured value
@@ -1344,7 +1344,7 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
                 body: bodyData
             )
             // Send response on the channel's event loop
-            context.eventLoop.execute {
+            context.eventLoop.execute { [context] in
                 self.sendHTTPResponse(context: context, response: response)
             }
         }
