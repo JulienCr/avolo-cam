@@ -185,6 +185,7 @@ class NetworkServer {
             battery: telemetry.battery,
             tempC: telemetry.tempC,
             wifiRssi: telemetry.wifiRssi,
+            cpuUsage: telemetry.cpuUsage,
             ndiState: ndiState,
             droppedFrames: telemetry.droppedFrames ?? 0,
             chargingState: telemetry.chargingState ?? .unplugged

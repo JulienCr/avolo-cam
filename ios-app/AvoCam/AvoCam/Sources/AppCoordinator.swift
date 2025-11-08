@@ -321,6 +321,7 @@ class AppCoordinator: ObservableObject {
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
+            cpuUsage: systemTelemetry.cpuUsage,
             queueMs: nil,  // Not available from NDI SDK
             droppedFrames: Int(ndiStats.droppedFrames),
             chargingState: systemTelemetry.chargingState

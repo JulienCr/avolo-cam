@@ -41,6 +41,23 @@
     if (rssi >= -70) return "Fair";
     return "Poor";
   }
+
+  // CPU color coding
+  function getCpuColor(cpuUsage: number): string {
+    if (cpuUsage >= 100) return "text-red-600 dark:text-red-400 font-bold";
+    if (cpuUsage > 85) return "text-orange-600 dark:text-orange-400 font-bold";
+    return "";
+  }
+
+  // Temperature color coding
+  function getTempColor(temp: number): string {
+    if (temp > 40) return "text-red-600 dark:text-red-400 font-bold";
+    return "";
+  }
+
+  function formatCpu(cpu: number): string {
+    return cpu.toFixed(0) + "%";
+  }
 </script>
 
 <Card padding="md" interactive>
@@ -82,16 +99,25 @@
     {#if telemetry}
       <div class="flex items-center gap-3">
         <div
-          class="flex-1 grid grid-cols-3 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50"
+          class="flex-1 grid grid-cols-4 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50"
         >
           <TelemetryBadge
             label="Battery"
             value={formatBattery(telemetry.battery)}
           />
-          <TelemetryBadge
-            label="Temp"
-            value={formatTemperature(telemetry.temp_c)}
-          />
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Temp</span>
+            <span class="text-sm font-semibold text-gray-900 dark:text-white {getTempColor(telemetry.temp_c)}">
+              {#if telemetry.temp_c > 40}🔥{/if}
+              {formatTemperature(telemetry.temp_c)}
+            </span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">CPU</span>
+            <span class="text-sm font-semibold text-gray-900 dark:text-white {getCpuColor(telemetry.cpu_usage)}">
+              {formatCpu(telemetry.cpu_usage)}
+            </span>
+          </div>
           <TelemetryBadge
             label="Bitrate"
             unity="Mbps"

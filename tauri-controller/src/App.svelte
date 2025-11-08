@@ -307,6 +307,7 @@
 
 <main class="container mx-auto max-w-7xl px-4 py-6 dark:bg-gray-900">
   <StatusBar
+    cameras={$cameras}
     onAddCamera={() => ($showAddDialog = true)}
     onProfiles={() => ($showProfileDialog = true)}
     onRefresh={refreshCameras}
