@@ -27,7 +27,7 @@
   "app": {
     "windows": [
       {
-        "title": "AvoCam Controller",
+        "title": "AvoloCam Controller",
         "width": 1200,
         "height": 800,
         "resizable": true,
