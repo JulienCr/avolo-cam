@@ -7,6 +7,7 @@
   import ProfileDialog from '$lib/components/organisms/ProfileDialog.svelte';
   import CameraSettingsDialog from '$lib/components/organisms/CameraSettingsDialog.svelte';
   import StreamSettingsDialog from '$lib/components/organisms/StreamSettingsDialog.svelte';
+  import SettingsDialog from '$lib/components/organisms/SettingsDialog.svelte';
   import Card from '$lib/components/atoms/Card.svelte';
   import Button from '$lib/components/atoms/Button.svelte';
 
@@ -31,6 +32,7 @@
     showProfileDialog,
     showSettingsDialog,
     showStreamSettingsDialog,
+    showAppSettingsDialog,
     settingsCameraId,
     streamSettingsCameraId,
     selectedCameraIds,
@@ -312,6 +314,7 @@
     onProfiles={() => ($showProfileDialog = true)}
     onRefresh={refreshCameras}
     onDiscover={discoverCamerasAction}
+    onSettings={() => ($showAppSettingsDialog = true)}
     discovering={$discovering}
   />
 
@@ -392,4 +395,8 @@
     cameraId={$streamSettingsCameraId}
     bind:settings={$cameraStreamSettings[$streamSettingsCameraId]}
   />
+{/if}
+
+{#if $showAppSettingsDialog}
+  <SettingsDialog onClose={() => ($showAppSettingsDialog = false)} />
 {/if}
