@@ -11,13 +11,15 @@ import UIKit
 
 struct CameraPreviewView: UIViewRepresentable {
     let captureSession: AVCaptureSession?
+    let isHidden: Bool
 
     func makeUIView(context: Context) -> PreviewUIView {
-        return PreviewUIView(captureSession: captureSession)
+        return PreviewUIView(captureSession: captureSession, isHidden: isHidden)
     }
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
         uiView.updateSession(captureSession)
+        uiView.setHidden(isHidden)
     }
 }
 
@@ -32,12 +34,15 @@ class PreviewUIView: UIView {
         return layer as! AVCaptureVideoPreviewLayer
     }
 
-    init(captureSession: AVCaptureSession?) {
+    init(captureSession: AVCaptureSession?, isHidden: Bool = false) {
         self.captureSession = captureSession
         super.init(frame: .zero)
 
         previewLayer.videoGravity = .resizeAspectFill
         previewLayer.session = captureSession
+
+        // Set initial visibility (disabling the connection saves GPU/CPU resources)
+        setHidden(isHidden)
 
         // Update preview orientation to match device orientation
         updateOrientation()
@@ -100,5 +105,16 @@ class PreviewUIView: UIView {
             // Ensure orientation is updated when session changes
             updateOrientation()
         }
+    }
+
+    func setHidden(_ hidden: Bool) {
+        // Disable preview connection to save GPU/CPU resources during streaming
+        // This stops the layer from rendering while keeping the capture session running
+        if let connection = previewLayer.connection {
+            connection.isEnabled = !hidden
+            print(hidden ? "🙈 Preview disabled (streaming mode)" : "👁 Preview enabled")
+        }
+        // Also hide the view for UI purposes
+        self.isHidden = hidden
     }
 }

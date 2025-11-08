@@ -15,11 +15,14 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showTelemetry = false
 
+    @StateObject private var screenDimManager = ScreenDimManager()
+
     var body: some View {
         ZStack {
             // Camera preview (full screen background)
+            // Preview is disabled during streaming to save GPU/CPU resources
             if let session = coordinator.captureSession {
-                CameraPreviewView(captureSession: session)
+                CameraPreviewView(captureSession: session, isHidden: coordinator.isStreaming)
                     .edgesIgnoringSafeArea(.all)
             } else {
                 // Placeholder while camera initializes
@@ -38,12 +41,41 @@ struct ContentView: View {
                     )
             }
 
+            // Tap-to-wake overlay when streaming with dimmed screen
+            if coordinator.isStreaming && !screenDimManager.isScreenAwake {
+                Color.black
+                    .edgesIgnoringSafeArea(.all)
+                    .overlay(
+                        VStack(spacing: 12) {
+                            Image(systemName: "hand.tap.fill")
+                                .font(.system(size: 48))
+                                .foregroundColor(.white.opacity(0.3))
+
+                            Text("Tap to wake")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.3))
+                        }
+                        .opacity(screenDimManager.isScreenAwake ? 0 : 1)
+                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: screenDimManager.isScreenAwake)
+                    )
+                    .onTapGesture {
+                        screenDimManager.wakeScreen()
+                    }
+            }
+
             // Stream control overlay (always visible)
             StreamControlOverlay(
-                onOpenSettings: { showSettings = true },
-                onOpenTelemetry: { showTelemetry = true }
+                onOpenSettings: {
+                    screenDimManager.wakeScreen()
+                    showSettings = true
+                },
+                onOpenTelemetry: {
+                    screenDimManager.wakeScreen()
+                    showTelemetry = true
+                }
             )
             .environmentObject(coordinator)
+            .opacity(screenDimManager.isScreenAwake || !coordinator.isStreaming ? 1 : 0)
 
             // Settings panel (slides in from right)
             if showSettings {
@@ -98,6 +130,15 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             handleScenePhaseChange(newPhase)
+        }
+        .onChange(of: coordinator.isStreaming) { oldValue, newValue in
+            if newValue {
+                // Started streaming - dim screen
+                screenDimManager.startStreaming()
+            } else {
+                // Stopped streaming - restore brightness
+                screenDimManager.stopStreaming()
+            }
         }
     }
 
