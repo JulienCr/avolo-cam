@@ -322,4 +322,19 @@ class NDIManager {
 
         return (tally.on_program, tally.on_preview)
     }
+
+    // MARK: - Telemetry
+
+    /// Returns current streaming telemetry: (fps, sentFrames, droppedFrames)
+    func getTelemetryStats() -> (fps: Double, sentFrames: Int64, droppedFrames: Int64) {
+        guard isActive else {
+            return (0.0, 0, 0)
+        }
+
+        let fps = Double(enableReducedAllocation ? frameStatsCounter : frameCount)
+        let sent = sentFrameCount
+        let dropped = droppedFrameCount
+
+        return (fps, sent, dropped)
+    }
 }

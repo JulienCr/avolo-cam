@@ -52,6 +52,7 @@ pub struct CameraManager {
     operation_semaphore: Arc<Semaphore>,
     persistence_file_path: Option<PathBuf>,
     profiles_file_path: Option<PathBuf>,
+    settings_file_path: Option<PathBuf>,
 }
 
 struct Camera {
@@ -67,6 +68,7 @@ impl CameraManager {
             operation_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_OPERATIONS)),
             persistence_file_path: None,
             profiles_file_path: None,
+            settings_file_path: None,
         }
     }
 
@@ -74,11 +76,12 @@ impl CameraManager {
     pub async fn set_persistence_path(&mut self, path: PathBuf) -> Result<()> {
         self.persistence_file_path = Some(path.clone());
 
-        // Set profiles path in same directory
-        let profiles_path = path.parent()
-            .ok_or_else(|| anyhow::anyhow!("Invalid persistence path"))?
-            .join("profiles.json");
-        self.profiles_file_path = Some(profiles_path);
+        // Set profiles and settings paths in same directory
+        let parent_dir = path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid persistence path"))?;
+
+        self.profiles_file_path = Some(parent_dir.join("profiles.json"));
+        self.settings_file_path = Some(parent_dir.join("settings.json"));
 
         self.load_cameras_from_disk().await?;
         Ok(())
@@ -244,6 +247,66 @@ impl CameraManager {
         Ok(persistence.profiles)
     }
 
+    // MARK: - App Settings Management
+
+    /// Get app settings from disk (or defaults if not found)
+    pub async fn get_app_settings(&self) -> Result<AppSettings> {
+        let Some(path) = &self.settings_file_path else {
+            log::warn!("Settings path not set, returning defaults");
+            return Ok(AppSettings::default());
+        };
+
+        if !path.exists() {
+            log::info!("No settings file found at {:?}, returning defaults", path);
+            return Ok(AppSettings::default());
+        }
+
+        let json = tokio::fs::read_to_string(path).await
+            .context("Failed to read settings file")?;
+
+        let settings: AppSettings = serde_json::from_str(&json)
+            .context("Failed to deserialize settings")?;
+
+        log::info!("Loaded app settings from {:?}", path);
+        Ok(settings)
+    }
+
+    /// Save app settings to disk
+    pub async fn save_app_settings(&mut self, settings: AppSettings) -> Result<()> {
+        let Some(path) = &self.settings_file_path else {
+            anyhow::bail!("Settings path not set");
+        };
+
+        let json = serde_json::to_string_pretty(&settings)
+            .context("Failed to serialize settings")?;
+
+        tokio::fs::write(path, json).await
+            .context("Failed to write settings to disk")?;
+
+        log::info!("Saved app settings to {:?}", path);
+        Ok(())
+    }
+
+    /// Delete cameras.json file (useful for resetting the app)
+    pub async fn delete_cameras_data(&mut self) -> Result<()> {
+        let Some(path) = &self.persistence_file_path else {
+            anyhow::bail!("Cameras persistence path not set");
+        };
+
+        if path.exists() {
+            tokio::fs::remove_file(path).await
+                .context("Failed to delete cameras file")?;
+            log::info!("Deleted cameras data file: {:?}", path);
+        } else {
+            log::info!("Cameras data file does not exist: {:?}", path);
+        }
+
+        // Clear in-memory cameras
+        self.cameras.clear();
+
+        Ok(())
+    }
+
     // MARK: - Discovery
 
     pub async fn start_discovery(&mut self) -> Result<()> {
@@ -286,7 +349,7 @@ impl CameraManager {
         client_arc.write().await.connect_websocket(move |telemetry| {
             // Update telemetry in camera info
             // This would require additional synchronization in production
-            log::debug!("Received telemetry for {}: FPS={:.1}, Bitrate={}", id_clone, telemetry.fps, telemetry.bitrate);
+            //log::debug!("Received telemetry for {}: FPS={:.1}, Bitrate={}", id_clone, telemetry.fps, telemetry.bitrate);
         }).await
             .context("Failed to connect WebSocket")?;
 
@@ -320,7 +383,7 @@ impl CameraManager {
     pub async fn remove_camera(&mut self, camera_id: &str) -> Result<()> {
         if let Some(camera) = self.cameras.remove(camera_id) {
             // Disconnect WebSocket
-            camera.client.read().await.disconnect_websocket().await;
+            camera.client.write().await.disconnect_websocket().await;
             log::info!("Removed camera: {}", camera_id);
 
             // Persist to disk
@@ -361,7 +424,14 @@ impl CameraManager {
 
     pub async fn update_camera_alias(&mut self, camera_id: &str, alias: String) -> Result<()> {
         if let Some(camera) = self.cameras.get_mut(camera_id) {
-            camera.info.alias = alias;
+            camera.info.alias = alias.clone();
+            log::info!("Updated camera {} alias to: {}", camera_id, alias);
+
+            // Persist to disk
+            if let Err(e) = self.save_cameras_to_disk().await {
+                log::warn!("Failed to save cameras to disk after alias update: {}", e);
+            }
+
             Ok(())
         } else {
             anyhow::bail!("Camera not found: {}", camera_id);
@@ -396,13 +466,6 @@ impl CameraManager {
             .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
 
         camera.client.read().await.update_camera_settings(settings).await
-    }
-
-    pub async fn force_keyframe(&self, camera_id: &str) -> Result<()> {
-        let camera = self.cameras.get(camera_id)
-            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
-
-        camera.client.read().await.force_keyframe().await
     }
 
     pub async fn get_capabilities(&self, camera_id: &str) -> Result<Vec<Capability>> {

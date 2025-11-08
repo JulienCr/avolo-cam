@@ -4,6 +4,7 @@ export interface Telemetry {
   battery: number; // 0.0-1.0
   temp_c: number;
   wifi_rssi?: number;
+  cpu_usage: number; // 0.0 to 100.0+ percentage
   queue_ms?: number;
   dropped_frames?: number;
   charging_state?: 'charging' | 'full' | 'unplugged';
@@ -51,4 +52,5 @@ export interface DiscoveredCamera {
   alias: string;
   ip: string;
   port: number;
+  txt_records?: { [key: string]: string };
 }

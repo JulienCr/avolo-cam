@@ -9,8 +9,8 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": "dmg",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
@@ -27,7 +27,7 @@
   "app": {
     "windows": [
       {
-        "title": "AvoCam Controller",
+        "title": "AvoloCam Controller",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -42,5 +42,6 @@
     "security": {
       "csp": null
     }
-  }
+  },
+  "plugins": {}
 }

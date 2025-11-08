@@ -34,7 +34,7 @@ class AppCoordinator: ObservableObject {
 
     // MARK: - Configuration
 
-    private let cameraAlias: String
+    private var cameraAlias: String  // Changed to var to allow updates
     private let serverPort: Int = 8888
     private let bearerToken: String
 
@@ -286,7 +286,8 @@ class AppCoordinator: ObservableObject {
     private func startBonjourService() {
         bonjourService = BonjourService(
             alias: cameraAlias,
-            port: serverPort
+            port: serverPort,
+            bearerToken: bearerToken
         )
         bonjourService?.start()
         print("✅ Bonjour service started: _avolocam._tcp.local")
@@ -308,16 +309,21 @@ class AppCoordinator: ObservableObject {
     private func updateTelemetry() async {
         let systemTelemetry = await telemetryCollector.collect()
 
-        // Note: NDI SDK handles encoding internally, so we don't have encoder telemetry
-        // FPS and bitrate would need to be calculated from NDI SDK if available
+        // Get NDI telemetry stats (FPS, sent frames, dropped frames)
+        let ndiStats = ndiManager?.getTelemetryStats() ?? (fps: 0.0, sentFrames: 0, droppedFrames: 0)
+
+        // Use real network bitrate from interface statistics
+        let networkBitrate = systemTelemetry.networkBitrate
+
         self.telemetry = Telemetry(
-            fps: 0,  // TODO: Get from NDI SDK if available
-            bitrate: 0,  // TODO: Get from NDI SDK if available
+            fps: ndiStats.fps,
+            bitrate: networkBitrate,
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
-            queueMs: nil,
-            droppedFrames: nil,
+            cpuUsage: systemTelemetry.cpuUsage,
+            queueMs: nil,  // Not available from NDI SDK
+            droppedFrames: Int(ndiStats.droppedFrames),
             chargingState: systemTelemetry.chargingState
         )
 
@@ -449,12 +455,6 @@ class AppCoordinator: ObservableObject {
         persistSettings(current)
     }
 
-    func forceKeyframe() {
-        // Note: NDI SDK handles encoding internally. Keyframe control would need
-        // to be implemented through NDI SDK if available.
-        print("⚠️ Force keyframe not available (NDI SDK handles encoding)")
-    }
-
     // MARK: - Capabilities
 
     func getCapabilities() async -> [Capability] {
@@ -535,10 +535,49 @@ class AppCoordinator: ObservableObject {
             battery: 1.0,
             tempC: 25.0,
             wifiRssi: -50,
+            cpuUsage: 0,
             queueMs: nil,
             droppedFrames: nil,
             chargingState: nil
         )
+    }
+
+    // MARK: - Alias Management
+
+    func updateAlias(_ newAlias: String) async throws -> (alias: String, requiresRestart: Bool) {
+        let wasStreaming = isStreaming
+
+        // Stop streaming if active (we'll restart it with the new alias)
+        if wasStreaming {
+            await stopStreaming()
+        }
+
+        // Stop Bonjour service
+        bonjourService?.stop()
+
+        // Update alias
+        cameraAlias = newAlias
+        UserDefaults.standard.set(newAlias, forKey: "camera_alias")
+        print("✅ Camera alias updated to: \(newAlias)")
+
+        // Restart Bonjour with new alias
+        startBonjourService()
+
+        // Recreate NDI manager with new alias
+        ndiManager = NDIManager(alias: newAlias)
+
+        // Restart streaming if it was active
+        if wasStreaming, let settings = currentSettings {
+            let request = StreamStartRequest(
+                resolution: settings.resolution,
+                framerate: settings.fps,
+                bitrate: settings.bitrate,
+                codec: settings.codec
+            )
+            try await startStreaming(request: request)
+        }
+
+        return (alias: newAlias, requiresRestart: wasStreaming)
     }
 
     // MARK: - Settings Persistence
@@ -608,10 +647,6 @@ extension AppCoordinator: NetworkRequestHandler {
         try await updateCameraSettings(settings)
     }
 
-    func handleForceKeyframe() {
-        forceKeyframe()
-    }
-
     func handleGetStatus() async -> StatusResponse {
         return await getStatus()
     }
@@ -672,5 +707,10 @@ extension AppCoordinator: NetworkRequestHandler {
         }
         // Return physical scene CCT - UI will convert to UIKelvin if needed
         return WhiteBalanceMeasureResponse(sceneCCT_K: sceneCCT_K, tint: tint)
+    }
+
+    func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
+        let result = try await updateAlias(request.alias)
+        return AliasUpdateResponse(alias: result.alias, requiresRestart: result.requiresRestart)
     }
 }

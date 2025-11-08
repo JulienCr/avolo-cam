@@ -12,13 +12,15 @@ class BonjourService: NSObject {
 
     private let alias: String
     private let port: Int
+    private let bearerToken: String
     private var netService: NetService?
 
     // MARK: - Initialization
 
-    init(alias: String, port: Int) {
+    init(alias: String, port: Int, bearerToken: String) {
         self.alias = alias
         self.port = port
+        self.bearerToken = bearerToken
         super.init()
     }
 
@@ -59,7 +61,8 @@ class BonjourService: NSObject {
         let txtDict: [String: Data] = [
             "alias": alias.data(using: .utf8) ?? Data(),
             "version": "1.0".data(using: .utf8) ?? Data(),
-            "protocol": "avocam-v1".data(using: .utf8) ?? Data()
+            "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
+            "token": bearerToken.data(using: .utf8) ?? Data()
         ]
 
         return NetService.data(fromTXTRecord: txtDict)

@@ -67,6 +67,7 @@ pub struct Telemetry {
     pub battery: f64,
     pub temp_c: f64,
     pub wifi_rssi: i32,
+    pub cpu_usage: f64,
     pub queue_ms: Option<u32>,
     pub dropped_frames: Option<u32>,
     pub charging_state: Option<ChargingState>,
@@ -127,6 +128,8 @@ pub struct CameraProfile {
 
 // MARK: - WebSocket Messages
 
+/// Telemetry message sent from iOS camera to controller via WebSocket (1Hz)
+/// This is the Server→Client direction of the WebSocket protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketTelemetryMessage {
     pub fps: f64,
@@ -135,12 +138,38 @@ pub struct WebSocketTelemetryMessage {
     pub battery: f64,
     pub temp_c: f64,
     pub wifi_rssi: i32,
+    pub cpu_usage: f64,
     pub ndi_state: NdiState,
     pub dropped_frames: u32,
     pub charging_state: ChargingState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Command message to be sent from controller to iOS camera via WebSocket
+/// This is the Client→Server direction of the WebSocket protocol
+///
+/// **Status:** Defined but not yet implemented (LOT C - Image Quality & Ops)
+///
+/// **Purpose:** Enable low-latency camera control commands via WebSocket
+/// instead of HTTP POST. Useful for real-time adjustments like manual focus/zoom.
+///
+/// **Example payload:**
+/// ```json
+/// {
+///   "op": "set",
+///   "camera": {
+///     "focus_mode": "manual",
+///     "zoom_factor": 2.0
+///   }
+/// }
+/// ```
+///
+/// **To implement:**
+/// 1. Modify `CameraClient::connect_websocket()` to support bidirectional communication
+/// 2. Add iOS WebSocket handler for incoming commands in `WebSocketHandler.swift`
+/// 3. Add Tauri command `send_camera_command_ws()` for frontend to use
+///
+/// See [DEAD_CODE_ANALYSIS.md](../../DEAD_CODE_ANALYSIS.md#1-websocketcommandmessage) for full implementation guide
+#[allow(dead_code)]
 pub struct WebSocketCommandMessage {
     pub op: String,
     pub camera: Option<CameraSettingsRequest>,
@@ -201,4 +230,71 @@ pub struct GroupCommandResult {
     pub camera_id: String,
     pub success: bool,
     pub error: Option<String>,
+}
+
+// MARK: - App Settings
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertSettings {
+    pub enabled: bool,
+    #[serde(rename = "temperatureThreshold")]
+    pub temperature_threshold: f64,
+    #[serde(rename = "cpuThreshold")]
+    pub cpu_threshold: f64,
+    #[serde(rename = "batteryLowThreshold")]
+    pub battery_low_threshold: f64,
+    #[serde(rename = "batteryCriticalThreshold")]
+    pub battery_critical_threshold: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub alerts: AlertsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertsConfig {
+    pub temperature: AlertSettings,
+    pub cpu: AlertSettings,
+    #[serde(rename = "batteryLow")]
+    pub battery_low: AlertSettings,
+    #[serde(rename = "batteryCritical")]
+    pub battery_critical: AlertSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            alerts: AlertsConfig {
+                temperature: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 40.0,
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 0.0,
+                },
+                cpu: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0,
+                    cpu_threshold: 100.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 0.0,
+                },
+                battery_low: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0,
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 25.0,
+                    battery_critical_threshold: 0.0,
+                },
+                battery_critical: AlertSettings {
+                    enabled: true,
+                    temperature_threshold: 0.0,
+                    cpu_threshold: 0.0,
+                    battery_low_threshold: 0.0,
+                    battery_critical_threshold: 10.0,
+                },
+            },
+        }
+    }
 }

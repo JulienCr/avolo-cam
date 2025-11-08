@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "prepare": "cd src-tauri && cargo fetch && cd ..",
     "tauri": "tauri",
     "tauri:dev": "RUST_LOG=info,avocam_controller=debug tauri dev",
     "tauri:dev:verbose": "RUST_LOG=debug tauri dev",
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.3.3"
   },
   "devDependencies": {

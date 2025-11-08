@@ -35,8 +35,33 @@ export async function discoverCamerasAction(): Promise<void> {
   try {
     discovering.set(true);
     const data = await api.discoverCameras();
-    discoveredCameras.set(data);
-    console.log('Discovered cameras:', data);
+
+    // Filter out cameras that are already added
+    const currentCameras = get(cameras);
+    const newCameras = data.filter((discovered) => {
+      return !currentCameras.some((camera) =>
+        camera.ip === discovered.ip && camera.port === discovered.port
+      );
+    });
+
+    // Auto-add new cameras using token from TXT records (token is optional)
+    for (const discovered of newCameras) {
+      const token = discovered.txt_records?.token || '';
+
+      try {
+        await api.addCameraManual(discovered.ip, discovered.port, token);
+        console.log(`Auto-added camera: ${discovered.alias}`);
+      } catch (e) {
+        console.error(`Failed to auto-add camera ${discovered.alias}:`, e);
+      }
+    }
+
+    // Refresh camera list after adding
+    if (newCameras.length > 0) {
+      await refreshCameras();
+    }
+
+    discoveredCameras.set([]);  // Clear discovered list since all are auto-added
   } catch (e) {
     console.error('Failed to discover cameras:', e);
   } finally {
@@ -60,9 +85,14 @@ export async function addDiscoveredCameraAction(
   await api.addCameraManual(discovered.ip, discovered.port, token);
   await refreshCameras();
 
-  // Remove from discovered list
-  discoveredCameras.update((cameras) =>
-    cameras.filter((c) => c.alias !== discovered.alias)
+  // Re-filter discovered cameras to remove the one we just added
+  const currentCameras = get(cameras);
+  discoveredCameras.update((discovered) =>
+    discovered.filter((d) =>
+      !currentCameras.some((camera) =>
+        camera.ip === d.ip && camera.port === d.port
+      )
+    )
   );
 }
 
@@ -71,27 +101,20 @@ export async function removeCameraAction(cameraId: string): Promise<void> {
   await refreshCameras();
 }
 
-// Setup intervals for auto-refresh and auto-discovery
+// Setup intervals for auto-refresh only (discovery is manual now)
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
-let discoveryInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startAutoRefresh(refreshMs = 2000, discoveryMs = 10000): void {
+export function startAutoRefresh(refreshMs = 2000): void {
   // Initial refresh
   refreshCameras();
-  discoverCamerasAction();
 
-  // Setup intervals
+  // Setup interval for camera refresh only
   refreshInterval = setInterval(refreshCameras, refreshMs);
-  discoveryInterval = setInterval(discoverCamerasAction, discoveryMs);
 }
 
 export function stopAutoRefresh(): void {
   if (refreshInterval) {
     clearInterval(refreshInterval);
     refreshInterval = null;
-  }
-  if (discoveryInterval) {
-    clearInterval(discoveryInterval);
-    discoveryInterval = null;
   }
 }

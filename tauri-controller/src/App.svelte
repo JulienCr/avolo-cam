@@ -7,6 +7,7 @@
   import ProfileDialog from '$lib/components/organisms/ProfileDialog.svelte';
   import CameraSettingsDialog from '$lib/components/organisms/CameraSettingsDialog.svelte';
   import StreamSettingsDialog from '$lib/components/organisms/StreamSettingsDialog.svelte';
+  import SettingsDialog from '$lib/components/organisms/SettingsDialog.svelte';
   import Card from '$lib/components/atoms/Card.svelte';
   import Button from '$lib/components/atoms/Button.svelte';
 
@@ -23,6 +24,7 @@
     addCameraManualAction,
     addDiscoveredCameraAction,
     removeCameraAction,
+    discoverCamerasAction,
   } from '$lib/stores/cameras';
 
   import {
@@ -30,6 +32,7 @@
     showProfileDialog,
     showSettingsDialog,
     showStreamSettingsDialog,
+    showAppSettingsDialog,
     settingsCameraId,
     streamSettingsCameraId,
     selectedCameraIds,
@@ -60,14 +63,22 @@
     deleteProfileAction,
   } from '$lib/stores/profiles';
 
+  import { loadAppSettings } from '$lib/stores/appSettings';
+
   import * as api from '$lib/utils/api';
   import { debounce } from '$lib/utils/debounce';
   import { DEFAULT_CAMERA_SETTINGS } from '$lib/types/settings';
 
   // Lifecycle
   onMount(async () => {
+    await loadAppSettings();
     await loadProfiles();
-    startAutoRefresh(2000, 10000);
+    startAutoRefresh(2000);
+    // Auto-discover and add cameras on startup after a short delay
+    // to allow mDNS discovery to complete
+    setTimeout(async () => {
+      await discoverCamerasAction();
+    }, 2000);
   });
 
   onDestroy(() => {
@@ -91,14 +102,6 @@
       await refreshCameras();
     } catch (e) {
       alert(`Failed to stop stream: ${e}`);
-    }
-  }
-
-  async function handleForceKeyframe(cameraId: string) {
-    try {
-      await api.forceKeyframe(cameraId);
-    } catch (e) {
-      alert(`Failed to force keyframe: ${e}`);
     }
   }
 
@@ -305,13 +308,23 @@
       alert(`Failed to add camera: ${e}`);
     }
   }
+
+  // Alias Update
+  async function handleAliasUpdated(cameraId: string, newAlias: string) {
+    // Refresh cameras to get the updated alias
+    await refreshCameras();
+  }
 </script>
 
 <main class="container mx-auto max-w-7xl px-4 py-6 dark:bg-gray-900">
   <StatusBar
+    cameras={$cameras}
     onAddCamera={() => ($showAddDialog = true)}
     onProfiles={() => ($showProfileDialog = true)}
     onRefresh={refreshCameras}
+    onDiscover={discoverCamerasAction}
+    onSettings={() => ($showAppSettingsDialog = true)}
+    discovering={$discovering}
   />
 
   {#if $error}
@@ -339,35 +352,10 @@
       </div>
     {/if}
 
-    <!-- Discovered Cameras -->
-    {#if $discoveredCameras.length > 0}
-      <div class="mb-6">
-        <h2 class="mb-3 text-lg font-semibold text-primary-600 dark:text-primary-400">
-          📡 Discovered Cameras ({$discoveredCameras.length})
-        </h2>
-        <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {#each $discoveredCameras as discovered (discovered.alias)}
-            <Card padding="sm">
-              <div class="flex items-center justify-between">
-                <div class="flex flex-col">
-                  <strong class="text-sm text-gray-900 dark:text-gray-100">{discovered.alias}</strong>
-                  <small class="text-xs text-gray-500 dark:text-gray-400">{discovered.ip}:{discovered.port}</small>
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  on:click={() => handleAddDiscoveredCamera(discovered)}
-                >
-                  + Add
-                </Button>
-              </div>
-            </Card>
-          {/each}
-        </div>
-      </div>
-    {:else if $discovering}
-      <div class="mb-6 rounded-lg bg-yellow-50 p-4 text-center text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
-        🔍 Discovering cameras on the network...
+    <!-- Discovery Status -->
+    {#if $discovering}
+      <div class="mb-6 rounded-lg bg-blue-50 p-4 text-center text-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
+        🔍 Discovering and adding cameras...
       </div>
     {/if}
 
@@ -382,8 +370,7 @@
           onStop={() => handleStopStream(camera.id)}
           onCameraSettings={() => handleOpenCameraSettings(camera.id)}
           onStreamSettings={() => handleOpenStreamSettings(camera.id)}
-          onRemove={() => handleRemoveCamera(camera.id)}
-          onForceKeyframe={() => handleForceKeyframe(camera.id)}
+          onAliasUpdated={(newAlias) => handleAliasUpdated(camera.id, newAlias)}
         />
       {/each}
     </div>
@@ -418,4 +405,8 @@
     cameraId={$streamSettingsCameraId}
     bind:settings={$cameraStreamSettings[$streamSettingsCameraId]}
   />
+{/if}
+
+{#if $showAppSettingsDialog}
+  <SettingsDialog onClose={() => ($showAppSettingsDialog = false)} />
 {/if}

@@ -12,14 +12,14 @@ use crate::models::*;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const WS_RECONNECT_DELAY: Duration = Duration::from_secs(2);
-const MAX_RECONNECT_ATTEMPTS: u32 = 100; // High limit, effectively unlimited
+const MAX_RECONNECT_ATTEMPTS: u32 = 1000; // Very high limit for production use
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30); // Cap backoff at 30s
 
 pub struct CameraClient {
     base_url: String,
     token: String,
     http_client: Client,
-    ws_tx: Option<mpsc::UnboundedSender<WebSocketTelemetryMessage>>,
+    ws_stop_tx: Option<mpsc::UnboundedSender<()>>, // Channel to stop WebSocket reconnection
     connected: Arc<RwLock<bool>>,
 }
 
@@ -36,7 +36,7 @@ impl CameraClient {
             base_url,
             token,
             http_client,
-            ws_tx: None,
+            ws_stop_tx: None,
             connected: Arc::new(RwLock::new(false)),
         }
     }
@@ -44,19 +44,30 @@ impl CameraClient {
     // MARK: - HTTP Requests
 
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
-        self.http_client
-            .get(format!("{}{}", self.base_url, path))
-            .header("Authorization", format!("Bearer {}", self.token))
+        let mut request = self.http_client.get(format!("{}{}", self.base_url, path));
+
+        // Only add Authorization header if token is not empty
+        if !self.token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        request
             .send()
             .await
             .context("HTTP GET request failed")
     }
 
     async fn post<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response> {
-        self.http_client
+        let mut request = self.http_client
             .post(format!("{}{}", self.base_url, path))
-            .header("Authorization", format!("Bearer {}", self.token))
-            .json(body)
+            .json(body);
+
+        // Only add Authorization header if token is not empty
+        if !self.token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        request
             .send()
             .await
             .context("HTTP POST request failed")
@@ -126,18 +137,6 @@ impl CameraClient {
         Ok(())
     }
 
-    pub async fn force_keyframe(&self) -> Result<()> {
-        let response = self.post("/api/v1/encoder/force_keyframe", &()).await?;
-
-        if !response.status().is_success() {
-            let error: ErrorResponse = response.json().await
-                .context("Failed to parse error response")?;
-            anyhow::bail!("{}: {}", error.code, error.message);
-        }
-
-        Ok(())
-    }
-
     pub async fn measure_white_balance(&self) -> Result<WhiteBalanceMeasureResponse> {
         let response = self.post("/api/v1/camera/wb/measure", &()).await?;
 
@@ -162,57 +161,82 @@ impl CameraClient {
         let connected = self.connected.clone();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.ws_tx = Some(tx);
+        self.ws_stop_tx = Some(tx);
 
         // Spawn WebSocket connection task with reconnection logic
         tokio::spawn(async move {
             let mut reconnect_attempts = 0;
+            let mut first_connection = true;
 
             loop {
-                log::info!("Connecting to WebSocket: {}", ws_url);
+                log::info!("Connecting to WebSocket: {} (attempt {}/{})",
+                    ws_url, reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
 
                 match connect_websocket_internal(&ws_url, &token, &telemetry_callback).await {
                     Ok(_) => {
                         log::info!("WebSocket connection ended normally");
-                        reconnect_attempts = 0;
+                        *connected.write().await = true;
+                        reconnect_attempts = 0; // Reset on successful connection
+                        first_connection = false;
                     }
                     Err(e) => {
                         log::error!("WebSocket connection error: {}", e);
+                        *connected.write().await = false;
                         reconnect_attempts += 1;
 
                         if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
                             log::error!("Max reconnection attempts reached, giving up");
-                            *connected.write().await = false;
                             break;
                         }
                     }
+                }
+
+                // Check if we should stop reconnecting before sleeping
+                if rx.try_recv().is_ok() {
+                    log::info!("Stop signal received, ending WebSocket reconnection");
+                    *connected.write().await = false;
+                    break;
                 }
 
                 // Exponential backoff with cap
                 let backoff_multiplier = 2_u32.pow(reconnect_attempts.min(5));
                 let calculated_delay = WS_RECONNECT_DELAY * backoff_multiplier;
                 let delay = calculated_delay.min(MAX_RECONNECT_DELAY);
-                log::info!("Reconnecting in {:?} (attempt {}/{})", delay, reconnect_attempts, MAX_RECONNECT_ATTEMPTS);
+
+                if reconnect_attempts > 0 {
+                    log::info!("Reconnecting in {:?} (attempt {}/{})",
+                        delay, reconnect_attempts + 1, MAX_RECONNECT_ATTEMPTS);
+                }
+
                 tokio::time::sleep(delay).await;
 
-                // Check if we should stop reconnecting
-                if let Ok(_) = rx.try_recv() {
-                    log::info!("Stop signal received, ending WebSocket reconnection");
+                // Check again after sleep
+                if rx.try_recv().is_ok() {
+                    log::info!("Stop signal received during backoff, ending WebSocket reconnection");
+                    *connected.write().await = false;
                     break;
                 }
             }
         });
 
-        *self.connected.write().await = true;
-
         Ok(())
     }
 
-    pub async fn disconnect_websocket(&self) {
+    pub async fn disconnect_websocket(&mut self) {
         *self.connected.write().await = false;
+
         // Send stop signal through channel if available
+        if let Some(tx) = self.ws_stop_tx.take() {
+            let _ = tx.send(()); // Ignore error if receiver already dropped
+            log::info!("Sent stop signal to WebSocket reconnection task");
+        }
     }
 
+    /// Query WebSocket connection state
+    ///
+    /// **TODO (LOT B):** Expose this to frontend for connection status indicators
+    /// See [DEAD_CODE_ANALYSIS.md](../../DEAD_CODE_ANALYSIS.md#3-is_connected-method) for implementation guide
+    #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
         *self.connected.read().await
     }
@@ -227,17 +251,23 @@ async fn connect_websocket_internal<F>(
 where
     F: Fn(WebSocketTelemetryMessage) + Send + Sync + 'static,
 {
-    // Build request with Authorization header (Bearer token)
+    // Build request with Authorization header (Bearer token) if token is provided
     use tokio_tungstenite::tungstenite::http::Request;
 
-    let request = Request::builder()
+    let mut request_builder = Request::builder()
         .uri(ws_url)
         .header("Host", ws_url.split("//").nth(1).unwrap_or(ws_url).split('/').next().unwrap_or(ws_url))
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")
-        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key());
+
+    // Only add Authorization header if token is not empty
+    if !token.is_empty() {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let request = request_builder
         .body(())
         .context("Failed to build WebSocket request")?;
 

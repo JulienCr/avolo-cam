@@ -87,6 +87,7 @@ struct Telemetry: Codable {
     let battery: Double
     let tempC: Double
     let wifiRssi: Int
+    let cpuUsage: Double
     let queueMs: Int?
     let droppedFrames: Int?
     let chargingState: ChargingState?
@@ -97,6 +98,7 @@ struct Telemetry: Codable {
         case battery
         case tempC = "temp_c"
         case wifiRssi = "wifi_rssi"
+        case cpuUsage = "cpu_usage"
         case queueMs = "queue_ms"
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
@@ -193,6 +195,7 @@ struct WebSocketTelemetryMessage: Codable {
     let battery: Double
     let tempC: Double
     let wifiRssi: Int
+    let cpuUsage: Double
     let ndiState: NDIState
     let droppedFrames: Int
     let chargingState: ChargingState
@@ -204,6 +207,7 @@ struct WebSocketTelemetryMessage: Codable {
         case battery
         case tempC = "temp_c"
         case wifiRssi = "wifi_rssi"
+        case cpuUsage = "cpu_usage"
         case ndiState = "ndi_state"
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
@@ -257,6 +261,22 @@ struct VideoSettingsUpdateRequest: Codable {
         case customFps = "custom_fps"
         case customCodec = "custom_codec"
         case customBitrate = "custom_bitrate"
+    }
+}
+
+// MARK: - Settings Control
+
+struct AliasUpdateRequest: Codable {
+    let alias: String
+}
+
+struct AliasUpdateResponse: Codable {
+    let alias: String
+    let requiresRestart: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case alias
+        case requiresRestart = "requires_restart"
     }
 }
 

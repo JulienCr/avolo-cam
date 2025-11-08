@@ -16,13 +16,13 @@ protocol NetworkRequestHandler: AnyObject {
     func handleStreamStart(_ request: StreamStartRequest) async throws
     func handleStreamStop() async throws
     func handleCameraSettings(_ settings: CameraSettingsRequest) async throws
-    func handleForceKeyframe()
     func handleGetStatus() async -> StatusResponse
     func handleGetCapabilities() async -> [Capability]
     func handleGetVideoSettings() async -> VideoSettingsResponse
     func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws
     func handleScreenBrightness(_ request: ScreenBrightnessRequest)
     func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse
+    func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse
 }
 
 // MARK: - Network Server
@@ -186,6 +186,7 @@ class NetworkServer {
             battery: telemetry.battery,
             tempC: telemetry.tempC,
             wifiRssi: telemetry.wifiRssi,
+            cpuUsage: telemetry.cpuUsage,
             ndiState: ndiState,
             droppedFrames: telemetry.droppedFrames ?? 0,
             chargingState: telemetry.chargingState ?? .unplugged
@@ -208,7 +209,21 @@ class NetworkServer {
         // Log incoming request
         print("📥 HTTP \(method) \(path)")
 
-        // Authenticate if enabled
+        // Handle CORS preflight (OPTIONS request)
+        if method == "OPTIONS" {
+            return HTTPResponse(
+                status: 200,
+                headers: [
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    "Access-Control-Max-Age": "86400"
+                ],
+                body: Data()
+            )
+        }
+
+        // Authenticate if enabled (skip for OPTIONS which is already handled above)
         if isAuthenticationEnabled {
             guard let authHeader = headers["Authorization"],
                   authHeader == "Bearer \(bearerToken)" else {
@@ -258,11 +273,11 @@ class NetworkServer {
         case ("POST", "/api/v1/screen/brightness"):
             return handleScreenBrightness(body: body)
 
-        case ("POST", "/api/v1/encoder/force_keyframe"):
-            return handleForceKeyframe()
-
         case ("POST", "/api/v1/camera/wb/measure"):
             return await handleMeasureWhiteBalance()
+
+        case ("PUT", "/api/v1/settings/alias"):
+            return await handleUpdateAlias(body: body)
 
         case ("GET", "/api/v1/logs.zip"):
             return handleLogsDownload()
@@ -377,15 +392,6 @@ class NetworkServer {
         return HTTPResponse(status: 200, body: successJSON(message: "Screen brightness updated"))
     }
 
-    private func handleForceKeyframe() -> HTTPResponse {
-        guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
-        }
-
-        handler.handleForceKeyframe()
-        return HTTPResponse(status: 200, body: successJSON(message: "Keyframe forced"))
-    }
-
     private func handleGetVideoSettings() async -> HTTPResponse {
         guard let handler = requestHandler else {
             return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
@@ -435,6 +441,37 @@ class NetworkServer {
         } catch {
             print("❌ White balance measure failed: \(error.localizedDescription)")
             return HTTPResponse(status: 500, body: errorJSON(code: "MEASURE_FAILED", message: error.localizedDescription))
+        }
+    }
+
+    private func handleUpdateAlias(body: Data?) async -> HTTPResponse {
+        guard let body = body,
+              let request = try? JSONDecoder().decode(AliasUpdateRequest.self, from: body) else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid alias update request"))
+        }
+
+        // Validate alias (no empty strings, reasonable length)
+        let trimmedAlias = request.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlias.isEmpty, trimmedAlias.count <= 64 else {
+            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_ALIAS", message: "Alias must be 1-64 characters"))
+        }
+
+        guard let handler = requestHandler else {
+            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+        }
+
+        do {
+            let result = try await handler.handleUpdateAlias(request)
+            print("✅ Alias updated to: \(result.alias)")
+
+            guard let jsonData = try? JSONEncoder().encode(result) else {
+                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
+            }
+
+            return HTTPResponse(status: 200, body: jsonData)
+        } catch {
+            print("❌ Alias update failed: \(error.localizedDescription)")
+            return HTTPResponse(status: 500, body: errorJSON(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription))
         }
     }
 
@@ -651,6 +688,25 @@ class NetworkServer {
                 <div class="card">
                     <h2>Status</h2>
                     <div id="connection-indicator" class="connection-status disconnected">Disconnected</div>
+
+                    <!-- Camera Alias -->
+                    <div class="settings-row" style="margin-bottom: 16px;">
+                        <label for="camera-alias">Camera Name (NDI Stream Name)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input
+                                type="text"
+                                id="camera-alias"
+                                placeholder="AVOLO-CAM-01"
+                                maxlength="64"
+                                style="flex: 1;"
+                            >
+                            <button id="btn-update-alias" class="btn-secondary" style="width: auto; padding: 12px 20px; margin-bottom: 0;">
+                                💾 Save
+                            </button>
+                        </div>
+                        <div id="alias-feedback" style="margin-top: 8px; font-size: 12px; display: none;"></div>
+                    </div>
+
                     <div class="status-grid">
                         <div class="status-item">
                             <div class="status-label">State</div>
@@ -824,6 +880,11 @@ class NetworkServer {
                         const status = await apiCall('/api/v1/status');
                         console.log('Camera status loaded:', status);
 
+                        // Load alias
+                        if (status.alias) {
+                            document.getElementById('camera-alias').value = status.alias;
+                        }
+
                         // Populate camera settings form
                         if (status.current) {
                             const current = status.current;
@@ -976,6 +1037,48 @@ class NetworkServer {
 
                 document.getElementById('btn-keyframe').addEventListener('click', async () => {
                     await apiCall('/api/v1/encoder/force_keyframe', 'POST');
+                });
+
+                document.getElementById('btn-update-alias').addEventListener('click', async () => {
+                    const aliasInput = document.getElementById('camera-alias');
+                    const newAlias = aliasInput.value.trim();
+                    const feedbackEl = document.getElementById('alias-feedback');
+                    const btn = document.getElementById('btn-update-alias');
+
+                    if (!newAlias || newAlias.length > 64) {
+                        feedbackEl.textContent = '⚠️ Alias must be 1-64 characters';
+                        feedbackEl.style.color = '#ef4444';
+                        feedbackEl.style.display = 'block';
+                        return;
+                    }
+
+                    try {
+                        btn.disabled = true;
+                        btn.textContent = '⏳ Saving...';
+                        feedbackEl.style.display = 'none';
+
+                        const result = await apiCall('/api/v1/settings/alias', 'PUT', { alias: newAlias });
+
+                        feedbackEl.textContent = result.requires_restart
+                            ? '✅ Alias updated! Stream was restarted with new name.'
+                            : '✅ Alias updated successfully!';
+                        feedbackEl.style.color = '#10b981';
+                        feedbackEl.style.display = 'block';
+
+                        btn.disabled = false;
+                        btn.textContent = '💾 Save';
+
+                        // Hide feedback after 5 seconds
+                        setTimeout(() => {
+                            feedbackEl.style.display = 'none';
+                        }, 5000);
+                    } catch (e) {
+                        feedbackEl.textContent = '❌ Failed to update alias: ' + e.message;
+                        feedbackEl.style.color = '#ef4444';
+                        feedbackEl.style.display = 'block';
+                        btn.disabled = false;
+                        btn.textContent = '💾 Save';
+                    }
                 });
 
                 document.getElementById('btn-wb-measure').addEventListener('click', async () => {
@@ -1209,9 +1312,17 @@ struct HTTPResponse {
     init(status: Int, headers: [String: String] = [:], body: Data = Data()) {
         self.status = status
         var allHeaders = headers
+
+        // Add CORS headers if not already present
+        if allHeaders["Access-Control-Allow-Origin"] == nil {
+            allHeaders["Access-Control-Allow-Origin"] = "*"
+        }
+
+        // Add Content-Type if not already present
         if allHeaders["Content-Type"] == nil {
             allHeaders["Content-Type"] = "application/json"
         }
+
         self.headers = allHeaders
         self.body = body
     }

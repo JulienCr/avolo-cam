@@ -1,5 +1,12 @@
-import type { WhiteBalanceMode, IsoMode, ShutterMode, CameraPosition, LensType } from './camera';
+import type {
+  WhiteBalanceMode,
+  IsoMode,
+  ShutterMode,
+  LensType,
+  CameraPosition
+} from './camera';
 
+// Stream Settings (for starting NDI stream)
 export interface StreamSettings {
   resolution: string;
   framerate: number;
@@ -7,13 +14,7 @@ export interface StreamSettings {
   codec: string;
 }
 
-export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
-  resolution: '1920x1080',
-  framerate: 30,
-  bitrate: 10000000,
-  codec: 'h264',
-};
-
+// Camera Settings (for camera controls)
 export interface CameraSettings {
   wb_mode: WhiteBalanceMode;
   wb_kelvin: number;
@@ -27,6 +28,20 @@ export interface CameraSettings {
   camera_position: CameraPosition;
 }
 
+// White Balance Measurement Result
+export interface WhiteBalanceResult {
+  scene_cct_k: number;  // Scene color temperature in Kelvin
+  tint: number;         // Tint adjustment value
+}
+
+// Default Values
+export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
+  resolution: '1920x1080',
+  framerate: 30,
+  bitrate: 10000000, // 10 Mbps
+  codec: 'h264',
+};
+
 export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
   wb_mode: 'auto',
   wb_kelvin: 5000,
@@ -34,13 +49,8 @@ export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
   iso_mode: 'auto',
   iso: 400,
   shutter_mode: 'auto',
-  shutter_s: 0.01,
+  shutter_s: 0.01, // 1/100
   zoom_factor: 2.0,
   lens: 'wide',
   camera_position: 'back',
 };
-
-export interface WhiteBalanceResult {
-  scene_cct_k: number;
-  tint: number;
-}

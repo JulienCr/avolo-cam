@@ -5,6 +5,7 @@ export const showAddDialog = writable(false);
 export const showProfileDialog = writable(false);
 export const showSettingsDialog = writable(false);
 export const showStreamSettingsDialog = writable(false);
+export const showAppSettingsDialog = writable(false);
 
 // Active camera for settings
 export const settingsCameraId = writable<string | null>(null);
