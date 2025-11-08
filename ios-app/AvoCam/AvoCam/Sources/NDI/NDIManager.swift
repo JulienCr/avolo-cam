@@ -153,12 +153,9 @@ class NDIManager {
             }
         }
 
-        // Retain buffer for async send (released in sendBlock)
-        CVPixelBufferRetain(pixelBuffer)
-
+        // Capture buffer for async send (ARC handles memory management)
         let sendBlock = { [weak self] in
             guard let self = self else {
-                CVPixelBufferRelease(pixelBuffer)
                 if self?.enableBackpressure == true {
                     self?.ndiSemaphore.signal()
                 }
@@ -166,7 +163,6 @@ class NDIManager {
             }
 
             self.sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
-            CVPixelBufferRelease(pixelBuffer)
 
             if self.enableBackpressure {
                 self.ndiSemaphore.signal()
