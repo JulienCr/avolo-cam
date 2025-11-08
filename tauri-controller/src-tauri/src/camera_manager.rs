@@ -349,7 +349,7 @@ impl CameraManager {
         client_arc.write().await.connect_websocket(move |telemetry| {
             // Update telemetry in camera info
             // This would require additional synchronization in production
-            log::debug!("Received telemetry for {}: FPS={:.1}, Bitrate={}", id_clone, telemetry.fps, telemetry.bitrate);
+            //log::debug!("Received telemetry for {}: FPS={:.1}, Bitrate={}", id_clone, telemetry.fps, telemetry.bitrate);
         }).await
             .context("Failed to connect WebSocket")?;
 
