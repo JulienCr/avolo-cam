@@ -424,7 +424,14 @@ impl CameraManager {
 
     pub async fn update_camera_alias(&mut self, camera_id: &str, alias: String) -> Result<()> {
         if let Some(camera) = self.cameras.get_mut(camera_id) {
-            camera.info.alias = alias;
+            camera.info.alias = alias.clone();
+            log::info!("Updated camera {} alias to: {}", camera_id, alias);
+
+            // Persist to disk
+            if let Err(e) = self.save_cameras_to_disk().await {
+                log::warn!("Failed to save cameras to disk after alias update: {}", e);
+            }
+
             Ok(())
         } else {
             anyhow::bail!("Camera not found: {}", camera_id);

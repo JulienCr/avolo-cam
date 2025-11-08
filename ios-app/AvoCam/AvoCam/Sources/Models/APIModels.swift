@@ -264,6 +264,22 @@ struct VideoSettingsUpdateRequest: Codable {
     }
 }
 
+// MARK: - Settings Control
+
+struct AliasUpdateRequest: Codable {
+    let alias: String
+}
+
+struct AliasUpdateResponse: Codable {
+    let alias: String
+    let requiresRestart: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case alias
+        case requiresRestart = "requires_restart"
+    }
+}
+
 // MARK: - Error Response
 
 struct ErrorResponse: Codable {

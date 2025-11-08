@@ -17,6 +17,7 @@
   export let onStop: () => void;
   export let onCameraSettings: () => void;
   export let onStreamSettings: () => void;
+  export let onAliasUpdated: (newAlias: string) => void;
 
   $: isStreaming = camera.status?.ndi_state === "streaming";
   $: telemetry = camera.status?.telemetry;
@@ -58,6 +59,66 @@
   function formatCpu(cpu: number): string {
     return cpu.toFixed(0) + "%";
   }
+
+  // Alias editing
+  let isEditingAlias = false;
+  let editedAlias = camera.alias;
+  let aliasSaving = false;
+  let aliasError = "";
+
+  function startEditingAlias() {
+    isEditingAlias = true;
+    editedAlias = camera.alias;
+    aliasError = "";
+  }
+
+  function cancelEditingAlias() {
+    isEditingAlias = false;
+    editedAlias = camera.alias;
+    aliasError = "";
+  }
+
+  async function saveAlias() {
+    const trimmed = editedAlias.trim();
+    if (!trimmed || trimmed.length > 64) {
+      aliasError = "Alias must be 1-64 characters";
+      return;
+    }
+
+    aliasSaving = true;
+    aliasError = "";
+
+    try {
+      // Step 1: Update alias on iOS device via API
+      const response = await fetch(`http://${camera.ip}:${camera.port}/api/v1/settings/alias`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias: trimmed })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to update alias');
+      }
+
+      const result = await response.json();
+
+      // Step 2: Update alias in Tauri backend (updates cameras.json)
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('update_camera_alias', {
+        cameraId: camera.id,
+        alias: result.alias
+      });
+
+      // Step 3: Notify parent to refresh UI
+      onAliasUpdated(result.alias);
+      isEditingAlias = false;
+    } catch (e) {
+      aliasError = e instanceof Error ? e.message : 'Failed to update alias';
+    } finally {
+      aliasSaving = false;
+    }
+  }
 </script>
 
 <Card padding="md" interactive>
@@ -69,11 +130,46 @@
         on:change={onToggleSelection}
         label="Select camera"
       />
-      <h3
-        class="flex-1 text-base font-semibold text-gray-900 dark:text-gray-100"
-      >
-        {camera.alias}
-      </h3>
+      {#if isEditingAlias}
+        <div class="flex-1 flex flex-col gap-2">
+          <div class="flex gap-2">
+            <input
+              type="text"
+              bind:value={editedAlias}
+              class="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              placeholder="Camera name"
+              maxlength="64"
+              disabled={aliasSaving}
+            />
+            <button
+              on:click={saveAlias}
+              disabled={aliasSaving}
+              class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-md"
+            >
+              {aliasSaving ? '⏳' : '✓'}
+            </button>
+            <button
+              on:click={cancelEditingAlias}
+              disabled={aliasSaving}
+              class="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 rounded-md"
+            >
+              ✕
+            </button>
+          </div>
+          {#if aliasError}
+            <span class="text-xs text-red-600 dark:text-red-400">{aliasError}</span>
+          {/if}
+        </div>
+      {:else}
+        <h3
+          class="flex-1 text-base font-semibold text-gray-900 dark:text-gray-100 group cursor-pointer"
+          on:click={startEditingAlias}
+          title="Click to edit camera name"
+        >
+          {camera.alias}
+          <span class="ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">✏️</span>
+        </h3>
+      {/if}
     </div>
 
     <!-- Info -->

@@ -308,6 +308,12 @@
       alert(`Failed to add camera: ${e}`);
     }
   }
+
+  // Alias Update
+  async function handleAliasUpdated(cameraId: string, newAlias: string) {
+    // Refresh cameras to get the updated alias
+    await refreshCameras();
+  }
 </script>
 
 <main class="container mx-auto max-w-7xl px-4 py-6 dark:bg-gray-900">
@@ -364,6 +370,7 @@
           onStop={() => handleStopStream(camera.id)}
           onCameraSettings={() => handleOpenCameraSettings(camera.id)}
           onStreamSettings={() => handleOpenStreamSettings(camera.id)}
+          onAliasUpdated={(newAlias) => handleAliasUpdated(camera.id, newAlias)}
         />
       {/each}
     </div>

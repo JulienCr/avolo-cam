@@ -34,7 +34,7 @@ class AppCoordinator: ObservableObject {
 
     // MARK: - Configuration
 
-    private let cameraAlias: String
+    private var cameraAlias: String  // Changed to var to allow updates
     private let serverPort: Int = 8888
     private let bearerToken: String
 
@@ -542,6 +542,44 @@ class AppCoordinator: ObservableObject {
         )
     }
 
+    // MARK: - Alias Management
+
+    func updateAlias(_ newAlias: String) async throws -> (alias: String, requiresRestart: Bool) {
+        let wasStreaming = isStreaming
+
+        // Stop streaming if active (we'll restart it with the new alias)
+        if wasStreaming {
+            await stopStreaming()
+        }
+
+        // Stop Bonjour service
+        bonjourService?.stop()
+
+        // Update alias
+        cameraAlias = newAlias
+        UserDefaults.standard.set(newAlias, forKey: "camera_alias")
+        print("✅ Camera alias updated to: \(newAlias)")
+
+        // Restart Bonjour with new alias
+        startBonjourService()
+
+        // Recreate NDI manager with new alias
+        ndiManager = NDIManager(alias: newAlias)
+
+        // Restart streaming if it was active
+        if wasStreaming, let settings = currentSettings {
+            let request = StreamStartRequest(
+                resolution: settings.resolution,
+                framerate: settings.fps,
+                bitrate: settings.bitrate,
+                codec: settings.codec
+            )
+            try await startStreaming(request: request)
+        }
+
+        return (alias: newAlias, requiresRestart: wasStreaming)
+    }
+
     // MARK: - Settings Persistence
 
     private func loadPersistedSettings() -> CurrentSettings? {
@@ -669,5 +707,10 @@ extension AppCoordinator: NetworkRequestHandler {
         }
         // Return physical scene CCT - UI will convert to UIKelvin if needed
         return WhiteBalanceMeasureResponse(sceneCCT_K: sceneCCT_K, tint: tint)
+    }
+
+    func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
+        let result = try await updateAlias(request.alias)
+        return AliasUpdateResponse(alias: result.alias, requiresRestart: result.requiresRestart)
     }
 }
