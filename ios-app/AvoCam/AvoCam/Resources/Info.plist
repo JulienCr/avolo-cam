@@ -33,7 +33,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Local network access is required to stream video via NDI and communicate with the controller app.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string></string>
+	<string>Microphone access may be used for future audio streaming features.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
