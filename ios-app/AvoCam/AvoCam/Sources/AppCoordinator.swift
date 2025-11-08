@@ -535,6 +535,7 @@ class AppCoordinator: ObservableObject {
             battery: 1.0,
             tempC: 25.0,
             wifiRssi: -50,
+            cpuUsage: 0,
             queueMs: nil,
             droppedFrames: nil,
             chargingState: nil
