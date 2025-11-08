@@ -286,7 +286,8 @@ class AppCoordinator: ObservableObject {
     private func startBonjourService() {
         bonjourService = BonjourService(
             alias: cameraAlias,
-            port: serverPort
+            port: serverPort,
+            bearerToken: bearerToken
         )
         bonjourService?.start()
         print("✅ Bonjour service started: _avolocam._tcp.local")

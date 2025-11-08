@@ -38,14 +38,29 @@ export async function discoverCamerasAction(): Promise<void> {
 
     // Filter out cameras that are already added
     const currentCameras = get(cameras);
-    const filtered = data.filter((discovered) => {
+    const newCameras = data.filter((discovered) => {
       return !currentCameras.some((camera) =>
         camera.ip === discovered.ip && camera.port === discovered.port
       );
     });
 
-    discoveredCameras.set(filtered);
-    console.log('Discovered cameras:', filtered);
+    // Auto-add new cameras using token from TXT records
+    for (const discovered of newCameras) {
+      const token = discovered.txt_records?.token || '';
+      try {
+        await api.addCameraManual(discovered.ip, discovered.port, token);
+        console.log(`Auto-added camera: ${discovered.alias}`);
+      } catch (e) {
+        console.error(`Failed to auto-add camera ${discovered.alias}:`, e);
+      }
+    }
+
+    // Refresh camera list after adding
+    if (newCameras.length > 0) {
+      await refreshCameras();
+    }
+
+    discoveredCameras.set([]);  // Clear discovered list since all are auto-added
   } catch (e) {
     console.error('Failed to discover cameras:', e);
   } finally {

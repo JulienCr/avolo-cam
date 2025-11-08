@@ -51,4 +51,5 @@ export interface DiscoveredCamera {
   alias: string;
   ip: string;
   port: number;
+  txt_records?: { [key: string]: string };
 }

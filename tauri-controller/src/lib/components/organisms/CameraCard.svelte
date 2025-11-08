@@ -17,7 +17,6 @@
   export let onStop: () => void;
   export let onCameraSettings: () => void;
   export let onStreamSettings: () => void;
-  export let onRemove: () => void;
 
   $: isStreaming = camera.status?.ndi_state === "streaming";
   $: telemetry = camera.status?.telemetry;
@@ -58,26 +57,6 @@
       >
         {camera.alias}
       </h3>
-      <button
-        type="button"
-        on:click|stopPropagation={onRemove}
-        class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-        aria-label="Remove camera"
-      >
-        <svg
-          class="h-4 w-4"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M6 18L18 6M6 6l12 12"
-          />
-        </svg>
-      </button>
     </div>
 
     <!-- Info -->

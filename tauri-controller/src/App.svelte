@@ -334,35 +334,10 @@
       </div>
     {/if}
 
-    <!-- Discovered Cameras -->
-    {#if $discoveredCameras.length > 0}
-      <div class="mb-6">
-        <h2 class="mb-3 text-lg font-semibold text-primary-600 dark:text-primary-400">
-          📡 Discovered Cameras ({$discoveredCameras.length})
-        </h2>
-        <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {#each $discoveredCameras as discovered (discovered.alias)}
-            <Card padding="sm">
-              <div class="flex items-center justify-between">
-                <div class="flex flex-col">
-                  <strong class="text-sm text-gray-900 dark:text-gray-100">{discovered.alias}</strong>
-                  <small class="text-xs text-gray-500 dark:text-gray-400">{discovered.ip}:{discovered.port}</small>
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  on:click={() => handleAddDiscoveredCamera(discovered)}
-                >
-                  + Add
-                </Button>
-              </div>
-            </Card>
-          {/each}
-        </div>
-      </div>
-    {:else if $discovering}
-      <div class="mb-6 rounded-lg bg-yellow-50 p-4 text-center text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
-        🔍 Discovering cameras on the network...
+    <!-- Discovery Status -->
+    {#if $discovering}
+      <div class="mb-6 rounded-lg bg-blue-50 p-4 text-center text-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
+        🔍 Discovering and adding cameras...
       </div>
     {/if}
 
@@ -377,7 +352,6 @@
           onStop={() => handleStopStream(camera.id)}
           onCameraSettings={() => handleOpenCameraSettings(camera.id)}
           onStreamSettings={() => handleOpenStreamSettings(camera.id)}
-          onRemove={() => handleRemoveCamera(camera.id)}
         />
       {/each}
     </div>
