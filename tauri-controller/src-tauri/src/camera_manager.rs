@@ -412,6 +412,13 @@ impl CameraManager {
         camera.client.read().await.get_capabilities().await
     }
 
+    pub async fn measure_white_balance(&self, camera_id: &str) -> Result<WhiteBalanceMeasureResponse> {
+        let camera = self.cameras.get(camera_id)
+            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
+
+        camera.client.read().await.measure_white_balance().await
+    }
+
     // MARK: - Group Operations (Parallel with Bounded Concurrency)
 
     pub async fn group_start_stream(

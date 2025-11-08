@@ -138,6 +138,19 @@ impl CameraClient {
         Ok(())
     }
 
+    pub async fn measure_white_balance(&self) -> Result<WhiteBalanceMeasureResponse> {
+        let response = self.post("/api/v1/camera/wb/measure", &()).await?;
+
+        if !response.status().is_success() {
+            let error: ErrorResponse = response.json().await
+                .context("Failed to parse error response")?;
+            anyhow::bail!("{}: {}", error.code, error.message);
+        }
+
+        response.json().await
+            .context("Failed to parse white balance measure response")
+    }
+
     // MARK: - WebSocket
 
     pub async fn connect_websocket(

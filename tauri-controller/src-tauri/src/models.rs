@@ -145,6 +145,14 @@ pub struct WebSocketCommandMessage {
     pub camera: Option<CameraSettingsRequest>,
 }
 
+// MARK: - White Balance Measure
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhiteBalanceMeasureResponse {
+    pub scene_cct_k: u32,  // Physical scene illumination temperature
+    pub tint: f64,
+}
+
 // MARK: - Error Response
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

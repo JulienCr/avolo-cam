@@ -131,6 +131,16 @@ async fn get_capabilities(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn measure_white_balance(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<WhiteBalanceMeasureResponse, String> {
+    let manager = state.camera_manager.read().await;
+    manager.measure_white_balance(&camera_id).await
+        .map_err(|e| e.to_string())
+}
+
 // Group commands
 
 #[tauri::command]
@@ -289,6 +299,7 @@ fn main() {
             stop_stream,
             update_camera_settings,
             force_keyframe,
+            measure_white_balance,
             group_start_stream,
             group_stop_stream,
             group_update_settings,
