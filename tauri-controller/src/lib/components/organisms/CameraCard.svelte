@@ -4,7 +4,7 @@
   import Button from '../atoms/Button.svelte';
   import Checkbox from '../atoms/Checkbox.svelte';
   import TelemetryBadge from '../molecules/TelemetryBadge.svelte';
-  import { formatBitrate, formatBattery, formatTemperature } from '$lib/utils/format';
+  import { formatBattery, formatTemperature } from '$lib/utils/format';
 
   export let camera: Camera;
   export let selected = false;
@@ -19,18 +19,19 @@
   $: telemetry = camera.status?.telemetry;
   $: streamDetails = camera.status?.current;
   $: droppedFrames = telemetry?.dropped_frames || 0;
-  $: droppedFramesVariant = droppedFrames > 0 ? (droppedFrames > 100 ? 'danger' : 'warning') : 'default';
+  $: hasDroppedFrames = droppedFrames > 0;
 
-  function getWifiIcon(rssi?: number): string {
-    if (rssi === undefined) return '';
+  // Check if WiFi RSSI is real data (not the default -50 placeholder)
+  $: hasRealWifiData = telemetry?.wifi_rssi !== undefined && telemetry.wifi_rssi !== -50;
+
+  function getWifiIcon(rssi: number): string {
     if (rssi >= -50) return '📶'; // Excellent
     if (rssi >= -60) return '📶'; // Good
     if (rssi >= -70) return '📶'; // Fair
     return '📶'; // Poor
   }
 
-  function getWifiStrength(rssi?: number): string {
-    if (rssi === undefined) return 'N/A';
+  function getWifiStrength(rssi: number): string {
     if (rssi >= -50) return 'Excellent';
     if (rssi >= -60) return 'Good';
     if (rssi >= -70) return 'Fair';
@@ -45,7 +46,8 @@
       <Checkbox bind:checked={selected} on:change={onToggleSelection} label="Select camera" />
       <h3 class="flex-1 text-base font-semibold text-gray-900 dark:text-gray-100">{camera.alias}</h3>
       <button
-        on:click={onRemove}
+        type="button"
+        on:click|stopPropagation={onRemove}
         class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
         aria-label="Remove camera"
       >
@@ -72,16 +74,19 @@
 
     <!-- Telemetry -->
     {#if telemetry}
-      <div class="grid grid-cols-5 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
-        <TelemetryBadge label="FPS" value={telemetry.fps.toFixed(1)} />
-        <TelemetryBadge label="Bitrate" value={formatBitrate(telemetry.bitrate)} />
-        <TelemetryBadge label="Battery" value={formatBattery(telemetry.battery)} />
-        <TelemetryBadge label="Temp" value={formatTemperature(telemetry.temp_c)} />
-        <TelemetryBadge
-          label="Dropped"
-          value={droppedFrames.toString()}
-          variant={droppedFramesVariant}
-        />
+      <div class="flex items-center gap-3">
+        <div class="flex-1 grid grid-cols-2 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+          <TelemetryBadge label="Battery" value={formatBattery(telemetry.battery)} />
+          <TelemetryBadge label="Temp" value={formatTemperature(telemetry.temp_c)} />
+        </div>
+        {#if hasDroppedFrames}
+          <div class="flex items-center gap-2 rounded-lg bg-yellow-50 px-3 py-2 dark:bg-yellow-900/20" title="{droppedFrames} frames dropped">
+            <svg class="h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-sm font-medium text-yellow-700 dark:text-yellow-300">{droppedFrames} dropped</span>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -97,8 +102,8 @@
       </div>
     {/if}
 
-    <!-- WiFi Strength -->
-    {#if telemetry?.wifi_rssi !== undefined}
+    <!-- WiFi Strength (only show if we have real data, not default -50) -->
+    {#if hasRealWifiData && telemetry?.wifi_rssi}
       <div class="rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900">
         <div class="flex items-center justify-between text-sm">
           <span class="text-gray-700 dark:text-gray-300">WiFi:</span>

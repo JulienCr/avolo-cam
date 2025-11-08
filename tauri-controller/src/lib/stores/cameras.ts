@@ -69,9 +69,14 @@ export async function addDiscoveredCameraAction(
   await api.addCameraManual(discovered.ip, discovered.port, token);
   await refreshCameras();
 
-  // Remove from discovered list
-  discoveredCameras.update((cameras) =>
-    cameras.filter((c) => c.alias !== discovered.alias)
+  // Re-filter discovered cameras to remove the one we just added
+  const currentCameras = get(cameras);
+  discoveredCameras.update((discovered) =>
+    discovered.filter((d) =>
+      !currentCameras.some((camera) =>
+        camera.ip === d.ip && camera.port === d.port
+      )
+    )
   );
 }
 
