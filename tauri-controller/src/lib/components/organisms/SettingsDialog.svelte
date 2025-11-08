@@ -18,13 +18,17 @@
           temperature: {
             enabled: temperatureEnabled,
             temperatureThreshold,
+            cpuThreshold: 0, // Not used for temperature alerts
           },
           cpu: {
             enabled: cpuEnabled,
+            temperatureThreshold: 0, // Not used for CPU alerts
             cpuThreshold,
           },
         },
       });
+      alert('Settings saved successfully!');
+      onClose();
     } catch (e) {
       alert('Failed to save settings: ' + e);
     }
@@ -36,6 +40,7 @@
         await deleteCamerasData();
         await refreshCameras();
         alert('Camera data deleted successfully. The app will now rediscover cameras.');
+        onClose();
       } catch (e) {
         alert('Failed to delete camera data: ' + e);
       }
