@@ -9,7 +9,7 @@ export interface StreamSettings {
 
 export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   resolution: '1920x1080',
-  framerate: 30,
+  framerate: 25,
   bitrate: 10000000,
   codec: 'h264',
 };
