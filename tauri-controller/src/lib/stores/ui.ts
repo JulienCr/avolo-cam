@@ -47,21 +47,26 @@ export function selectAll(cameraIds: string[]): void {
 }
 
 export function openSettingsDialog(cameraId: string): void {
+  console.log('[UI Store] openSettingsDialog called:', cameraId);
   settingsCameraId.set(cameraId);
   showSettingsDialog.set(true);
+  console.log('[UI Store] showSettingsDialog set to true');
 }
 
 export function closeSettingsDialog(): void {
+  console.log('[UI Store] closeSettingsDialog called');
   settingsCameraId.set(null);
   showSettingsDialog.set(false);
 }
 
 export function openStreamSettingsDialog(cameraId: string): void {
+  console.log('[UI Store] openStreamSettingsDialog called:', cameraId);
   streamSettingsCameraId.set(cameraId);
   showStreamSettingsDialog.set(true);
 }
 
 export function closeStreamSettingsDialog(): void {
+  console.log('[UI Store] closeStreamSettingsDialog called');
   streamSettingsCameraId.set(null);
   showStreamSettingsDialog.set(false);
 }

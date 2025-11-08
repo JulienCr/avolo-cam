@@ -17,19 +17,35 @@
   $: isDisabled = disabled || isAuto;
   $: displayValue = isAuto ? 'Auto' : `${value}${unit}`;
 
-  const {
-    elements: { root, range, thumb },
-    states: { value: sliderValue },
-    options: { disabled: sliderDisabled },
-  } = createSlider({
+  const slider = createSlider({
+    defaultValue: [value],
     min,
     max,
     step,
+    onValueChange: ({ next }) => {
+      value = next[0];
+      return next;
+    },
   });
 
-  // Sync with parent
-  $: sliderValue.set([value]);
-  $: value = $sliderValue[0];
+  // Debug: log what we got
+  console.log('[SliderField] Slider object:', slider);
+  console.log('[SliderField] Elements:', slider.elements);
+
+  const {
+    elements: { root, range, thumbs },
+    states: { value: sliderValue },
+    options: { disabled: sliderDisabled },
+  } = slider;
+
+  $: thumb = thumbs[0];
+
+  // Sync external prop changes to internal store
+  $: if (value !== $sliderValue[0]) {
+    sliderValue.set([value]);
+  }
+
+  // Sync disabled state
   $: sliderDisabled.set(isDisabled);
 
   function handleModeToggle() {
@@ -60,7 +76,7 @@
 
       <!-- Thumb -->
       <span
-        use:melt={$thumb()}
+        use:melt={$thumb}
         class="block h-4 w-4 rounded-full border-2 border-primary-500 bg-white shadow-md transition-all hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 active:scale-105 disabled:cursor-not-allowed dark:border-primary-400 dark:bg-gray-900 dark:focus:ring-offset-gray-800"
       />
     </div>

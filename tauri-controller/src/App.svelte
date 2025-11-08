@@ -157,8 +157,10 @@
 
   // Camera Settings Dialog
   function handleOpenCameraSettings(cameraId: string) {
+    console.log('[App] handleOpenCameraSettings called:', cameraId);
     // Load current settings from camera
     const camera = $cameras.find((c) => c.id === cameraId);
+    console.log('[App] Found camera:', camera);
     if (camera?.status?.current) {
       const current = camera.status.current;
       $currentCameraSettings = {
@@ -177,7 +179,9 @@
       $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
     }
 
+    console.log('[App] Calling openSettingsDialog with:', cameraId);
     openSettingsDialog(cameraId);
+    console.log('[App] After openSettingsDialog, showSettingsDialog =', $showSettingsDialog);
   }
 
   // Stream Settings Dialog

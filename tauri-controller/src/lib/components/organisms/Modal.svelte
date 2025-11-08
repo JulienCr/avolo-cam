@@ -9,10 +9,21 @@
   const {
     elements: { portalled, overlay, content, title: dialogTitle, close },
     states: { open: dialogOpen },
-  } = createDialog();
+  } = createDialog({
+    onOpenChange: ({ next }) => {
+      console.log('[Modal] onOpenChange:', { next, title });
+      open = next;
+      return next;
+    },
+  });
 
-  $: dialogOpen.set(open);
-  $: open = $dialogOpen;
+  // Sync external prop changes to internal store
+  $: {
+    console.log('[Modal] Prop changed:', { open, dialogOpen: $dialogOpen, title });
+    if (open !== $dialogOpen) {
+      dialogOpen.set(open);
+    }
+  }
 
   const sizeClasses = {
     sm: 'max-w-md',
