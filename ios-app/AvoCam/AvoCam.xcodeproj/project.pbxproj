@@ -18,7 +18,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		B77F05EA2EBBF93D00C9F0ED_InfoPlistException /* Info.plist Exception */ = {
+		B77F05EA2EBBF93D00C9F0ED_InfoPlistException /* Exceptions for "AvoCam" folder in "AvoCam" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Resources/Info.plist,
@@ -31,7 +31,7 @@
 		B77F05EA2EBBF93D00C9F0ED /* AvoCam */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				B77F05EA2EBBF93D00C9F0ED_InfoPlistException /* Info.plist Exception */,
+				B77F05EA2EBBF93D00C9F0ED_InfoPlistException /* Exceptions for "AvoCam" folder in "AvoCam" target */,
 			);
 			path = AvoCam;
 			sourceTree = "<group>";

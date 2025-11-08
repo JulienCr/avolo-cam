@@ -23,6 +23,9 @@
   let discovering = false;
   let error = null;
 
+  // Per-device stream settings (camera ID -> settings object)
+  let cameraStreamSettings = {};
+
   // Manual add dialog
   let showAddDialog = false;
   let manualIp = '';
@@ -56,6 +59,34 @@
       clearInterval(discoveryInterval);
     }
   });
+
+  // MARK: - Stream Settings Management
+
+  function getStreamSettings(cameraId) {
+    // Get per-device settings or return defaults
+    if (!cameraStreamSettings[cameraId]) {
+      cameraStreamSettings[cameraId] = {
+        resolution: '1920x1080',
+        framerate: 30,
+        bitrate: 10000000,
+        codec: 'h264'
+      };
+    }
+    return cameraStreamSettings[cameraId];
+  }
+
+  function updateStreamSetting(cameraId, key, value) {
+    if (!cameraStreamSettings[cameraId]) {
+      cameraStreamSettings[cameraId] = {
+        resolution: '1920x1080',
+        framerate: 30,
+        bitrate: 10000000,
+        codec: 'h264'
+      };
+    }
+    cameraStreamSettings[cameraId][key] = value;
+    cameraStreamSettings = cameraStreamSettings; // Trigger reactivity
+  }
 
   // MARK: - Camera Management
 
@@ -135,12 +166,13 @@
 
   async function startStream(cameraId) {
     try {
+      const settings = getStreamSettings(cameraId);
       await invoke('start_stream', {
         cameraId,
-        resolution: '1920x1080',
-        framerate: 30,
-        bitrate: 10000000,
-        codec: 'h264'
+        resolution: settings.resolution,
+        framerate: settings.framerate,
+        bitrate: settings.bitrate,
+        codec: settings.codec
       });
       await refreshCameras();
     } catch (e) {
@@ -173,6 +205,7 @@
   let cameraSettings = {
     wb_mode: 'auto',
     wb_kelvin: 5000,
+    wb_tint: 0,
     iso_mode: 'auto',
     iso: 400,
     shutter_mode: 'auto',
@@ -215,6 +248,7 @@
       // Add manual values only when in manual mode
       if (cameraSettings.wb_mode === 'manual') {
         settings.wb_kelvin = parseInt(cameraSettings.wb_kelvin);
+        settings.wb_tint = parseFloat(cameraSettings.wb_tint);
       }
       if (cameraSettings.iso_mode === 'manual') {
         settings.iso = parseInt(cameraSettings.iso);
@@ -245,6 +279,7 @@
       const current = camera.status.current;
       cameraSettings.wb_mode = current.wb_mode || 'auto';
       cameraSettings.wb_kelvin = current.wb_kelvin || 5000;
+      cameraSettings.wb_tint = current.wb_tint || 0;
       cameraSettings.iso_mode = current.iso_mode || 'auto';
       cameraSettings.iso = current.iso || 160;
       cameraSettings.shutter_mode = current.shutter_mode || 'auto';
@@ -254,6 +289,9 @@
       cameraSettings.lens = current.lens || 'wide';
     }
 
+    // Ensure stream settings exist for this camera
+    getStreamSettings(cameraId);
+
     showSettingsDialog = true;
   }
 
@@ -262,6 +300,7 @@
     // Watch for changes and trigger debounced update
     cameraSettings.wb_mode;
     cameraSettings.wb_kelvin;
+    cameraSettings.wb_tint;
     cameraSettings.iso_mode;
     cameraSettings.iso;
     cameraSettings.shutter_mode;
@@ -363,12 +402,16 @@
     }
 
     try {
+      // Use first camera's settings or defaults
+      const firstId = ids[0];
+      const settings = getStreamSettings(firstId);
+
       const results = await invoke('group_start_stream', {
         cameraIds: ids,
-        resolution: '1920x1080',
-        framerate: 30,
-        bitrate: 10000000,
-        codec: 'h264'
+        resolution: settings.resolution,
+        framerate: settings.framerate,
+        bitrate: settings.bitrate,
+        codec: settings.codec
       });
 
       // Show results
@@ -420,6 +463,36 @@
       return '1/' + Math.round(1.0 / seconds);
     }
   }
+
+  // MARK: - White Balance Calibration
+
+  let measuringWB = false;
+
+  async function measureWhiteBalance() {
+    if (!settingsCameraId) return;
+
+    try {
+      measuringWB = true;
+
+      const result = await invoke('measure_white_balance', {
+        cameraId: settingsCameraId
+      });
+
+      // Update controls with measured values
+      cameraSettings.wb_kelvin = result.scene_cct_k;
+      cameraSettings.wb_tint = Math.round(result.tint);
+
+      // Also update mode to manual if it wasn't already
+      cameraSettings.wb_mode = 'manual';
+
+      console.log('WB Measured: SceneCCT_K =', result.scene_cct_k, 'K, Tint =', result.tint);
+    } catch (e) {
+      console.error('Failed to measure white balance:', e);
+      alert(`Failed to measure white balance: ${e}`);
+    } finally {
+      measuringWB = false;
+    }
+  }
 </script>
 
 <main>
@@ -431,6 +504,7 @@
       <button on:click={refreshCameras}>🔄 Refresh</button>
     </div>
   </header>
+
 
   {#if error}
     <div class="error">
@@ -645,107 +719,247 @@
   {/if}
 
   <!-- Camera Settings Dialog -->
-  {#if showSettingsDialog}
+  {#if showSettingsDialog && settingsCameraId}
     <div class="dialog-overlay" on:click={() => showSettingsDialog = false}>
-      <div class="dialog" on:click|stopPropagation>
+      <div class="dialog dialog-large" on:click|stopPropagation>
         <h2>
           Camera Settings
           {#if savingSettings}
             <span style="color: #4CAF50; font-size: 0.9em; margin-left: 10px;">● Saving...</span>
           {/if}
         </h2>
-        <div class="settings-form">
-          <label>
-            White Balance Mode:
-            <select bind:value={cameraSettings.wb_mode}>
-              <option value="auto">Auto</option>
-              <option value="manual">Manual</option>
-            </select>
-          </label>
-          {#if cameraSettings.wb_mode === 'manual'}
+
+        <!-- Stream Settings Section -->
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+          <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #495057;">Stream Settings</h3>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <label>
-              Temperature: <strong>{cameraSettings.wb_kelvin}K</strong>
-              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                <input type="range" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" style="flex: 1;" />
-                <input type="number" bind:value={cameraSettings.wb_kelvin} min="2000" max="10000" step="100" style="width: 80px;" />
-              </div>
+              Resolution:
+              <select bind:value={cameraStreamSettings[settingsCameraId].resolution} style="margin-top: 4px;">
+                <option value="1280x720">1280×720 (720p)</option>
+                <option value="1920x1080">1920×1080 (1080p)</option>
+                <option value="2560x1440">2560×1440 (1440p)</option>
+                <option value="3840x2160">3840×2160 (4K)</option>
+              </select>
             </label>
-          {/if}
-          <label>
-            ISO Mode:
-            <select bind:value={cameraSettings.iso_mode}>
-              <option value="auto">Auto</option>
-              <option value="manual">Manual</option>
-            </select>
-          </label>
-          {#if cameraSettings.iso_mode === 'manual'}
             <label>
-              ISO: <strong>{cameraSettings.iso}</strong>
-              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                <input type="range" bind:value={cameraSettings.iso} min="50" max="3200" step="50" style="flex: 1;" />
-                <input type="number" bind:value={cameraSettings.iso} min="50" max="3200" step="50" style="width: 80px;" />
-              </div>
+              Framerate:
+              <select bind:value={cameraStreamSettings[settingsCameraId].framerate} style="margin-top: 4px;">
+                <option value={24}>24 fps</option>
+                <option value={25}>25 fps</option>
+                <option value={30}>30 fps</option>
+                <option value={60}>60 fps</option>
+              </select>
             </label>
-          {/if}
-          <label>
-            Shutter Speed Mode:
-            <select bind:value={cameraSettings.shutter_mode}>
-              <option value="auto">Auto</option>
-              <option value="manual">Manual</option>
-            </select>
-          </label>
-          {#if cameraSettings.shutter_mode === 'manual'}
             <label>
-              Shutter Speed: <strong>{formatShutterSpeed(cameraSettings.shutter_s)}</strong>
-              <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                <input type="range" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" style="flex: 1;" />
-                <input type="number" bind:value={cameraSettings.shutter_s} min="0.001" max="0.1" step="0.001" style="width: 80px;" />
-              </div>
+              Bitrate:
+              <select bind:value={cameraStreamSettings[settingsCameraId].bitrate} style="margin-top: 4px;">
+                <option value={5000000}>5 Mbps</option>
+                <option value={8000000}>8 Mbps</option>
+                <option value={10000000}>10 Mbps</option>
+                <option value={15000000}>15 Mbps</option>
+                <option value={20000000}>20 Mbps</option>
+                <option value={30000000}>30 Mbps</option>
+                <option value={50000000}>50 Mbps</option>
+              </select>
             </label>
-          {/if}
-          <label>
-            Camera Position:
-            <select bind:value={cameraSettings.camera_position}>
-              <option value="back">Back</option>
-              <option value="front">Front</option>
-            </select>
-          </label>
-          <div class="lens-zoom-control">
-            <label>Lens:</label>
-            <div class="lens-buttons">
-              <button
-                type="button"
-                class:active={selectedLens === 'ultra_wide'}
-                on:click={() => cameraSettings.zoom_factor = 1.0}>
-                .5
-              </button>
-              <button
-                type="button"
-                class:active={selectedLens === 'wide'}
-                on:click={() => cameraSettings.zoom_factor = 2.0}>
-                1
-              </button>
-              <button
-                type="button"
-                class:active={selectedLens === 'telephoto'}
-                on:click={() => cameraSettings.zoom_factor = 10.0}>
-                5
-              </button>
+            <label>
+              Codec:
+              <select bind:value={cameraStreamSettings[settingsCameraId].codec} style="margin-top: 4px;">
+                <option value="h264">H.264</option>
+                <option value="hevc">H.265/HEVC</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <!-- Camera Settings Section -->
+        <h3 style="margin: 0 0 16px 0; font-size: 16px; color: #495057; font-weight: 600;">White Balance</h3>
+
+        <!-- WB Controls Group -->
+        <div class="control-group">
+          <!-- Temperature -->
+          <div class="control-item">
+            <div class="control-header">
+              <span class="control-label">Temperature</span>
+              <div class="control-value-toggle">
+                <span class="control-value">{cameraSettings.wb_mode === 'auto' ? 'Auto' : cameraSettings.wb_kelvin + 'K'}</span>
+                <label class="toggle-switch-v2">
+                  <input type="checkbox" checked={cameraSettings.wb_mode === 'manual'} on:change={() => cameraSettings.wb_mode = cameraSettings.wb_mode === 'manual' ? 'auto' : 'manual'} />
+                  <span class="toggle-slider-v2"></span>
+                </label>
+              </div>
             </div>
-            <label>
-              Fine Zoom: {(cameraSettings.zoom_factor / 2.0).toFixed(1)}×
+            <div class="slider-container" class:disabled={cameraSettings.wb_mode === 'auto'}>
               <input
                 type="range"
-                bind:value={cameraSettings.zoom_factor}
-                min="1.0"
-                max="20.0"
-                step="0.1"
-                style="width: 100%;" />
+                bind:value={cameraSettings.wb_kelvin}
+                min="2000"
+                max="10000"
+                step="100"
+                disabled={cameraSettings.wb_mode === 'auto'}
+                class="slider-v2" />
+              <div class="slider-labels">
+                <span>2000K</span>
+                <span>10000K</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tint -->
+          <div class="control-item">
+            <div class="control-header">
+              <span class="control-label">Tint</span>
+              <div class="control-value-toggle">
+                <span class="control-value">{cameraSettings.wb_mode === 'auto' ? 'Auto' : cameraSettings.wb_tint}</span>
+                <label class="toggle-switch-v2">
+                  <input type="checkbox" checked={cameraSettings.wb_mode === 'manual'} on:change={() => cameraSettings.wb_mode = cameraSettings.wb_mode === 'manual' ? 'auto' : 'manual'} />
+                  <span class="toggle-slider-v2"></span>
+                </label>
+              </div>
+            </div>
+            <div class="slider-container" class:disabled={cameraSettings.wb_mode === 'auto'}>
+              <input
+                type="range"
+                bind:value={cameraSettings.wb_tint}
+                min="-100"
+                max="100"
+                step="1"
+                disabled={cameraSettings.wb_mode === 'auto'}
+                class="slider-v2" />
+              <div class="slider-labels">
+                <span>Green</span>
+                <span>Magenta</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Auto Measure Button -->
+          {#if cameraSettings.wb_mode === 'manual'}
+            <button
+              type="button"
+              on:click={measureWhiteBalance}
+              disabled={measuringWB}
+              class="btn-measure">
+              {measuringWB ? '⏳ Measuring...' : '📸 Auto Calibrate'}
+            </button>
+          {/if}
+        </div>
+
+        <div class="section-divider"></div>
+
+        <h3 style="margin: 0 0 16px 0; font-size: 16px; color: #495057; font-weight: 600;">Exposure</h3>
+
+        <!-- Exposure Controls Group -->
+        <div class="control-group">
+          <!-- ISO -->
+          <div class="control-item">
+            <div class="control-header">
+              <span class="control-label">ISO</span>
+              <div class="control-value-toggle">
+                <span class="control-value">{cameraSettings.iso_mode === 'auto' ? 'Auto' : cameraSettings.iso}</span>
+                <label class="toggle-switch-v2">
+                  <input type="checkbox" checked={cameraSettings.iso_mode === 'manual'} on:change={() => cameraSettings.iso_mode = cameraSettings.iso_mode === 'manual' ? 'auto' : 'manual'} />
+                  <span class="toggle-slider-v2"></span>
+                </label>
+              </div>
+            </div>
+            <div class="slider-container" class:disabled={cameraSettings.iso_mode === 'auto'}>
+              <input
+                type="range"
+                bind:value={cameraSettings.iso}
+                min="50"
+                max="3200"
+                step="50"
+                disabled={cameraSettings.iso_mode === 'auto'}
+                class="slider-v2" />
+              <div class="slider-labels">
+                <span>50</span>
+                <span>3200</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shutter -->
+          <div class="control-item">
+            <div class="control-header">
+              <span class="control-label">Shutter Speed</span>
+              <div class="control-value-toggle">
+                <span class="control-value">{cameraSettings.shutter_mode === 'auto' ? 'Auto' : formatShutterSpeed(cameraSettings.shutter_s)}</span>
+                <label class="toggle-switch-v2">
+                  <input type="checkbox" checked={cameraSettings.shutter_mode === 'manual'} on:change={() => cameraSettings.shutter_mode = cameraSettings.shutter_mode === 'manual' ? 'auto' : 'manual'} />
+                  <span class="toggle-slider-v2"></span>
+                </label>
+              </div>
+            </div>
+            <div class="slider-container" class:disabled={cameraSettings.shutter_mode === 'auto'}>
+              <input
+                type="range"
+                bind:value={cameraSettings.shutter_s}
+                min="0.001"
+                max="0.1"
+                step="0.001"
+                disabled={cameraSettings.shutter_mode === 'auto'}
+                class="slider-v2" />
+              <div class="slider-labels">
+                <span>1/1000</span>
+                <span>1/10</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <h3 style="margin: 0 0 16px 0; font-size: 16px; color: #495057; font-weight: 600;">Camera & Lens</h3>
+
+        <!-- Camera Position and Lens -->
+        <div class="control-group">
+          <div class="control-item">
+            <label class="control-label" style="display: block; margin-bottom: 8px;">
+              Camera Position
             </label>
+            <select bind:value={cameraSettings.camera_position} class="select-v2">
+              <option value="back">Back Camera</option>
+              <option value="front">Front Camera</option>
+            </select>
           </div>
-          <div class="dialog-buttons">
-            <button type="button" on:click={() => showSettingsDialog = false}>Close</button>
+
+          <div class="control-item">
+            <label class="control-label" style="display: block; margin-bottom: 8px;">
+              Lens Selection
+            </label>
+            <div class="lens-buttons-v2">
+              <button
+                type="button"
+                class="lens-btn-v2"
+                class:active={selectedLens === 'ultra_wide'}
+                on:click={() => cameraSettings.zoom_factor = 1.0}>
+                <span class="lens-icon">◯</span>
+                <span class="lens-label">Ultra Wide<br/><small>0.5×</small></span>
+              </button>
+              <button
+                type="button"
+                class="lens-btn-v2"
+                class:active={selectedLens === 'wide'}
+                on:click={() => cameraSettings.zoom_factor = 2.0}>
+                <span class="lens-icon">◯</span>
+                <span class="lens-label">Wide<br/><small>1×</small></span>
+              </button>
+              <button
+                type="button"
+                class="lens-btn-v2"
+                class:active={selectedLens === 'telephoto'}
+                on:click={() => cameraSettings.zoom_factor = 10.0}>
+                <span class="lens-icon">◯</span>
+                <span class="lens-label">Telephoto<br/><small>5×</small></span>
+              </button>
+            </div>
           </div>
+        </div>
+
+        <div class="dialog-buttons" style="margin-top: 24px;">
+          <button type="button" on:click={() => showSettingsDialog = false} class="btn-close">Close</button>
         </div>
       </div>
     </div>
@@ -804,6 +1018,21 @@
 
   button.primary:hover {
     background: #0056b3;
+  }
+
+  button.btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #d1d5db;
+  }
+
+  button.btn-secondary:hover {
+    background: #e5e7eb;
+  }
+
+  button.btn-secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .loading, .empty, .error {
@@ -1221,5 +1450,358 @@
 
   .btn-delete:active {
     transform: scale(0.98);
+  }
+
+  /* Stream Settings */
+  .stream-settings {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  }
+
+  .stream-settings h3 {
+    margin: 0 0 15px 0;
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+  }
+
+  .settings-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .settings-grid select {
+    padding: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .settings-grid select:hover {
+    border-color: rgba(255, 255, 255, 0.6);
+    background: white;
+  }
+
+  .settings-grid select:focus {
+    outline: none;
+    border-color: white;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+  }
+
+  /* New Control Layout V2 */
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .control-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .control-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .control-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  .control-value-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .control-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #667eea;
+    min-width: 60px;
+    text-align: right;
+  }
+
+  /* Toggle Switch V2 (Smaller, Cleaner) */
+  .toggle-switch-v2 {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .toggle-switch-v2 input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .toggle-slider-v2 {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #d1d5db;
+    transition: .3s;
+    border-radius: 22px;
+  }
+
+  .toggle-slider-v2:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+
+  .toggle-switch-v2 input:checked + .toggle-slider-v2 {
+    background-color: #667eea;
+  }
+
+  .toggle-switch-v2 input:checked + .toggle-slider-v2:before {
+    transform: translateX(18px);
+  }
+
+  /* Slider Container V2 */
+  .slider-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: opacity 0.3s;
+  }
+
+  .slider-container.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .slider-v2 {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(to right, #e5e7eb 0%, #667eea 50%, #e5e7eb 100%);
+    outline: none;
+    transition: opacity 0.3s;
+  }
+
+  .slider-v2::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid #667eea;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s;
+  }
+
+  .slider-v2::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .slider-v2::-webkit-slider-thumb:active {
+    transform: scale(1.15);
+  }
+
+  .slider-v2::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid #667eea;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s;
+  }
+
+  .slider-v2::-moz-range-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .slider-v2:disabled {
+    cursor: not-allowed;
+  }
+
+  .slider-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #9ca3af;
+    padding: 0 2px;
+  }
+
+  /* Section Divider */
+  .section-divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, #e5e7eb, transparent);
+    margin: 24px 0;
+  }
+
+  /* Auto Measure Button */
+  .btn-measure {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 4px;
+  }
+
+  .btn-measure:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+  }
+
+  .btn-measure:active {
+    transform: translateY(0);
+  }
+
+  .btn-measure:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Select V2 */
+  .select-v2 {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #374151;
+    background-color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .select-v2:hover {
+    border-color: #d1d5db;
+  }
+
+  .select-v2:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  }
+
+  /* Lens Buttons V2 */
+  .lens-buttons-v2 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .lens-btn-v2 {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 8px;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .lens-btn-v2:hover {
+    border-color: #d1d5db;
+    background: #f9fafb;
+  }
+
+  .lens-btn-v2.active {
+    border-color: #667eea;
+    background: #ede9fe;
+  }
+
+  .lens-icon {
+    font-size: 20px;
+    color: #9ca3af;
+    transition: color 0.2s;
+  }
+
+  .lens-btn-v2.active .lens-icon {
+    color: #667eea;
+  }
+
+  .lens-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  .lens-label small {
+    font-size: 10px;
+    color: #9ca3af;
+  }
+
+  .lens-btn-v2.active .lens-label {
+    color: #667eea;
+  }
+
+  .lens-btn-v2.active .lens-label small {
+    color: #8b5cf6;
+  }
+
+  /* Close Button */
+  .btn-close {
+    width: 100%;
+    padding: 12px;
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-close:hover {
+    background: #e5e7eb;
   }
 </style>

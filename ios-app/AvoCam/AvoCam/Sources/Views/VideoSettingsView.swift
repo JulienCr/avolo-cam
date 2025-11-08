@@ -44,12 +44,14 @@ struct VideoSettingsView: View {
 
                     if viewModel.useCustomSettings {
                         Picker("Resolution", selection: $viewModel.customResolution) {
-                            Text("1920×1080").tag("1920x1080")
-                            Text("2560×1440").tag("2560x1440")
-                            Text("3840×2160").tag("3840x2160")
+                            Text("1280×720 (720p)").tag("1280x720")
+                            Text("1920×1080 (1080p)").tag("1920x1080")
+                            Text("2560×1440 (1440p)").tag("2560x1440")
+                            Text("3840×2160 (4K)").tag("3840x2160")
                         }
 
                         Picker("Frame Rate", selection: $viewModel.customFps) {
+                            Text("24 fps").tag(24)
                             Text("25 fps").tag(25)
                             Text("30 fps").tag(30)
                             Text("60 fps").tag(60)

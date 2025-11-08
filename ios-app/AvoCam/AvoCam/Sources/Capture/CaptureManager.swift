@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreMedia
 import UIKit
+import os
 
 actor CaptureManager: NSObject {
     // MARK: - Properties
@@ -19,11 +20,18 @@ actor CaptureManager: NSObject {
 
     // Serial queue for all session mutations (beginConfiguration/commitConfiguration, add/remove input/output, start/stop)
     private let sessionQueue = DispatchQueue(label: "com.avocam.capture.session", qos: .userInteractive)
-    private let outputQueue = DispatchQueue(label: "com.avocam.capture.output")
+    // Output queue with autorelease pool optimization for minimal per-frame allocations
+    private let outputQueue = DispatchQueue(label: "com.avocam.capture.output", qos: .userInitiated, autoreleaseFrequency: .workItem)
 
-    private var frameCallback: ((CMSampleBuffer) -> Void)?
+    // Thread-safe frame callback storage (nonisolated to avoid actor hop on hot path)
+    // Using @unchecked Sendable as thread safety is guaranteed by OSAllocatedUnfairLock
+    private nonisolated(unsafe) var _frameCallback: ((CMSampleBuffer) -> Void)?
+    private let frameCallbackLock = OSAllocatedUnfairLock(uncheckedState: ())
     private var currentResolution: String?
     private var currentFramerate: Int?
+
+    // Format cache: (deviceID, lens, width, height, fps) -> AVCaptureDevice.Format
+    private var formatCache: [String: AVCaptureDevice.Format] = [:]
 
     // Camera position and lens tracking
     private var currentCameraPosition: AVCaptureDevice.Position = .back
@@ -79,6 +87,11 @@ actor CaptureManager: NSObject {
                     // Begin atomic configuration
                     session.beginConfiguration()
 
+                    // Disable wide color to prevent implicit conversions (iOS 10+)
+                    if #available(iOS 10.0, *) {
+                        session.automaticallyConfiguresCaptureDeviceForWideColor = false
+                    }
+
                     // Remove existing inputs/outputs if reconfiguring
                     if self.captureSession != nil {
                         session.inputs.forEach { session.removeInput($0) }
@@ -133,6 +146,7 @@ actor CaptureManager: NSObject {
 
                     // Create video output
                     let output = AVCaptureVideoDataOutput()
+                    // NDI requires full range NV12 ('420f' not '420v')
                     output.videoSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String:
                             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -183,13 +197,25 @@ actor CaptureManager: NSObject {
     private func configureFormatSync(device: AVCaptureDevice, resolution: String, framerate: Int) throws {
         let dimensions = try parseResolution(resolution)
 
-        // Find matching format using best-fit logic
-        guard
-            let format = findFormat(
-                for: device, width: Int(dimensions.width), height: Int(dimensions.height),
-                framerate: framerate)
-        else {
-            throw CaptureError.formatNotSupported
+        // Check format cache first
+        let cacheKey = formatCacheKey(deviceID: device.uniqueID, lens: currentLens,
+                                       width: Int(dimensions.width), height: Int(dimensions.height), fps: framerate)
+        let format: AVCaptureDevice.Format
+        if let cachedFormat = formatCache[cacheKey] {
+            format = cachedFormat
+            print("✅ Using cached format for \(cacheKey)")
+        } else {
+            // Find matching format using best-fit logic
+            guard
+                let foundFormat = findFormat(
+                    for: device, width: Int(dimensions.width), height: Int(dimensions.height),
+                    framerate: framerate)
+            else {
+                throw CaptureError.formatNotSupported
+            }
+            format = foundFormat
+            formatCache[cacheKey] = format
+            print("✅ Cached new format for \(cacheKey)")
         }
 
         try device.lockForConfiguration()
@@ -200,9 +226,20 @@ actor CaptureManager: NSObject {
         device.activeVideoMinFrameDuration = frameDuration
         device.activeVideoMaxFrameDuration = frameDuration
 
+        // Force sRGB color space to avoid wide color processing (iOS 10+)
+        if #available(iOS 10.0, *), device.activeColorSpace != .sRGB {
+            device.activeColorSpace = .sRGB
+            print("✅ Set color space to sRGB")
+        }
+
         device.unlockForConfiguration()
 
         print("✅ Configured format: \(format.formatDescription)")
+    }
+
+    /// Generate cache key for format lookup
+    private func formatCacheKey(deviceID: String, lens: String, width: Int, height: Int, fps: Int) -> String {
+        return "\(deviceID)_\(lens)_\(width)x\(height)_\(fps)fps"
     }
 
     /// Configure connection properties (orientation, stabilization)
@@ -282,7 +319,10 @@ actor CaptureManager: NSObject {
             throw CaptureError.sessionNotConfigured
         }
 
-        self.frameCallback = frameCallback
+        // Store callback with thread-safe lock (nonisolated access on hot path)
+        frameCallbackLock.withLock {
+            _frameCallback = frameCallback
+        }
 
         // Start session on sessionQueue if not already running
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -299,8 +339,10 @@ actor CaptureManager: NSObject {
     }
 
     func stopCapture() async {
-        // Only clear the frame callback, keep session running for preview
-        frameCallback = nil
+        // Clear the frame callback via thread-safe lock
+        frameCallbackLock.withLock {
+            _frameCallback = nil
+        }
         print("⏹ Frame callback cleared (session still running for preview)")
     }
 
@@ -645,6 +687,7 @@ actor CaptureManager: NSObject {
         let commonResolutions = [
             (1280, 720, "1280x720"),
             (1920, 1080, "1920x1080"),
+            (2560, 1440, "2560x1440"),
             (3840, 2160, "3840x2160"),
         ]
 
@@ -727,30 +770,6 @@ actor CaptureManager: NSObject {
         g.blueGain  = max(1.0, min(g.blueGain,  maxG))   // clamp B
         return g
     }
-
-    // MARK: - Color Space Attachment
-
-    nonisolated private func attachColorSpaceMetadata(to sampleBuffer: CMSampleBuffer) {
-        // Attach Rec.709 Full Range color space metadata
-        // Note: CVBufferSetAttachment is thread-safe and doesn't require actor isolation
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_709) else {
-            return
-        }
-
-        let attachments: [String: Any] = [
-            kCVImageBufferColorPrimariesKey as String: kCVImageBufferColorPrimaries_ITU_R_709_2,
-            kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
-            kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_ITU_R_709_2,
-            kCVImageBufferCGColorSpaceKey as String: colorSpace
-        ]
-
-        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            for (key, value) in attachments {
-                CVBufferSetAttachment(
-                    pixelBuffer, key as CFString, value as CFTypeRef, .shouldPropagate)
-            }
-        }
-    }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -761,15 +780,11 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // Attach color space metadata to ensure Rec.709 Full (synchronous, thread-safe)
-        attachColorSpaceMetadata(to: sampleBuffer)
-
-        // Forward to callback (access via Task to respect actor isolation)
-        Task {
-            if let callback = await frameCallback {
-                callback(sampleBuffer)
-            }
-        }
+        // HOT PATH: Invoke callback directly without actor hop or metadata writes
+        // Color space is set at device level (sRGB) and output level (video range NV12)
+        // Thread-safe access to callback via lock
+        let callback = frameCallbackLock.withLock { _frameCallback }
+        callback?(sampleBuffer)
     }
 
     nonisolated func captureOutput(
@@ -905,7 +920,7 @@ enum CaptureError: LocalizedError {
 // MARK: - AVCaptureDevice.Format Extension
 
 private extension AVCaptureDevice.Format {
-    var formatPixelCount: Int {
+    nonisolated var formatPixelCount: Int {
         let dims = CMVideoFormatDescriptionGetDimensions(self.formatDescription)
         return Int(dims.width) * Int(dims.height)
     }
