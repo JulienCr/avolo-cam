@@ -3,6 +3,7 @@
   import { refreshCameras } from '$lib/stores/cameras';
   import Button from '../atoms/Button.svelte';
   import Card from '../atoms/Card.svelte';
+  import { sendNotification } from '@tauri-apps/plugin-notification';
 
   export let onClose: () => void;
 
@@ -44,6 +45,17 @@
       } catch (e) {
         alert('Failed to delete camera data: ' + e);
       }
+    }
+  }
+
+  async function handleTestNotification() {
+    try {
+      await sendNotification({
+        title: '🔔 Test Notification',
+        body: 'This is a test notification from AvoCam Controller. Alerts are working correctly!',
+      });
+    } catch (e) {
+      alert('Failed to send test notification: ' + e);
     }
   }
 </script>
@@ -126,6 +138,17 @@
         <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
           Get notified when camera CPU usage exceeds this value
         </p>
+      </div>
+
+      <!-- Test Notification -->
+      <div class="flex justify-center">
+        <Button
+          variant="secondary"
+          size="sm"
+          on:click={handleTestNotification}
+        >
+          🔔 Test Notification
+        </Button>
       </div>
     </div>
 
