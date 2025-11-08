@@ -14,10 +14,28 @@
   export let onCameraSettings: () => void;
   export let onStreamSettings: () => void;
   export let onRemove: () => void;
-  export let onForceKeyframe: () => void;
 
   $: isStreaming = camera.status?.ndi_state === 'streaming';
   $: telemetry = camera.status?.telemetry;
+  $: streamDetails = camera.status?.current;
+  $: droppedFrames = telemetry?.dropped_frames || 0;
+  $: droppedFramesVariant = droppedFrames > 0 ? (droppedFrames > 100 ? 'danger' : 'warning') : 'default';
+
+  function getWifiIcon(rssi?: number): string {
+    if (rssi === undefined) return '';
+    if (rssi >= -50) return '📶'; // Excellent
+    if (rssi >= -60) return '📶'; // Good
+    if (rssi >= -70) return '📶'; // Fair
+    return '📶'; // Poor
+  }
+
+  function getWifiStrength(rssi?: number): string {
+    if (rssi === undefined) return 'N/A';
+    if (rssi >= -50) return 'Excellent';
+    if (rssi >= -60) return 'Good';
+    if (rssi >= -70) return 'Fair';
+    return 'Poor';
+  }
 </script>
 
 <Card padding="md" interactive>
@@ -54,11 +72,43 @@
 
     <!-- Telemetry -->
     {#if telemetry}
-      <div class="grid grid-cols-4 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+      <div class="grid grid-cols-5 gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
         <TelemetryBadge label="FPS" value={telemetry.fps.toFixed(1)} />
         <TelemetryBadge label="Bitrate" value={formatBitrate(telemetry.bitrate)} />
         <TelemetryBadge label="Battery" value={formatBattery(telemetry.battery)} />
         <TelemetryBadge label="Temp" value={formatTemperature(telemetry.temp_c)} />
+        <TelemetryBadge
+          label="Dropped"
+          value={droppedFrames.toString()}
+          variant={droppedFramesVariant}
+        />
+      </div>
+    {/if}
+
+    <!-- Stream Details -->
+    {#if streamDetails && isStreaming}
+      <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+        <div class="flex items-center justify-between text-sm">
+          <span class="font-medium text-gray-700 dark:text-gray-300">Stream:</span>
+          <span class="font-mono text-gray-900 dark:text-gray-100">
+            {streamDetails.resolution || 'N/A'} @ {streamDetails.fps || 'N/A'}fps ({streamDetails.codec?.toUpperCase() || 'N/A'})
+          </span>
+        </div>
+      </div>
+    {/if}
+
+    <!-- WiFi Strength -->
+    {#if telemetry?.wifi_rssi !== undefined}
+      <div class="rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900">
+        <div class="flex items-center justify-between text-sm">
+          <span class="text-gray-700 dark:text-gray-300">WiFi:</span>
+          <div class="flex items-center gap-2">
+            <span class="text-lg">{getWifiIcon(telemetry.wifi_rssi)}</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">
+              {getWifiStrength(telemetry.wifi_rssi)} ({telemetry.wifi_rssi} dBm)
+            </span>
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -73,16 +123,6 @@
                 <rect x="6" y="6" width="12" height="12" />
               </svg>
               Stop
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              on:click={onForceKeyframe}
-              title="Force IDR keyframe"
-            >
-              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-              </svg>
             </Button>
           {:else}
             <Button variant="primary" size="sm" on:click={onStart} class="flex-1">

@@ -112,16 +112,6 @@ async fn update_camera_settings(
 }
 
 #[tauri::command]
-async fn force_keyframe(
-    state: State<'_, AppState>,
-    camera_id: String,
-) -> Result<(), String> {
-    let manager = state.camera_manager.read().await;
-    manager.force_keyframe(&camera_id).await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 async fn get_capabilities(
     state: State<'_, AppState>,
     camera_id: String,
@@ -298,7 +288,6 @@ fn main() {
             start_stream,
             stop_stream,
             update_camera_settings,
-            force_keyframe,
             measure_white_balance,
             group_start_stream,
             group_stop_stream,

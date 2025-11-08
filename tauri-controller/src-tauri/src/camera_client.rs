@@ -126,18 +126,6 @@ impl CameraClient {
         Ok(())
     }
 
-    pub async fn force_keyframe(&self) -> Result<()> {
-        let response = self.post("/api/v1/encoder/force_keyframe", &()).await?;
-
-        if !response.status().is_success() {
-            let error: ErrorResponse = response.json().await
-                .context("Failed to parse error response")?;
-            anyhow::bail!("{}: {}", error.code, error.message);
-        }
-
-        Ok(())
-    }
-
     pub async fn measure_white_balance(&self) -> Result<WhiteBalanceMeasureResponse> {
         let response = self.post("/api/v1/camera/wb/measure", &()).await?;
 

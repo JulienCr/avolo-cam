@@ -308,16 +308,20 @@ class AppCoordinator: ObservableObject {
     private func updateTelemetry() async {
         let systemTelemetry = await telemetryCollector.collect()
 
-        // Note: NDI SDK handles encoding internally, so we don't have encoder telemetry
-        // FPS and bitrate would need to be calculated from NDI SDK if available
+        // Get NDI telemetry stats (FPS, sent frames, dropped frames)
+        let ndiStats = ndiManager?.getTelemetryStats() ?? (0.0, 0, 0)
+
+        // Get configured bitrate from current settings (or default to 0)
+        let configuredBitrate = currentSettings?.bitrate ?? 0
+
         self.telemetry = Telemetry(
-            fps: 0,  // TODO: Get from NDI SDK if available
-            bitrate: 0,  // TODO: Get from NDI SDK if available
+            fps: ndiStats.fps,
+            bitrate: configuredBitrate,
             battery: systemTelemetry.battery,
             tempC: systemTelemetry.temperature,
             wifiRssi: systemTelemetry.wifiRssi,
-            queueMs: nil,
-            droppedFrames: nil,
+            queueMs: nil,  // Not available from NDI SDK
+            droppedFrames: Int(ndiStats.droppedFrames),
             chargingState: systemTelemetry.chargingState
         )
 
@@ -447,12 +451,6 @@ class AppCoordinator: ObservableObject {
         currentSettings = current
         // Persist settings so they survive page refresh
         persistSettings(current)
-    }
-
-    func forceKeyframe() {
-        // Note: NDI SDK handles encoding internally. Keyframe control would need
-        // to be implemented through NDI SDK if available.
-        print("⚠️ Force keyframe not available (NDI SDK handles encoding)")
     }
 
     // MARK: - Capabilities
@@ -606,10 +604,6 @@ extension AppCoordinator: NetworkRequestHandler {
 
     func handleCameraSettings(_ settings: CameraSettingsRequest) async throws {
         try await updateCameraSettings(settings)
-    }
-
-    func handleForceKeyframe() {
-        forceKeyframe()
     }
 
     func handleGetStatus() async -> StatusResponse {

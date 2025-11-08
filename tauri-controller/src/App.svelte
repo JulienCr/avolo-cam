@@ -23,6 +23,7 @@
     addCameraManualAction,
     addDiscoveredCameraAction,
     removeCameraAction,
+    discoverCamerasAction,
   } from '$lib/stores/cameras';
 
   import {
@@ -67,7 +68,7 @@
   // Lifecycle
   onMount(async () => {
     await loadProfiles();
-    startAutoRefresh(2000, 10000);
+    startAutoRefresh(2000);
   });
 
   onDestroy(() => {
@@ -91,14 +92,6 @@
       await refreshCameras();
     } catch (e) {
       alert(`Failed to stop stream: ${e}`);
-    }
-  }
-
-  async function handleForceKeyframe(cameraId: string) {
-    try {
-      await api.forceKeyframe(cameraId);
-    } catch (e) {
-      alert(`Failed to force keyframe: ${e}`);
     }
   }
 
@@ -312,6 +305,8 @@
     onAddCamera={() => ($showAddDialog = true)}
     onProfiles={() => ($showProfileDialog = true)}
     onRefresh={refreshCameras}
+    onDiscover={discoverCamerasAction}
+    discovering={$discovering}
   />
 
   {#if $error}
@@ -383,7 +378,6 @@
           onCameraSettings={() => handleOpenCameraSettings(camera.id)}
           onStreamSettings={() => handleOpenStreamSettings(camera.id)}
           onRemove={() => handleRemoveCamera(camera.id)}
-          onForceKeyframe={() => handleForceKeyframe(camera.id)}
         />
       {/each}
     </div>

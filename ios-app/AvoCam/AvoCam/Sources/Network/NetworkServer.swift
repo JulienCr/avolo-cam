@@ -16,7 +16,6 @@ protocol NetworkRequestHandler: AnyObject {
     func handleStreamStart(_ request: StreamStartRequest) async throws
     func handleStreamStop() async throws
     func handleCameraSettings(_ settings: CameraSettingsRequest) async throws
-    func handleForceKeyframe()
     func handleGetStatus() async -> StatusResponse
     func handleGetCapabilities() async -> [Capability]
     func handleGetVideoSettings() async -> VideoSettingsResponse
@@ -258,9 +257,6 @@ class NetworkServer {
         case ("POST", "/api/v1/screen/brightness"):
             return handleScreenBrightness(body: body)
 
-        case ("POST", "/api/v1/encoder/force_keyframe"):
-            return handleForceKeyframe()
-
         case ("POST", "/api/v1/camera/wb/measure"):
             return await handleMeasureWhiteBalance()
 
@@ -375,15 +371,6 @@ class NetworkServer {
 
         handler.handleScreenBrightness(request)
         return HTTPResponse(status: 200, body: successJSON(message: "Screen brightness updated"))
-    }
-
-    private func handleForceKeyframe() -> HTTPResponse {
-        guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
-        }
-
-        handler.handleForceKeyframe()
-        return HTTPResponse(status: 200, body: successJSON(message: "Keyframe forced"))
     }
 
     private func handleGetVideoSettings() async -> HTTPResponse {

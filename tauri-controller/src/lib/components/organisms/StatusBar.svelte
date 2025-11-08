@@ -4,6 +4,8 @@
   export let onAddCamera: () => void;
   export let onProfiles: () => void;
   export let onRefresh: () => void;
+  export let onDiscover: () => void;
+  export let discovering = false;
 </script>
 
 <header class="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -12,6 +14,9 @@
   </h1>
 
   <div class="flex gap-2">
+    <Button variant="secondary" size="md" on:click={onDiscover} disabled={discovering}>
+      {discovering ? '🔍 Discovering...' : '🔍 Discover'}
+    </Button>
     <Button variant="secondary" size="md" on:click={onAddCamera}>
       + Add Camera
     </Button>

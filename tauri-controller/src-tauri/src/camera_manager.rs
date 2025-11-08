@@ -398,13 +398,6 @@ impl CameraManager {
         camera.client.read().await.update_camera_settings(settings).await
     }
 
-    pub async fn force_keyframe(&self, camera_id: &str) -> Result<()> {
-        let camera = self.cameras.get(camera_id)
-            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
-
-        camera.client.read().await.force_keyframe().await
-    }
-
     pub async fn get_capabilities(&self, camera_id: &str) -> Result<Vec<Capability>> {
         let camera = self.cameras.get(camera_id)
             .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;

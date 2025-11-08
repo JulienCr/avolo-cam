@@ -38,10 +38,6 @@ export async function stopStream(cameraId: string): Promise<void> {
   return invoke('stop_stream', { cameraId });
 }
 
-export async function forceKeyframe(cameraId: string): Promise<void> {
-  return invoke('force_keyframe', { cameraId });
-}
-
 // Settings
 export async function updateCameraSettings(
   cameraId: string,

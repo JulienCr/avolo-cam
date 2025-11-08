@@ -35,8 +35,17 @@ export async function discoverCamerasAction(): Promise<void> {
   try {
     discovering.set(true);
     const data = await api.discoverCameras();
-    discoveredCameras.set(data);
-    console.log('Discovered cameras:', data);
+
+    // Filter out cameras that are already added
+    const currentCameras = get(cameras);
+    const filtered = data.filter((discovered) => {
+      return !currentCameras.some((camera) =>
+        camera.ip === discovered.ip && camera.port === discovered.port
+      );
+    });
+
+    discoveredCameras.set(filtered);
+    console.log('Discovered cameras:', filtered);
   } catch (e) {
     console.error('Failed to discover cameras:', e);
   } finally {
@@ -71,27 +80,20 @@ export async function removeCameraAction(cameraId: string): Promise<void> {
   await refreshCameras();
 }
 
-// Setup intervals for auto-refresh and auto-discovery
+// Setup intervals for auto-refresh only (discovery is manual now)
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
-let discoveryInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startAutoRefresh(refreshMs = 2000, discoveryMs = 10000): void {
+export function startAutoRefresh(refreshMs = 2000): void {
   // Initial refresh
   refreshCameras();
-  discoverCamerasAction();
 
-  // Setup intervals
+  // Setup interval for camera refresh only
   refreshInterval = setInterval(refreshCameras, refreshMs);
-  discoveryInterval = setInterval(discoverCamerasAction, discoveryMs);
 }
 
 export function stopAutoRefresh(): void {
   if (refreshInterval) {
     clearInterval(refreshInterval);
     refreshInterval = null;
-  }
-  if (discoveryInterval) {
-    clearInterval(discoveryInterval);
-    discoveryInterval = null;
   }
 }
