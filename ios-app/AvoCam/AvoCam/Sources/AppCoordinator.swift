@@ -474,6 +474,11 @@ class AppCoordinator: ObservableObject {
         currentSettings = current
         // Persist settings so they survive page refresh
         persistSettings(current)
+
+        // Handle torch level separately via tally poller
+        if let torchLevel = settings.torchLevel {
+            _ = await tallyPoller?.setTorchLevel(torchLevel)
+        }
     }
 
     // MARK: - Capabilities

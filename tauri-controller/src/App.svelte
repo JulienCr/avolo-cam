@@ -158,6 +158,47 @@
     }
   }
 
+  // Start/Stop All Actions
+  async function handleStartAllCameras() {
+    if ($cameras.length === 0) {
+      alert('No cameras available');
+      return;
+    }
+
+    try {
+      const results = await api.startAllCameras();
+
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        alert(`Failed to start ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+      }
+
+      await refreshCameras();
+    } catch (e) {
+      alert(`Start all cameras failed: ${e}`);
+    }
+  }
+
+  async function handleStopAllCameras() {
+    if ($cameras.length === 0) {
+      alert('No cameras available');
+      return;
+    }
+
+    try {
+      const results = await api.stopAllCameras();
+
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        alert(`Failed to stop ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+      }
+
+      await refreshCameras();
+    } catch (e) {
+      alert(`Stop all cameras failed: ${e}`);
+    }
+  }
+
   // Camera Settings Dialog
   function handleOpenCameraSettings(cameraId: string) {
     // Load current settings from camera
@@ -175,6 +216,8 @@
         zoom_factor: current.zoom_factor || 2.0,
         lens: current.lens || 'wide',
         camera_position: current.camera_position || 'back',
+        torch_mode: 'auto',  // Default to auto
+        torch_level: current.torch_level || 0.03,  // Default torch level
       };
     } else {
       $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
@@ -216,6 +259,9 @@
       if ($currentCameraSettings.shutter_mode === 'manual') {
         settings.shutter_s = $currentCameraSettings.shutter_s;
       }
+      if ($currentCameraSettings.torch_mode === 'manual') {
+        settings.torch_level = $currentCameraSettings.torch_level;
+      }
 
       await api.updateCameraSettings($settingsCameraId, settings);
       await refreshCameras();
@@ -240,6 +286,8 @@
       $currentCameraSettings.zoom_factor,
       $currentCameraSettings.lens,
       $currentCameraSettings.camera_position,
+      $currentCameraSettings.torch_mode,
+      $currentCameraSettings.torch_level,
     ];
     debouncedUpdateSettings();
   }
@@ -324,6 +372,8 @@
     onRefresh={refreshCameras}
     onDiscover={discoverCamerasAction}
     onSettings={() => ($showAppSettingsDialog = true)}
+    onStartAll={handleStartAllCameras}
+    onStopAll={handleStopAllCameras}
     discovering={$discovering}
   />
 

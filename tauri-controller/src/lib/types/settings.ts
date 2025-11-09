@@ -2,6 +2,7 @@ import type {
   WhiteBalanceMode,
   IsoMode,
   ShutterMode,
+  TorchMode,
   LensType,
   CameraPosition
 } from './camera';
@@ -26,6 +27,8 @@ export interface CameraSettings {
   zoom_factor: number;
   lens: LensType;
   camera_position: CameraPosition;
+  torch_mode: TorchMode;
+  torch_level: number;  // NDI tally torch brightness (0.01-1.0)
 }
 
 // White Balance Measurement Result
@@ -53,4 +56,6 @@ export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
   zoom_factor: 2.0,
   lens: 'wide',
   camera_position: 'back',
+  torch_mode: 'auto',
+  torch_level: 0.03,  // Default torch brightness
 };

@@ -900,10 +900,6 @@ class NetworkServer {
                     </div>
                     <button id="btn-reset-torch" class="btn-secondary">🔄 Reset to Default</button>
                     <div id="torch-feedback" style="margin-top: 12px; font-size: 12px; display: none;"></div>
-                    <div class="info-text" style="margin-top: 12px;">
-                        Torch turns ON at this level when camera is on program (NDI tally).
-                        Lower values reduce glare and heat.
-                    </div>
                 </div>
 
                 <div class="info-text">

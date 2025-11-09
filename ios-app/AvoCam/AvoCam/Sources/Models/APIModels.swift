@@ -155,6 +155,7 @@ struct CameraSettingsRequest: Codable {
     let cameraPosition: String?
     let lens: String?
     let orientationLock: String?
+    let torchLevel: Float?
 
     enum CodingKeys: String, CodingKey {
         case wbMode = "wb_mode"
@@ -169,6 +170,7 @@ struct CameraSettingsRequest: Codable {
         case cameraPosition = "camera_position"
         case lens
         case orientationLock = "orientation_lock"
+        case torchLevel = "torch_level"
     }
 }
 

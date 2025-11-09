@@ -22,16 +22,52 @@ struct PersistedCamera {
     ip: String,
     port: u16,
     token: String,
+    // Persisted stream settings (optional for backward compatibility)
+    stream_settings: Option<StreamStartRequest>,
+    // Persisted camera settings (optional for backward compatibility)
+    camera_settings: Option<CameraSettingsRequest>,
 }
 
 impl PersistedCamera {
     fn from_camera_info(info: &CameraInfo) -> Self {
+        // Extract current settings from status if available
+        let (stream_settings, camera_settings) = if let Some(ref status) = info.status {
+            let stream = StreamStartRequest {
+                resolution: status.current.resolution.clone(),
+                framerate: status.current.fps,
+                bitrate: status.current.bitrate,
+                codec: status.current.codec.clone(),
+            };
+
+            let camera = CameraSettingsRequest {
+                wb_mode: Some(status.current.wb_mode),
+                wb_kelvin: status.current.wb_kelvin,
+                wb_tint: status.current.wb_tint,
+                iso_mode: Some(status.current.iso_mode),
+                iso: Some(status.current.iso),
+                shutter_mode: Some(status.current.shutter_mode),
+                shutter_s: Some(status.current.shutter_s),
+                focus_mode: Some(status.current.focus_mode),
+                zoom_factor: Some(status.current.zoom_factor),
+                lens: Some(status.current.lens.clone()),
+                camera_position: Some(status.current.camera_position.clone()),
+                orientation_lock: None,
+                torch_level: None, // Not stored in CurrentSettings
+            };
+
+            (Some(stream), Some(camera))
+        } else {
+            (None, None)
+        };
+
         Self {
             id: info.id.clone(),
             alias: info.alias.clone(),
             ip: info.ip.clone(),
             port: info.port,
             token: info.token.clone(),
+            stream_settings,
+            camera_settings,
         }
     }
 }
@@ -53,6 +89,8 @@ pub struct CameraManager {
     persistence_file_path: Option<PathBuf>,
     profiles_file_path: Option<PathBuf>,
     settings_file_path: Option<PathBuf>,
+    // Store persisted settings for each camera (keyed by camera_id)
+    persisted_settings: HashMap<String, (Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
 }
 
 struct Camera {
@@ -69,6 +107,7 @@ impl CameraManager {
             persistence_file_path: None,
             profiles_file_path: None,
             settings_file_path: None,
+            persisted_settings: HashMap::new(),
         }
     }
 
@@ -132,10 +171,20 @@ impl CameraManager {
         log::info!("Loading {} cameras from {:?}", persistence.cameras.len(), path);
 
         for persisted in persistence.cameras {
+            let camera_id = persisted.id.clone();
+            let stream_settings = persisted.stream_settings.clone();
+            let camera_settings = persisted.camera_settings.clone();
+
             // Try to add camera, but don't fail if one camera fails
             match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
                 Ok(id) => {
                     log::info!("Loaded camera: {} ({})", persisted.alias, id);
+
+                    // Store persisted settings for this camera
+                    if stream_settings.is_some() || camera_settings.is_some() {
+                        self.persisted_settings.insert(camera_id, (stream_settings, camera_settings));
+                        log::info!("Stored persisted settings for camera: {}", id);
+                    }
                 }
                 Err(e) => {
                     log::warn!("Failed to load camera {}: {}", persisted.alias, e);
@@ -215,7 +264,7 @@ impl CameraManager {
     }
 
     /// Apply a profile to selected cameras
-    pub async fn apply_profile(&self, profile_name: &str, camera_ids: &[String]) -> Result<Vec<GroupCommandResult>> {
+    pub async fn apply_profile(&mut self, profile_name: &str, camera_ids: &[String]) -> Result<Vec<GroupCommandResult>> {
         // Load profile
         let profiles = self.load_profiles_from_disk().await?;
         let profile = profiles.iter()
@@ -447,11 +496,24 @@ impl CameraManager {
         camera.client.read().await.get_status().await
     }
 
-    pub async fn start_stream(&self, camera_id: &str, request: StreamStartRequest) -> Result<()> {
+    pub async fn start_stream(&mut self, camera_id: &str, request: StreamStartRequest) -> Result<()> {
         let camera = self.cameras.get(camera_id)
             .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
 
-        camera.client.read().await.start_stream(request).await
+        // Store settings in persisted_settings before starting stream
+        self.persisted_settings
+            .entry(camera_id.to_string())
+            .and_modify(|(stream, _)| *stream = Some(request.clone()))
+            .or_insert((Some(request.clone()), None));
+
+        camera.client.read().await.start_stream(request).await?;
+
+        // Save to disk after successful start
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk after starting stream: {}", e);
+        }
+
+        Ok(())
     }
 
     pub async fn stop_stream(&self, camera_id: &str) -> Result<()> {
@@ -461,11 +523,24 @@ impl CameraManager {
         camera.client.read().await.stop_stream().await
     }
 
-    pub async fn update_camera_settings(&self, camera_id: &str, settings: CameraSettingsRequest) -> Result<()> {
+    pub async fn update_camera_settings(&mut self, camera_id: &str, settings: CameraSettingsRequest) -> Result<()> {
         let camera = self.cameras.get(camera_id)
             .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
 
-        camera.client.read().await.update_camera_settings(settings).await
+        // Store settings in persisted_settings before updating camera
+        self.persisted_settings
+            .entry(camera_id.to_string())
+            .and_modify(|(_, camera)| *camera = Some(settings.clone()))
+            .or_insert((None, Some(settings.clone())));
+
+        camera.client.read().await.update_camera_settings(settings).await?;
+
+        // Save to disk after successful update
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk after updating settings: {}", e);
+        }
+
+        Ok(())
     }
 
     pub async fn get_capabilities(&self, camera_id: &str) -> Result<Vec<Capability>> {
@@ -485,16 +560,31 @@ impl CameraManager {
     // MARK: - Group Operations (Parallel with Bounded Concurrency)
 
     pub async fn group_start_stream(
-        &self,
+        &mut self,
         camera_ids: &[String],
         request: StreamStartRequest,
     ) -> Result<Vec<GroupCommandResult>> {
-        self.execute_group_operation(camera_ids, move |client| {
+        // Store settings for each camera before starting streams
+        for camera_id in camera_ids {
+            self.persisted_settings
+                .entry(camera_id.to_string())
+                .and_modify(|(stream, _)| *stream = Some(request.clone()))
+                .or_insert((Some(request.clone()), None));
+        }
+
+        let result = self.execute_group_operation(camera_ids, move |client| {
             let req = request.clone();
             async move {
                 client.read().await.start_stream(req).await
             }
-        }).await
+        }).await;
+
+        // Save to disk after successful group start
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk after group start: {}", e);
+        }
+
+        result
     }
 
     pub async fn group_stop_stream(
@@ -509,16 +599,31 @@ impl CameraManager {
     }
 
     pub async fn group_update_settings(
-        &self,
+        &mut self,
         camera_ids: &[String],
         settings: CameraSettingsRequest,
     ) -> Result<Vec<GroupCommandResult>> {
-        self.execute_group_operation(camera_ids, move |client| {
+        // Store settings for each camera before updating
+        for camera_id in camera_ids {
+            self.persisted_settings
+                .entry(camera_id.to_string())
+                .and_modify(|(_, camera)| *camera = Some(settings.clone()))
+                .or_insert((None, Some(settings.clone())));
+        }
+
+        let result = self.execute_group_operation(camera_ids, move |client| {
             let settings = settings.clone();
             async move {
                 client.read().await.update_camera_settings(settings).await
             }
-        }).await
+        }).await;
+
+        // Save to disk after successful group update
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk after group update: {}", e);
+        }
+
+        result
     }
 
     // Generic group operation executor with bounded concurrency
@@ -586,6 +691,88 @@ impl CameraManager {
         }
 
         Ok(results)
+    }
+
+    // MARK: - Persisted Settings
+
+    /// Get persisted settings for a camera
+    pub fn get_persisted_settings(&self, camera_id: &str) -> Option<(Option<StreamStartRequest>, Option<CameraSettingsRequest>)> {
+        self.persisted_settings.get(camera_id).cloned()
+    }
+
+    // MARK: - Start/Stop All Operations
+
+    /// Start all cameras with their persisted settings (or default settings if not available)
+    pub async fn start_all_cameras(&self) -> Result<Vec<GroupCommandResult>> {
+        let camera_ids: Vec<String> = self.cameras.keys().cloned().collect();
+
+        if camera_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tasks = Vec::new();
+
+        for camera_id in camera_ids {
+            let camera = match self.cameras.get(&camera_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // Get persisted stream settings or use defaults
+            let stream_settings = self.persisted_settings
+                .get(&camera_id)
+                .and_then(|(stream, _)| stream.clone())
+                .unwrap_or_else(|| StreamStartRequest {
+                    resolution: "1920x1080".to_string(),
+                    framerate: 30,
+                    bitrate: 10_000_000,
+                    codec: "h264".to_string(),
+                });
+
+            let client = camera.client.clone();
+            let camera_id_clone = camera_id.clone();
+            let semaphore = self.operation_semaphore.clone();
+
+            // Spawn task with semaphore for bounded concurrency
+            tasks.push(tokio::spawn(async move {
+                // Acquire semaphore permit
+                let _permit = semaphore.acquire().await.unwrap();
+
+                // Execute start stream
+                let result = client.read().await.start_stream(stream_settings).await;
+
+                // Return result
+                GroupCommandResult {
+                    camera_id: camera_id_clone.clone(),
+                    success: result.is_ok(),
+                    error: result.err().map(|e| e.to_string()),
+                }
+            }));
+        }
+
+        // Wait for all tasks to complete
+        let mut results = Vec::new();
+        for task in tasks {
+            match task.await {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    log::error!("Start all cameras task failed: {}", e);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Stop all cameras
+    pub async fn stop_all_cameras(&self) -> Result<Vec<GroupCommandResult>> {
+        let camera_ids: Vec<String> = self.cameras.keys().cloned().collect();
+
+        if camera_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.group_stop_stream(&camera_ids).await
     }
 }
 

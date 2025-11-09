@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { LensType } from '$lib/types/camera';
+  import type { LensType } from "$lib/types/camera";
 
   export let selected: LensType;
   export let disabled = false;
@@ -11,22 +11,26 @@
   }
 
   const options: LensOption[] = [
-    { value: 'ultra_wide', label: 'Ultra Wide', sublabel: '0.5×' },
-    { value: 'wide', label: 'Wide', sublabel: '1×' },
-    { value: 'telephoto', label: 'Telephoto', sublabel: '5×' },
+    { value: "ultra_wide", label: "Ultra Wide", sublabel: "0.5×" },
+    { value: "wide", label: "Wide", sublabel: "1×" },
+    { value: "telephoto", label: "Telephoto", sublabel: "5×" },
   ];
 
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher } from "svelte";
   const dispatch = createEventDispatcher();
 
   function handleSelect(value: LensType) {
     if (!disabled) {
-      dispatch('change', value);
+      dispatch("change", value);
     }
   }
 </script>
 
-<div class="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Lens selection">
+<div
+  class="grid grid-cols-3 gap-1.5"
+  role="radiogroup"
+  aria-label="Lens selection"
+>
   {#each options as option (option.value)}
     <button
       type="button"
@@ -40,21 +44,17 @@
       on:click={() => handleSelect(option.value)}
     >
       <span
-        class="text-base transition-colors {selected === option.value
-          ? 'text-primary-600'
-          : 'text-gray-400'}"
-      >
-        ◯
-      </span>
-      <span
-        class="text-[10px] font-medium leading-tight text-center {selected === option.value
+        class="text-[10px] font-medium leading-tight text-center {selected ===
+        option.value
           ? 'text-primary-700'
           : 'text-gray-700'}"
       >
         {option.label}
         <br />
-        <span class="text-[10px] {selected === option.value ? 'text-primary-600' : 'text-gray-500'}"
-          >{option.sublabel}</span
+        <span
+          class="text-[10px] {selected === option.value
+            ? 'text-primary-600'
+            : 'text-gray-500'}">{option.sublabel}</span
         >
       </span>
     </button>

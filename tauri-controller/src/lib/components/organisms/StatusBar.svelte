@@ -9,6 +9,8 @@
   export let onRefresh: () => void;
   export let onDiscover: () => void;
   export let onSettings: () => void;
+  export let onStartAll: () => void;
+  export let onStopAll: () => void;
   export let discovering = false;
 
   // Calculate total bandwidth from all cameras
@@ -50,6 +52,23 @@
   </div>
 
   <div class="flex gap-2">
+    <Button
+      variant="primary"
+      size="md"
+      on:click={onStartAll}
+      disabled={cameras.length === 0}
+    >
+      ▶️ Start All
+    </Button>
+    <Button
+      variant="danger"
+      size="md"
+      on:click={onStopAll}
+      disabled={cameras.length === 0}
+    >
+      ⏹️ Stop All
+    </Button>
+    <div class="mx-1 w-px bg-gray-300 dark:bg-gray-600"></div>
     <Button
       variant="secondary"
       size="md"
