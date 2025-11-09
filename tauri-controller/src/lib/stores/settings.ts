@@ -40,15 +40,23 @@ export function saveStreamSettingsFromEditing(cameraId: string): void {
 
 export function updateStreamSettings(
   cameraId: string,
-  settings: Partial<StreamSettings>
+  settings: Partial<StreamSettings>,
+  onlyIfNotExists = false
 ): void {
-  cameraStreamSettings.update((all) => ({
-    ...all,
-    [cameraId]: {
-      ...(all[cameraId] || DEFAULT_STREAM_SETTINGS),
-      ...settings,
-    },
-  }));
+  cameraStreamSettings.update((all) => {
+    // If onlyIfNotExists is true and settings already exist, don't update
+    if (onlyIfNotExists && all[cameraId]) {
+      return all;
+    }
+
+    return {
+      ...all,
+      [cameraId]: {
+        ...(all[cameraId] || DEFAULT_STREAM_SETTINGS),
+        ...settings,
+      },
+    };
+  });
 }
 
 export function updateStreamSetting(
