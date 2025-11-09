@@ -1,14 +1,14 @@
 <script lang="ts">
-  import SectionHeader from '../molecules/SectionHeader.svelte';
-  import SliderField from '../molecules/SliderField.svelte';
-  import FormRow from '../molecules/FormRow.svelte';
-  import Toggle from '../atoms/Toggle.svelte';
-  import PresetRadio from '../molecules/PresetRadio.svelte';
-  import Button from '../atoms/Button.svelte';
-  import { formatShutterSpeed } from '$lib/utils/format';
-  import type { CameraSettings } from '$lib/types/settings';
-  import type { LensType } from '$lib/types/camera';
-  import { getLensFromZoom, getZoomFromLens } from '$lib/stores/settings';
+  import SectionHeader from "../molecules/SectionHeader.svelte";
+  import SliderField from "../molecules/SliderField.svelte";
+  import FormRow from "../molecules/FormRow.svelte";
+  import Toggle from "../atoms/Toggle.svelte";
+  import PresetRadio from "../molecules/PresetRadio.svelte";
+  import Button from "../atoms/Button.svelte";
+  import { formatShutterSpeed } from "$lib/utils/format";
+  import type { CameraSettings } from "$lib/types/settings";
+  import type { LensType } from "$lib/types/camera";
+  import { getLensFromZoom, getZoomFromLens } from "$lib/stores/settings";
 
   export let settings: CameraSettings;
   export let onMeasureWB: () => Promise<void>;
@@ -16,7 +16,7 @@
 
   // Derived states
   $: selectedLens = getLensFromZoom(settings.zoom_factor);
-  $: isBackCamera = settings.camera_position === 'back';
+  $: isBackCamera = settings.camera_position === "back";
 
   function handleLensChange(lens: LensType) {
     settings.lens = lens;
@@ -25,12 +25,12 @@
 
   function handleCameraToggle(event: CustomEvent<boolean>) {
     const isFront = event.detail;
-    settings.camera_position = isFront ? 'front' : 'back';
+    settings.camera_position = isFront ? "front" : "back";
   }
 
   function handleWBModeToggle(event: CustomEvent<boolean>) {
     const isManual = event.detail;
-    settings.wb_mode = isManual ? 'manual' : 'auto';
+    settings.wb_mode = isManual ? "manual" : "auto";
   }
 </script>
 
@@ -43,14 +43,16 @@
         <div class="flex items-center gap-2">
           <span class="text-xs text-gray-600">Auto</span>
           <Toggle
-            checked={settings.wb_mode === 'manual'}
+            checked={settings.wb_mode === "manual"}
             label="Toggle white balance mode"
             on:change={handleWBModeToggle}
           />
           <span class="text-xs text-gray-600">Manual</span>
         </div>
       </div>
-      <div class="mt-1.5 h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
+      <div
+        class="mt-1.5 h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent"
+      />
     </div>
 
     <div class="flex flex-col gap-3">
@@ -82,9 +84,14 @@
         trackGradient="linear-gradient(to right, var(--t-green) 0%, var(--t-green-soft) 35%, var(--t-neutral) 50%, var(--t-magenta-soft) 65%, var(--t-magenta) 100%)"
       />
 
-      {#if settings.wb_mode === 'manual'}
-        <Button variant="primary" on:click={onMeasureWB} disabled={measuring} size="sm">
-          {measuring ? '⏳ Measuring...' : '📸 Auto Calibrate'}
+      {#if settings.wb_mode === "manual"}
+        <Button
+          variant="primary"
+          on:click={onMeasureWB}
+          disabled={measuring}
+          size="sm"
+        >
+          {measuring ? "⏳ Measuring..." : "📸 Auto Calibrate"}
         </Button>
       {/if}
     </div>
@@ -126,7 +133,9 @@
 
     <!-- Camera Position Toggle -->
     <div class="flex items-center justify-between mb-3">
-      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Camera Position</span>
+      <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
+        >Camera Position</span
+      >
       <div class="flex items-center gap-2">
         <span class="text-sm text-gray-600 dark:text-gray-400">Back</span>
         <Toggle
@@ -156,17 +165,14 @@
       <SliderField
         label="Torch Brightness"
         bind:value={settings.torch_level}
+        bind:autoMode={settings.torch_mode}
         min={0.01}
         max={1.0}
         step={0.01}
         unit=""
         minLabel="Dim"
         maxLabel="Bright"
-        showToggle={false}
       />
-      <p class="text-xs text-gray-500 dark:text-gray-400">
-        Torch turns ON at this level when camera is on program (NDI tally). Lower values reduce glare and heat.
-      </p>
     </div>
   </div>
 </div>

@@ -216,6 +216,7 @@
         zoom_factor: current.zoom_factor || 2.0,
         lens: current.lens || 'wide',
         camera_position: current.camera_position || 'back',
+        torch_mode: 'auto',  // Default to auto
         torch_level: current.torch_level || 0.03,  // Default torch level
       };
     } else {
@@ -246,7 +247,6 @@
         zoom_factor: $currentCameraSettings.zoom_factor,
         lens: $currentCameraSettings.lens,
         camera_position: $currentCameraSettings.camera_position,
-        torch_level: $currentCameraSettings.torch_level,
       };
 
       if ($currentCameraSettings.wb_mode === 'manual') {
@@ -258,6 +258,9 @@
       }
       if ($currentCameraSettings.shutter_mode === 'manual') {
         settings.shutter_s = $currentCameraSettings.shutter_s;
+      }
+      if ($currentCameraSettings.torch_mode === 'manual') {
+        settings.torch_level = $currentCameraSettings.torch_level;
       }
 
       await api.updateCameraSettings($settingsCameraId, settings);
@@ -283,6 +286,7 @@
       $currentCameraSettings.zoom_factor,
       $currentCameraSettings.lens,
       $currentCameraSettings.camera_position,
+      $currentCameraSettings.torch_mode,
       $currentCameraSettings.torch_level,
     ];
     debouncedUpdateSettings();

@@ -14,6 +14,7 @@ export type NdiState = 'streaming' | 'idle' | 'unknown';
 export type WhiteBalanceMode = 'auto' | 'manual';
 export type IsoMode = 'auto' | 'manual';
 export type ShutterMode = 'auto' | 'manual';
+export type TorchMode = 'auto' | 'manual';
 export type CameraPosition = 'front' | 'back';
 export type LensType = 'ultra_wide' | 'wide' | 'telephoto';
 
