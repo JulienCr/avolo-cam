@@ -216,6 +216,7 @@
         zoom_factor: current.zoom_factor || 2.0,
         lens: current.lens || 'wide',
         camera_position: current.camera_position || 'back',
+        torch_level: current.torch_level || 0.03,  // Default torch level
       };
     } else {
       $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
@@ -245,6 +246,7 @@
         zoom_factor: $currentCameraSettings.zoom_factor,
         lens: $currentCameraSettings.lens,
         camera_position: $currentCameraSettings.camera_position,
+        torch_level: $currentCameraSettings.torch_level,
       };
 
       if ($currentCameraSettings.wb_mode === 'manual') {
@@ -281,6 +283,7 @@
       $currentCameraSettings.zoom_factor,
       $currentCameraSettings.lens,
       $currentCameraSettings.camera_position,
+      $currentCameraSettings.torch_level,
     ];
     debouncedUpdateSettings();
   }

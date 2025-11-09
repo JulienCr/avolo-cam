@@ -54,4 +54,5 @@ export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
   zoom_factor: 2.0,
   lens: 'wide',
   camera_position: 'back',
+  torch_level: 0.03,  // Default torch brightness
 };
