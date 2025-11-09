@@ -46,6 +46,19 @@ export async function updateCameraSettings(
   return invoke('update_camera_settings', { cameraId, settings });
 }
 
+export async function updateStreamSettings(
+  cameraId: string,
+  settings: StreamSettings
+): Promise<void> {
+  return invoke('update_stream_settings', {
+    cameraId,
+    resolution: settings.resolution,
+    framerate: settings.framerate,
+    bitrate: settings.bitrate,
+    codec: settings.codec,
+  });
+}
+
 export async function measureWhiteBalance(cameraId: string): Promise<WhiteBalanceResult> {
   return invoke('measure_white_balance', { cameraId });
 }

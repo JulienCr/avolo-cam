@@ -235,10 +235,22 @@
     openStreamSettingsDialog(cameraId);
   }
 
-  function handleApplyStreamSettings() {
+  async function handleApplyStreamSettings() {
     if (!$streamSettingsCameraId) return;
-    // Save the edited settings back to the per-camera settings
-    saveStreamSettingsFromEditing($streamSettingsCameraId);
+
+    try {
+      // Save the edited settings back to the per-camera settings store
+      saveStreamSettingsFromEditing($streamSettingsCameraId);
+
+      // Persist to backend (cameras.json and potentially device)
+      const settings = $currentStreamSettings;
+      await api.updateStreamSettings($streamSettingsCameraId, settings);
+
+      console.log('Stream settings saved successfully');
+    } catch (e) {
+      console.error('Failed to save stream settings:', e);
+      alert(`Failed to save stream settings: ${e}`);
+    }
   }
 
   // Debounced settings update

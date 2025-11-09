@@ -112,6 +112,26 @@ async fn update_camera_settings(
 }
 
 #[tauri::command]
+async fn update_stream_settings(
+    state: State<'_, AppState>,
+    camera_id: String,
+    resolution: String,
+    framerate: u32,
+    bitrate: u32,
+    codec: String,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    let request = StreamStartRequest {
+        resolution,
+        framerate,
+        bitrate,
+        codec,
+    };
+    manager.update_stream_settings(&camera_id, request).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_capabilities(
     state: State<'_, AppState>,
     camera_id: String,
@@ -387,6 +407,7 @@ fn main() {
             start_stream,
             stop_stream,
             update_camera_settings,
+            update_stream_settings,
             measure_white_balance,
             group_start_stream,
             group_stop_stream,

@@ -24,7 +24,7 @@ export async function refreshCameras(): Promise<void> {
     const data = await api.getCameras();
     cameras.set(data);
 
-    // Update stream settings store with current camera settings
+    // Initialize stream settings from camera's current config (only if not already set by user)
     for (const camera of data) {
       if (camera.status?.current) {
         updateStreamSettings(camera.id, {
@@ -32,7 +32,7 @@ export async function refreshCameras(): Promise<void> {
           framerate: camera.status.current.fps,
           bitrate: camera.status.current.bitrate,
           codec: camera.status.current.codec,
-        });
+        }, true); // onlyIfNotExists = true
       }
     }
 

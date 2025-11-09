@@ -543,6 +543,28 @@ impl CameraManager {
         Ok(())
     }
 
+    /// Update stream settings for a camera (persists to disk but doesn't start stream)
+    pub async fn update_stream_settings(&mut self, camera_id: &str, settings: StreamStartRequest) -> Result<()> {
+        // Verify camera exists
+        if !self.cameras.contains_key(camera_id) {
+            anyhow::bail!("Camera not found: {}", camera_id);
+        }
+
+        // Store settings in persisted_settings
+        self.persisted_settings
+            .entry(camera_id.to_string())
+            .and_modify(|(stream, _)| *stream = Some(settings.clone()))
+            .or_insert((Some(settings.clone()), None));
+
+        // Save to disk
+        if let Err(e) = self.save_cameras_to_disk().await {
+            log::warn!("Failed to save cameras to disk after updating stream settings: {}", e);
+        }
+
+        log::info!("Updated stream settings for camera: {}", camera_id);
+        Ok(())
+    }
+
     pub async fn get_capabilities(&self, camera_id: &str) -> Result<Vec<Capability>> {
         let camera = self.cameras.get(camera_id)
             .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
