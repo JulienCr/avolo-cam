@@ -116,6 +116,7 @@ pub struct CameraSettingsRequest {
     pub lens: Option<String>,
     pub camera_position: Option<String>,
     pub orientation_lock: Option<String>,
+    pub torch_level: Option<f32>,  // NDI tally torch brightness (0.01-1.0)
 }
 
 // MARK: - Profiles

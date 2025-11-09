@@ -148,4 +148,25 @@
       </FormRow>
     {/if}
   </div>
+
+  <!-- NDI Tally Torch -->
+  <div>
+    <SectionHeader title="NDI Tally Torch" />
+    <div class="flex flex-col gap-3">
+      <SliderField
+        label="Torch Brightness"
+        bind:value={settings.torch_level}
+        min={0.01}
+        max={1.0}
+        step={0.01}
+        unit=""
+        minLabel="Dim"
+        maxLabel="Bright"
+        showToggle={false}
+      />
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        Torch turns ON at this level when camera is on program (NDI tally). Lower values reduce glare and heat.
+      </p>
+    </div>
+  </div>
 </div>

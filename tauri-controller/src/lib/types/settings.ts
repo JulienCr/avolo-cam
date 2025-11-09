@@ -26,6 +26,7 @@ export interface CameraSettings {
   zoom_factor: number;
   lens: LensType;
   camera_position: CameraPosition;
+  torch_level?: number;  // NDI tally torch brightness (0.01-1.0)
 }
 
 // White Balance Measurement Result
