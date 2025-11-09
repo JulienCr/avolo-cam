@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Camera, DiscoveredCamera } from '../types/camera';
 import * as api from '../utils/api';
+import { updateStreamSettings } from './settings';
 
 // Camera state
 export const cameras = writable<Camera[]>([]);
@@ -22,6 +23,19 @@ export async function refreshCameras(): Promise<void> {
   try {
     const data = await api.getCameras();
     cameras.set(data);
+
+    // Update stream settings store with current camera settings
+    for (const camera of data) {
+      if (camera.status?.current) {
+        updateStreamSettings(camera.id, {
+          resolution: camera.status.current.resolution,
+          framerate: camera.status.current.fps,
+          bitrate: camera.status.current.bitrate,
+          codec: camera.status.current.codec,
+        });
+      }
+    }
+
     error.set(null);
   } catch (e) {
     error.set(String(e));

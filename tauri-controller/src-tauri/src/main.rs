@@ -79,7 +79,7 @@ async fn start_stream(
     bitrate: u32,
     codec: String,
 ) -> Result<(), String> {
-    let manager = state.camera_manager.read().await;
+    let mut manager = state.camera_manager.write().await;
     let request = StreamStartRequest {
         resolution,
         framerate,
@@ -106,7 +106,7 @@ async fn update_camera_settings(
     camera_id: String,
     settings: CameraSettingsRequest,
 ) -> Result<(), String> {
-    let manager = state.camera_manager.read().await;
+    let mut manager = state.camera_manager.write().await;
     manager.update_camera_settings(&camera_id, settings).await
         .map_err(|e| e.to_string())
 }
@@ -142,7 +142,7 @@ async fn group_start_stream(
     bitrate: u32,
     codec: String,
 ) -> Result<Vec<GroupCommandResult>, String> {
-    let manager = state.camera_manager.read().await;
+    let mut manager = state.camera_manager.write().await;
     let request = StreamStartRequest {
         resolution,
         framerate,
@@ -169,7 +169,7 @@ async fn group_update_settings(
     camera_ids: Vec<String>,
     settings: CameraSettingsRequest,
 ) -> Result<Vec<GroupCommandResult>, String> {
-    let manager = state.camera_manager.read().await;
+    let mut manager = state.camera_manager.write().await;
     manager.group_update_settings(&camera_ids, settings).await
         .map_err(|e| e.to_string())
 }
@@ -241,7 +241,7 @@ async fn apply_profile(
     profile_name: String,
     camera_ids: Vec<String>,
 ) -> Result<Vec<GroupCommandResult>, String> {
-    let manager = state.camera_manager.read().await;
+    let mut manager = state.camera_manager.write().await;
     manager.apply_profile(&profile_name, &camera_ids).await
         .map_err(|e| e.to_string())
 }
