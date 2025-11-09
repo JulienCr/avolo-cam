@@ -46,11 +46,13 @@
 
   import {
     cameraStreamSettings,
+    currentStreamSettings,
     currentCameraSettings,
     savingSettings,
     measuringWB,
     getStreamSettings,
-    updateStreamSettings,
+    loadStreamSettingsForEditing,
+    saveStreamSettingsFromEditing,
   } from '$lib/stores/settings';
 
   import {
@@ -228,9 +230,15 @@
 
   // Stream Settings Dialog
   function handleOpenStreamSettings(cameraId: string) {
-    // Ensure stream settings exist
-    getStreamSettings(cameraId);
+    // Load current stream settings into editing store
+    loadStreamSettingsForEditing(cameraId);
     openStreamSettingsDialog(cameraId);
+  }
+
+  function handleApplyStreamSettings() {
+    if (!$streamSettingsCameraId) return;
+    // Save the edited settings back to the per-camera settings
+    saveStreamSettingsFromEditing($streamSettingsCameraId);
   }
 
   // Debounced settings update
@@ -452,8 +460,8 @@
 {#if $streamSettingsCameraId}
   <StreamSettingsDialog
     open={showStreamSettingsDialog}
-    cameraId={$streamSettingsCameraId}
-    bind:settings={$cameraStreamSettings[$streamSettingsCameraId]}
+    bind:settings={$currentStreamSettings}
+    onApply={handleApplyStreamSettings}
   />
 {/if}
 

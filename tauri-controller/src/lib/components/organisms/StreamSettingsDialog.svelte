@@ -7,8 +7,8 @@
   import type { Writable } from 'svelte/store';
 
   export let open: Writable<boolean>;
-  export let cameraId: string | null;
   export let settings: StreamSettings;
+  export let onApply: (() => void) | undefined = undefined;
 
   const resolutionOptions = [
     { value: '1280x720', label: '1280×720 (720p)' },
@@ -80,7 +80,10 @@
       <Button variant="secondary" size="md" on:click={() => open.set(false)}>
         Close
       </Button>
-      <Button variant="primary" size="md" on:click={() => open.set(false)}>
+      <Button variant="primary" size="md" on:click={() => {
+        if (onApply) onApply();
+        open.set(false);
+      }}>
         Apply
       </Button>
     </div>
