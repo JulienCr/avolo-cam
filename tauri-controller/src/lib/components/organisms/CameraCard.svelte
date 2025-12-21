@@ -9,6 +9,7 @@
     formatTemperature,
     formatBitrate,
   } from "$lib/utils/format";
+  import * as api from "$lib/utils/api";
 
   export let camera: Camera;
   export let selected = false;
@@ -117,6 +118,31 @@
       aliasError = e instanceof Error ? e.message : 'Failed to update alias';
     } finally {
       aliasSaving = false;
+    }
+  }
+
+  // MIDI channel handling
+  let selectedMidiChannel = camera.midi_channel?.toString() || '';
+  let midiChannelSaving = false;
+
+  async function handleMidiChannelChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const value = target.value;
+    
+    midiChannelSaving = true;
+    try {
+      const channel = value === '' ? null : parseInt(value);
+      await api.updateCameraMidiChannel(camera.id, channel);
+      camera.midi_channel = channel === null ? undefined : channel;
+      selectedMidiChannel = value;
+      console.log(`Updated MIDI channel for camera ${camera.id} to ${channel}`);
+    } catch (error) {
+      console.error('Failed to update MIDI channel:', error);
+      alert(`Failed to update MIDI channel: ${error}`);
+      // Revert selection
+      selectedMidiChannel = camera.midi_channel?.toString() || '';
+    } finally {
+      midiChannelSaving = false;
     }
   }
 </script>
@@ -363,6 +389,27 @@
             </svg>
             Stream
           </Button>
+        </div>
+
+        <!-- MIDI Channel Selector -->
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800">
+          <div class="flex items-center justify-between gap-2">
+            <label class="text-xs font-medium text-gray-700 dark:text-gray-300" for="midi-channel-{camera.id}">
+              🎹 MIDI Ch:
+            </label>
+            <select
+              id="midi-channel-{camera.id}"
+              bind:value={selectedMidiChannel}
+              on:change={handleMidiChannelChange}
+              disabled={midiChannelSaving}
+              class="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            >
+              <option value="">None</option>
+              {#each [1, 2, 3, 4, 5, 6, 7, 8] as ch}
+                <option value={ch.toString()}>Channel {ch}</option>
+              {/each}
+            </select>
+          </div>
         </div>
       </div>
     {:else}

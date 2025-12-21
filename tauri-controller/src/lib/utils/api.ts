@@ -118,3 +118,40 @@ export async function applyProfile(
 ): Promise<GroupOperationResult[]> {
   return invoke('apply_profile', { profileName, cameraIds });
 }
+
+// MIDI
+export async function listMidiInputDevices(): Promise<string[]> {
+  return invoke('list_midi_input_devices');
+}
+
+export async function listMidiOutputDevices(): Promise<string[]> {
+  return invoke('list_midi_output_devices');
+}
+
+export async function connectMidiInput(deviceName: string): Promise<void> {
+  return invoke('connect_midi_input', { deviceName });
+}
+
+export async function connectMidiOutput(deviceName: string): Promise<void> {
+  return invoke('connect_midi_output', { deviceName });
+}
+
+export async function disconnectMidiInput(): Promise<void> {
+  return invoke('disconnect_midi_input');
+}
+
+export async function disconnectMidiOutput(): Promise<void> {
+  return invoke('disconnect_midi_output');
+}
+
+export async function updateCameraMidiChannel(
+  cameraId: string,
+  channel: number | null
+): Promise<void> {
+  return invoke('update_camera_midi_channel', { cameraId, channel });
+}
+
+export async function getMidiConnectionStatus(): Promise<[boolean, boolean, string | null, string | null]> {
+  return invoke('get_midi_connection_status');
+}
+

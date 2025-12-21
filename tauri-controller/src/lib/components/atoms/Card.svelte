@@ -2,6 +2,9 @@
   export let padding: 'none' | 'sm' | 'md' | 'lg' = 'md';
   export let interactive = false;
 
+  let className = '';
+  export { className as class };
+
   const paddingClasses = {
     none: '',
     sm: 'p-3',
@@ -9,12 +12,12 @@
     lg: 'p-6',
   };
 
-  const baseClasses = 'bg-white rounded-lg shadow-card border border-gray-100';
+  const baseClasses = 'bg-white dark:bg-gray-900 rounded-lg shadow-card border border-gray-100 dark:border-gray-800';
   const interactiveClasses = interactive
     ? 'transition-shadow duration-200 hover:shadow-card-hover'
     : '';
 
-  $: classes = `${baseClasses} ${paddingClasses[padding]} ${interactiveClasses}`;
+  $: classes = `${baseClasses} ${paddingClasses[padding]} ${interactiveClasses} ${className}`;
 </script>
 
 <div class={classes}>

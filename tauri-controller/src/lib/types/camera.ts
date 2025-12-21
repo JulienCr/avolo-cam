@@ -51,6 +51,7 @@ export interface Camera {
   ip: string;
   port: number;
   status: CameraStatus | null;
+  midi_channel?: number; // MIDI channel 1-8 or undefined
 }
 
 export interface DiscoveredCamera {
@@ -58,4 +59,9 @@ export interface DiscoveredCamera {
   ip: string;
   port: number;
   txt_records?: { [key: string]: string };
+}
+
+export interface MidiDevice {
+  id: string;
+  name: string;
 }
