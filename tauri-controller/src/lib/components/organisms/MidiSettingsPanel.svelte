@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import Card from '../atoms/Card.svelte';
   import Button from '../atoms/Button.svelte';
+  import NoteSelector from '../molecules/NoteSelector.svelte';
+  import * as api from '$lib/utils/api';
   import {
     midiInputDevices,
     midiOutputDevices,
@@ -10,22 +12,34 @@
     midiInputConnected,
     midiOutputConnected,
     loadingMidiDevices,
+    midiNoteConfig,
     loadMidiDevices,
     connectMidiInput,
     connectMidiOutput,
     disconnectMidiInput,
     disconnectMidiOutput,
     loadMidiConnectionStatus,
+    loadMidiNotesConfig,
+    updateMidiNoteConfig,
   } from '$lib/stores/midi';
 
   let selectedInputId = '';
   let selectedOutputId = '';
   let inputError = '';
   let outputError = '';
+  let focusToggleNote = 60; // Local copy for the UI
+  let noteConfigError = '';
+  let isLearningFocusToggle = false;
 
   onMount(async () => {
     // Load connection status first
     await loadMidiConnectionStatus();
+    
+    // Load MIDI notes configuration
+    await loadMidiNotesConfig();
+    
+    // Set local note value from store
+    focusToggleNote = $midiNoteConfig.focusToggleNote;
     
     // Load available devices
     try {
@@ -101,6 +115,45 @@
       await loadMidiDevices();
     } catch (error) {
       console.error('Failed to refresh MIDI devices:', error);
+    }
+  }
+
+  async function handleNoteChange(event: CustomEvent<number>) {
+    const newNote = event.detail;
+    try {
+      noteConfigError = '';
+      await updateMidiNoteConfig({ focusToggleNote: newNote });
+      focusToggleNote = newNote;
+      console.log('Focus toggle note updated to:', newNote);
+    } catch (error) {
+      noteConfigError = String(error);
+      console.error('Failed to update note config:', error);
+    }
+  }
+
+  async function handleStartLearnFocusToggle() {
+    if (!$midiInputConnected) {
+      noteConfigError = 'Please connect a MIDI input device first';
+      return;
+    }
+
+    try {
+      noteConfigError = '';
+      isLearningFocusToggle = true;
+      console.log('Starting MIDI Learn mode for focus toggle...');
+      
+      const learnedNote = await api.startMidiLearnMode();
+      
+      // Update the note configuration
+      await updateMidiNoteConfig({ focusToggleNote: learnedNote });
+      focusToggleNote = learnedNote;
+      
+      console.log('Learned note:', learnedNote);
+    } catch (error) {
+      noteConfigError = String(error);
+      console.error('Learn mode error:', error);
+    } finally {
+      isLearningFocusToggle = false;
     }
   }
 </script>
@@ -218,6 +271,53 @@
       <p class="text-sm text-blue-800 dark:text-blue-300">
         <strong>MIDI Control:</strong> Assign MIDI channels to cameras in their settings. Use Note C3 (60) to toggle manual mode, and pitch bend to control zoom.
       </p>
+    </div>
+
+    <!-- Note Mapping Section -->
+    <div class="space-y-3 border-t border-gray-200 pt-6 dark:border-gray-700">
+      <h3 class="font-medium text-gray-900 dark:text-white">Note Mapping</h3>
+      
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Focus Auto/Manual Toggle
+          </label>
+          <NoteSelector 
+            bind:value={focusToggleNote}
+            on:change={handleNoteChange}
+            on:startLearn={handleStartLearnFocusToggle}
+            learning={isLearningFocusToggle}
+            disabled={false}
+          />
+        </div>
+
+        {#if noteConfigError}
+          <p class="text-sm text-red-600 dark:text-red-400">{noteConfigError}</p>
+        {/if}
+
+        {#if isLearningFocusToggle}
+          <div class="rounded-md bg-blue-50 p-3 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+            <p class="text-sm text-blue-800 dark:text-blue-300 font-medium">
+              🎹 Press any key on your MIDI controller...
+            </p>
+            <p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
+              The next note received will be assigned to Focus Toggle. Timeout in 10 seconds.
+            </p>
+          </div>
+        {:else}
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            Configure which MIDI note triggers the focus mode toggle. Note On = Manual, Note Off = Auto.
+            Click "Learn" to capture from your MIDI controller.
+          </p>
+        {/if}
+      </div>
+
+      <!-- Placeholder for future note mappings -->
+      <div class="rounded-md bg-gray-50 p-3 dark:bg-gray-800/50">
+        <p class="text-xs text-gray-600 dark:text-gray-400">
+          Additional note mappings can be configured here in the future (e.g., record trigger, scene switching, etc.)
+        </p>
+      </div>
     </div>
   </div>
 </Card>
