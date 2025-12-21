@@ -739,6 +739,42 @@ fn main() {
                 midi_dispatcher_loop(midi_rx, camera_manager_clone, midi_manager_clone, learn_mode_tx_clone).await;
             });
 
+            // Restore MIDI connections from saved settings
+            let camera_manager_for_midi_restore = camera_manager.clone();
+            let midi_manager_for_restore = midi_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                // Small delay to ensure app data directory is ready
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                
+                if let Ok(settings) = camera_manager_for_midi_restore.read().await.get_app_settings().await {
+                    if let Some(midi_settings) = settings.midi {
+                        let mut midi_mgr = midi_manager_for_restore.write().await;
+                        
+                        // Restore input device connection
+                        if let Some(input_device) = midi_settings.input_device_name {
+                            log::info!("Restoring MIDI input connection to: {}", input_device);
+                            if let Err(e) = midi_mgr.connect_input(&input_device) {
+                                log::warn!("Failed to restore MIDI input connection: {}", e);
+                            } else {
+                                log::info!("✅ MIDI input restored: {}", input_device);
+                            }
+                        }
+                        
+                        // Restore output device connection
+                        if let Some(output_device) = midi_settings.output_device_name {
+                            log::info!("Restoring MIDI output connection to: {}", output_device);
+                            if let Err(e) = midi_mgr.connect_output(&output_device) {
+                                log::warn!("Failed to restore MIDI output connection: {}", e);
+                            } else {
+                                log::info!("✅ MIDI output restored: {}", output_device);
+                            }
+                        }
+                        
+                        log::info!("✅ MIDI note config: focus_toggle={}", midi_settings.notes.focus_toggle_note);
+                    }
+                }
+            });
+
             // Set app state
             app.manage(AppState {
                 camera_manager,
