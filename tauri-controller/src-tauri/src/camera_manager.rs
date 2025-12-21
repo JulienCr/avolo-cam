@@ -9,6 +9,7 @@ use tokio::sync::{RwLock, Semaphore};
 
 use crate::camera_client::CameraClient;
 use crate::camera_discovery::CameraDiscovery;
+use crate::midi_manager::MidiManager;
 use crate::models::*;
 
 const MAX_CONCURRENT_OPERATIONS: usize = 10;
@@ -26,6 +27,9 @@ struct PersistedCamera {
     stream_settings: Option<StreamStartRequest>,
     // Persisted camera settings (optional for backward compatibility)
     camera_settings: Option<CameraSettingsRequest>,
+    // MIDI channel assignment (optional for backward compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    midi_channel: Option<u8>,
 }
 
 impl PersistedCamera {
@@ -69,6 +73,7 @@ impl PersistedCamera {
             token: info.token.clone(),
             stream_settings,
             camera_settings,
+            midi_channel: info.midi_channel,
         }
     }
 }
@@ -92,6 +97,8 @@ pub struct CameraManager {
     settings_file_path: Option<PathBuf>,
     // Store persisted settings for each camera (keyed by camera_id)
     persisted_settings: HashMap<String, (Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
+    // MIDI manager for feedback
+    pub(crate) midi_manager: Option<Arc<RwLock<MidiManager>>>,
 }
 
 struct Camera {
@@ -109,7 +116,13 @@ impl CameraManager {
             profiles_file_path: None,
             settings_file_path: None,
             persisted_settings: HashMap::new(),
+            midi_manager: None,
         }
+    }
+
+    /// Set MIDI manager for feedback
+    pub fn set_midi_manager(&mut self, midi_manager: Arc<RwLock<MidiManager>>) {
+        self.midi_manager = Some(midi_manager);
     }
 
     /// Set the persistence file path and load any saved cameras
@@ -175,11 +188,20 @@ impl CameraManager {
             let camera_id = persisted.id.clone();
             let stream_settings = persisted.stream_settings.clone();
             let camera_settings = persisted.camera_settings.clone();
+            let midi_channel = persisted.midi_channel;
 
             // Try to add camera, but don't fail if one camera fails
             match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
                 Ok(id) => {
                     log::info!("Loaded camera: {} ({})", persisted.alias, id);
+
+                    // Restore MIDI channel assignment
+                    if let Some(channel) = midi_channel {
+                        if let Some(camera) = self.cameras.get_mut(&id) {
+                            camera.info.midi_channel = Some(channel);
+                            log::info!("Restored MIDI channel {} for camera: {}", channel, id);
+                        }
+                    }
 
                     // Store persisted settings for this camera
                     if stream_settings.is_some() || camera_settings.is_some() {
@@ -392,16 +414,33 @@ impl CameraManager {
         let status = client.get_status().await
             .context("Failed to connect to camera")?;
 
+        // Fetch capabilities and cache them
+        let capabilities = match client.get_capabilities().await {
+            Ok(caps) => {
+                log::info!("Loaded {} capabilities for camera {}", caps.len(), id);
+                Some(caps)
+            }
+            Err(e) => {
+                log::warn!("Failed to load capabilities for camera {}: {}", id, e);
+                None
+            }
+        };
+
         // Connect WebSocket for telemetry
         let client_arc = Arc::new(RwLock::new(client));
-        let id_clone = id.clone();
+        let _midi_manager_clone = self.midi_manager.clone();
 
-        client_arc.write().await.connect_websocket(move |telemetry| {
-            // Update telemetry in camera info
-            // This would require additional synchronization in production
-            //log::debug!("Received telemetry for {}: FPS={:.1}, Bitrate={}", id_clone, telemetry.fps, telemetry.bitrate);
+        client_arc.write().await.connect_websocket(move |_telemetry| {
+            // Telemetry callback - currently unused
+            // MIDI feedback is triggered from the main dispatcher loop
         }).await
             .context("Failed to connect WebSocket")?;
+
+        // Find next available MIDI channel
+        let midi_channel = self.find_next_available_midi_channel();
+        if let Some(channel) = midi_channel {
+            log::info!("Auto-assigned MIDI channel {} to camera {}", channel, id);
+        }
 
         // Create camera info
         let info = CameraInfo {
@@ -412,6 +451,8 @@ impl CameraManager {
             token,
             status: Some(status),
             connection_state: ConnectionState::Connected,
+            midi_channel,
+            capabilities,
         };
 
         // Store camera
@@ -469,7 +510,39 @@ impl CameraManager {
             result.push(info);
         }
 
+        // Send MIDI feedback for cameras in manual focus mode
+        self.send_midi_feedback_for_cameras(&result).await;
+
         result
+    }
+
+    /// Send MIDI feedback for all cameras in manual focus mode
+    async fn send_midi_feedback_for_cameras(&self, cameras: &[CameraInfo]) {
+        let Some(ref midi_manager) = self.midi_manager else {
+            return; // No MIDI manager configured
+        };
+
+        for camera in cameras {
+            // Only send feedback if camera is in manual focus mode
+            if let Some(ref status) = camera.status {
+                if status.current.focus_mode == FocusMode::Manual {
+                    if let Some(channel) = camera.midi_channel {
+                        let zoom_factor = status.current.zoom_factor;
+                        
+                        // Get max_zoom from capabilities
+                        let max_zoom = camera.capabilities
+                            .as_ref()
+                            .and_then(|caps| caps.iter().find_map(|c| c.max_zoom))
+                            .unwrap_or(10.0); // Safe fallback
+
+                        // Send zoom feedback
+                        if let Ok(mut midi_mgr) = midi_manager.try_write() {
+                            let _ = midi_mgr.send_zoom_feedback(channel, zoom_factor, max_zoom);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub async fn update_camera_alias(&mut self, camera_id: &str, alias: String) -> Result<()> {
@@ -719,8 +792,69 @@ impl CameraManager {
     // MARK: - Persisted Settings
 
     /// Get persisted settings for a camera
+    #[allow(dead_code)]
     pub fn get_persisted_settings(&self, camera_id: &str) -> Option<(Option<StreamStartRequest>, Option<CameraSettingsRequest>)> {
         self.persisted_settings.get(camera_id).cloned()
+    }
+
+    // MARK: - MIDI Channel Management
+
+    /// Find the next available MIDI channel (1-8)
+    /// Returns None if all channels are assigned
+    pub fn find_next_available_midi_channel(&self) -> Option<u8> {
+        let assigned_channels: std::collections::HashSet<u8> = self.cameras
+            .values()
+            .filter_map(|camera| camera.info.midi_channel)
+            .collect();
+
+        for channel in 1..=8 {
+            if !assigned_channels.contains(&channel) {
+                return Some(channel);
+            }
+        }
+
+        None // All channels assigned
+    }
+
+    /// Update MIDI channel for a camera
+    /// Returns error if channel is already assigned to another camera
+    pub async fn update_midi_channel(&mut self, camera_id: &str, channel: Option<u8>) -> Result<()> {
+        // Validate channel range
+        if let Some(ch) = channel {
+            if ch < 1 || ch > 8 {
+                anyhow::bail!("MIDI channel must be between 1 and 8, got {}", ch);
+            }
+
+            // Check if channel is already assigned to another camera
+            for (id, camera) in &self.cameras {
+                if id != camera_id && camera.info.midi_channel == Some(ch) {
+                    anyhow::bail!("MIDI channel {} is already assigned to camera {}", ch, id);
+                }
+            }
+        }
+
+        // Update camera
+        if let Some(camera) = self.cameras.get_mut(camera_id) {
+            camera.info.midi_channel = channel;
+            log::info!("Updated MIDI channel for camera {} to {:?}", camera_id, channel);
+
+            // Persist to disk
+            if let Err(e) = self.save_cameras_to_disk().await {
+                log::warn!("Failed to save cameras after MIDI channel update: {}", e);
+            }
+
+            Ok(())
+        } else {
+            anyhow::bail!("Camera not found: {}", camera_id);
+        }
+    }
+
+    /// Get camera ID by MIDI channel
+    pub fn get_camera_id_by_midi_channel(&self, channel: u8) -> Option<String> {
+        self.cameras
+            .iter()
+            .find(|(_, camera)| camera.info.midi_channel == Some(channel))
+            .map(|(id, _)| id.clone())
     }
 
     // MARK: - Start/Stop All Operations

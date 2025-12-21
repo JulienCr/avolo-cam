@@ -32,6 +32,9 @@ futures-util = "0.3"
 # mDNS discovery
 mdns-sd = "0.11"
 
+# MIDI support
+midir = "0.10"
+
 # Additional utilities
 anyhow = "1"
 thiserror = "1"

@@ -5,18 +5,153 @@ mod models;
 mod camera_discovery;
 mod camera_client;
 mod camera_manager;
+mod midi_manager;
 
 use std::sync::Arc;
 use tauri::{Manager, State, AppHandle};
 use tokio::sync::RwLock;
 
 use camera_manager::CameraManager;
+use midi_manager::{MidiManager, MidiCommand};
 use models::*;
+
+// MARK: - MIDI Dispatcher Thread
+
+/// MIDI dispatcher loop - processes incoming MIDI commands and routes to cameras
+async fn midi_dispatcher_loop(
+    mut rx: tokio::sync::mpsc::Receiver<MidiCommand>,
+    camera_manager: Arc<RwLock<CameraManager>>,
+    midi_manager: Arc<RwLock<MidiManager>>,
+) {
+    log::info!("MIDI dispatcher thread started");
+
+    while let Some(cmd) = rx.recv().await {
+        if let Err(e) = handle_midi_command(cmd, &camera_manager, &midi_manager).await {
+            log::error!("Failed to handle MIDI command: {}", e);
+        }
+    }
+
+    log::info!("MIDI dispatcher thread stopped");
+}
+
+/// Handle a single MIDI command
+async fn handle_midi_command(
+    cmd: MidiCommand,
+    camera_manager: &Arc<RwLock<CameraManager>>,
+    midi_manager: &Arc<RwLock<MidiManager>>,
+) -> Result<(), String> {
+    match cmd {
+        MidiCommand::NoteOn { channel, note, .. } if note == 60 => {
+            // Note C3 (60) On = Switch to manual focus mode
+            log::debug!("MIDI: Note On C3 on channel {}", channel);
+
+            let manager = camera_manager.read().await;
+            if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
+                drop(manager); // Release read lock before write operation
+
+                let mut manager = camera_manager.write().await;
+                let settings = CameraSettingsRequest {
+                    focus_mode: Some(FocusMode::Manual),
+                    ..Default::default()
+                };
+
+                if let Err(e) = manager.update_camera_settings(&camera_id, settings).await {
+                    log::error!("Failed to set manual focus mode for camera {}: {}", camera_id, e);
+                } else {
+                    // Send feedback to confirm mode change
+                    drop(manager); // Release lock before acquiring MIDI manager lock
+                    if let Ok(mut midi_mgr) = midi_manager.try_write() {
+                        let _ = midi_mgr.send_note_feedback(channel, true);
+                    }
+                }
+            } else {
+                log::debug!("No camera assigned to MIDI channel {}", channel);
+            }
+        }
+
+        MidiCommand::NoteOff { channel, note } if note == 60 => {
+            // Note C3 (60) Off = Switch to auto focus mode
+            log::debug!("MIDI: Note Off C3 on channel {}", channel);
+
+            let manager = camera_manager.read().await;
+            if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
+                drop(manager); // Release read lock
+
+                let mut manager = camera_manager.write().await;
+                let settings = CameraSettingsRequest {
+                    focus_mode: Some(FocusMode::Auto),
+                    ..Default::default()
+                };
+
+                if let Err(e) = manager.update_camera_settings(&camera_id, settings).await {
+                    log::error!("Failed to set auto focus mode for camera {}: {}", camera_id, e);
+                } else {
+                    // Send feedback to confirm mode change
+                    drop(manager); // Release lock before acquiring MIDI manager lock
+                    if let Ok(mut midi_mgr) = midi_manager.try_write() {
+                        let _ = midi_mgr.send_note_feedback(channel, false);
+                    }
+                }
+            }
+        }
+
+        MidiCommand::PitchBend { channel, value } => {
+            // Pitch Bend = Zoom control (only in manual mode)
+            log::debug!("MIDI: Pitch Bend {} on channel {}", value, channel);
+
+            let manager = camera_manager.read().await;
+            if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
+                // Check if camera is in manual focus mode
+                let camera = manager.get_all_cameras().await.into_iter()
+                    .find(|c| c.id == camera_id);
+
+                if let Some(camera_info) = camera {
+                    let is_manual = camera_info.status
+                        .as_ref()
+                        .map(|s| s.current.focus_mode == FocusMode::Manual)
+                        .unwrap_or(false);
+
+                    if !is_manual {
+                        log::debug!("Ignoring pitch bend for camera {} (not in manual mode)", camera_id);
+                        return Ok(());
+                    }
+
+                    // Get max_zoom from capabilities
+                    let max_zoom = camera_info.capabilities
+                        .as_ref()
+                        .and_then(|caps| caps.iter().find_map(|c| c.max_zoom))
+                        .unwrap_or(10.0); // Safe fallback
+
+                    let zoom_factor = MidiManager::pitch_bend_to_zoom(value, max_zoom);
+
+                    drop(manager); // Release read lock
+
+                    let mut manager = camera_manager.write().await;
+                    let settings = CameraSettingsRequest {
+                        zoom_factor: Some(zoom_factor),
+                        ..Default::default()
+                    };
+
+                    if let Err(e) = manager.update_camera_settings(&camera_id, settings).await {
+                        log::error!("Failed to set zoom for camera {}: {}", camera_id, e);
+                    }
+                }
+            }
+        }
+
+        _ => {
+            // Ignore other MIDI messages
+        }
+    }
+
+    Ok(())
+}
 
 // MARK: - Application State
 
 struct AppState {
     camera_manager: Arc<RwLock<CameraManager>>,
+    midi_manager: Arc<RwLock<MidiManager>>,
 }
 
 // MARK: - Tauri Commands
@@ -266,6 +401,112 @@ async fn apply_profile(
         .map_err(|e| e.to_string())
 }
 
+// MARK: - MIDI Commands
+
+#[tauri::command]
+async fn list_midi_input_devices() -> Result<Vec<String>, String> {
+    MidiManager::list_input_devices()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_midi_output_devices() -> Result<Vec<String>, String> {
+    MidiManager::list_output_devices()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn connect_midi_input(
+    state: State<'_, AppState>,
+    device_name: String,
+) -> Result<(), String> {
+    let mut manager = state.midi_manager.write().await;
+    manager.connect_input(&device_name)
+        .map_err(|e| e.to_string())?;
+
+    // Persist device name in settings
+    let mut camera_manager = state.camera_manager.write().await;
+    if let Ok(mut settings) = camera_manager.get_app_settings().await {
+        if settings.midi.is_none() {
+            settings.midi = Some(MidiSettings {
+                input_device_name: None,
+                output_device_name: None,
+            });
+        }
+        settings.midi.as_mut().unwrap().input_device_name = Some(device_name);
+        let _ = camera_manager.save_app_settings(settings).await;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn connect_midi_output(
+    state: State<'_, AppState>,
+    device_name: String,
+) -> Result<(), String> {
+    let mut manager = state.midi_manager.write().await;
+    manager.connect_output(&device_name)
+        .map_err(|e| e.to_string())?;
+
+    // Persist device name in settings
+    let mut camera_manager = state.camera_manager.write().await;
+    if let Ok(mut settings) = camera_manager.get_app_settings().await {
+        if settings.midi.is_none() {
+            settings.midi = Some(MidiSettings {
+                input_device_name: None,
+                output_device_name: None,
+            });
+        }
+        settings.midi.as_mut().unwrap().output_device_name = Some(device_name);
+        let _ = camera_manager.save_app_settings(settings).await;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn disconnect_midi_input(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut manager = state.midi_manager.write().await;
+    manager.disconnect_input();
+    Ok(())
+}
+
+#[tauri::command]
+async fn disconnect_midi_output(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut manager = state.midi_manager.write().await;
+    manager.disconnect_output();
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_camera_midi_channel(
+    state: State<'_, AppState>,
+    camera_id: String,
+    channel: Option<u8>,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.update_midi_channel(&camera_id, channel).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_midi_connection_status(
+    state: State<'_, AppState>,
+) -> Result<(bool, bool, Option<String>, Option<String>), String> {
+    let manager = state.midi_manager.read().await;
+    Ok((
+        manager.is_input_connected(),
+        manager.is_output_connected(),
+        manager.input_device_name().map(|s| s.to_string()),
+        manager.output_device_name().map(|s| s.to_string()),
+    ))
+}
+
 // App settings commands
 
 #[tauri::command]
@@ -358,6 +599,17 @@ fn main() {
             // Initialize camera manager
             let camera_manager = Arc::new(RwLock::new(CameraManager::new()));
 
+            // Create MIDI manager and spawn dispatcher thread
+            let (midi_manager, midi_rx) = MidiManager::new();
+            let midi_manager = Arc::new(RwLock::new(midi_manager));
+
+            // Connect MIDI manager to camera manager (in async context)
+            let camera_manager_for_midi = camera_manager.clone();
+            let midi_manager_for_setup = midi_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                camera_manager_for_midi.write().await.set_midi_manager(midi_manager_for_setup);
+            });
+
             // Set up persistence path
             let manager_clone = camera_manager.clone();
             let app_handle = app.handle().clone();
@@ -390,9 +642,17 @@ fn main() {
                 }
             });
 
+            // Spawn MIDI dispatcher thread
+            let camera_manager_clone = camera_manager.clone();
+            let midi_manager_clone = midi_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                midi_dispatcher_loop(midi_rx, camera_manager_clone, midi_manager_clone).await;
+            });
+
             // Set app state
             app.manage(AppState {
                 camera_manager,
+                midi_manager,
             });
 
             Ok(())
@@ -425,6 +685,14 @@ fn main() {
             check_notification_permission,
             request_notification_permission,
             send_test_notification,
+            list_midi_input_devices,
+            list_midi_output_devices,
+            connect_midi_input,
+            connect_midi_output,
+            disconnect_midi_input,
+            disconnect_midi_output,
+            update_camera_midi_channel,
+            get_midi_connection_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

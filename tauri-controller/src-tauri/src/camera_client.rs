@@ -166,7 +166,7 @@ impl CameraClient {
         // Spawn WebSocket connection task with reconnection logic
         tokio::spawn(async move {
             let mut reconnect_attempts = 0;
-            let mut first_connection = true;
+            let mut _first_connection = true;
 
             loop {
                 log::info!("Connecting to WebSocket: {} (attempt {}/{})",
@@ -177,7 +177,7 @@ impl CameraClient {
                         log::info!("WebSocket connection ended normally");
                         *connected.write().await = true;
                         reconnect_attempts = 0; // Reset on successful connection
-                        first_connection = false;
+                        _first_connection = false;
                     }
                     Err(e) => {
                         log::error!("WebSocket connection error: {}", e);

@@ -121,6 +121,27 @@ pub struct CameraSettingsRequest {
     pub torch_level: Option<f32>,  // NDI tally torch brightness (0.01-1.0)
 }
 
+impl Default for CameraSettingsRequest {
+    fn default() -> Self {
+        Self {
+            wb_mode: None,
+            wb_kelvin: None,
+            wb_tint: None,
+            iso_mode: None,
+            iso: None,
+            shutter_mode: None,
+            shutter_s: None,
+            focus_mode: None,
+            focus_distance: None,
+            zoom_factor: None,
+            lens: None,
+            camera_position: None,
+            orientation_lock: None,
+            torch_level: None,
+        }
+    }
+}
+
 // MARK: - Profiles
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +226,9 @@ pub struct CameraInfo {
     pub token: String,
     pub status: Option<StatusResponse>,
     pub connection_state: ConnectionState,
+    pub midi_channel: Option<u8>, // MIDI channel 1-8, None if not assigned
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<Capability>>, // Cached capabilities for max_zoom lookup
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -251,8 +275,18 @@ pub struct AlertSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_device_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_device_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub alerts: AlertsConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub midi: Option<MidiSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +332,7 @@ impl Default for AppSettings {
                     battery_critical_threshold: 10.0,
                 },
             },
+            midi: None,
         }
     }
 }
