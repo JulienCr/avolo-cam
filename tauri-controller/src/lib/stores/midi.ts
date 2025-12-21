@@ -104,10 +104,10 @@ export async function disconnectMidiOutput() {
 export async function loadMidiConnectionStatus() {
   try {
     const [inputConnected, outputConnected, inputName, outputName] = await api.getMidiConnectionStatus();
-    
+
     midiInputConnected.set(inputConnected);
     midiOutputConnected.set(outputConnected);
-    
+
     if (inputName) {
       selectedMidiInput.set(inputName);
     }
