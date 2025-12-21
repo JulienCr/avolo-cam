@@ -1,5 +1,7 @@
 import { writable } from 'svelte/store';
 import type { MidiDevice } from '../types/camera';
+import type { MidiNoteConfig } from '../types/app-settings';
+import { DEFAULT_MIDI_NOTE_CONFIG } from '../types/app-settings';
 import * as api from '../utils/api';
 
 // MIDI Input devices
@@ -14,6 +16,9 @@ export const midiOutputConnected = writable(false);
 
 // Loading state
 export const loadingMidiDevices = writable(false);
+
+// MIDI Note Configuration
+export const midiNoteConfig = writable<MidiNoteConfig>(DEFAULT_MIDI_NOTE_CONFIG);
 
 /**
  * Load available MIDI input and output devices
@@ -118,6 +123,43 @@ export async function loadMidiConnectionStatus() {
     console.log('MIDI status loaded:', { inputConnected, outputConnected, inputName, outputName });
   } catch (error) {
     console.error('Failed to load MIDI connection status:', error);
+  }
+}
+
+/**
+ * Load MIDI notes configuration from backend
+ */
+export async function loadMidiNotesConfig() {
+  try {
+    const config = await api.getMidiNotesConfig();
+    midiNoteConfig.set(config);
+    console.log('MIDI notes config loaded:', config);
+  } catch (error) {
+    console.error('Failed to load MIDI notes config:', error);
+    // Use default config on error
+    midiNoteConfig.set(DEFAULT_MIDI_NOTE_CONFIG);
+  }
+}
+
+/**
+ * Update MIDI notes configuration
+ */
+export async function updateMidiNoteConfig(config: Partial<MidiNoteConfig>) {
+  try {
+    // Get current config and merge with updates
+    const current = await api.getMidiNotesConfig();
+    const updated = { ...current, ...config };
+
+    // Save to backend
+    await api.updateMidiNotesConfig(updated);
+
+    // Update local store
+    midiNoteConfig.set(updated);
+
+    console.log('MIDI notes config updated:', updated);
+  } catch (error) {
+    console.error('Failed to update MIDI notes config:', error);
+    throw error;
   }
 }
 
