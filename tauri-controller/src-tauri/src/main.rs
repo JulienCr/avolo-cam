@@ -22,10 +22,21 @@ async fn midi_dispatcher_loop(
     mut rx: tokio::sync::mpsc::Receiver<MidiCommand>,
     camera_manager: Arc<RwLock<CameraManager>>,
     midi_manager: Arc<RwLock<MidiManager>>,
+    learn_mode_tx: Arc<RwLock<Option<tokio::sync::oneshot::Sender<u8>>>>,
 ) {
     log::info!("MIDI dispatcher thread started");
 
     while let Some(cmd) = rx.recv().await {
+        // Check if we're in learn mode - capture any note and exit learn mode
+        if let MidiCommand::NoteOn { note, .. } | MidiCommand::NoteOff { note, .. } = cmd {
+            let mut learn_tx = learn_mode_tx.write().await;
+            if let Some(tx) = learn_tx.take() {
+                log::info!("Learn mode: captured note {}", note);
+                let _ = tx.send(note);
+                continue; // Don't process this command normally
+            }
+        }
+
         if let Err(e) = handle_midi_command(cmd, &camera_manager, &midi_manager).await {
             log::error!("Failed to handle MIDI command: {}", e);
         }
@@ -40,10 +51,18 @@ async fn handle_midi_command(
     camera_manager: &Arc<RwLock<CameraManager>>,
     midi_manager: &Arc<RwLock<MidiManager>>,
 ) -> Result<(), String> {
+    // Load configured note for focus toggle
+    let focus_toggle_note = {
+        let manager = camera_manager.read().await;
+        manager.get_midi_notes_config().await
+            .map(|config| config.focus_toggle_note)
+            .unwrap_or(60) // Default to C3 if config unavailable
+    };
+
     match cmd {
-        MidiCommand::NoteOn { channel, note, .. } if note == 60 => {
-            // Note C3 (60) On = Switch to manual focus mode
-            log::debug!("MIDI: Note On C3 on channel {}", channel);
+        MidiCommand::NoteOn { channel, note, .. } if note == focus_toggle_note => {
+            // Focus toggle Note On = Switch to manual focus mode
+            log::debug!("MIDI: Note On {} on channel {}", note, channel);
 
             let manager = camera_manager.read().await;
             if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
@@ -61,7 +80,7 @@ async fn handle_midi_command(
                     // Send feedback to confirm mode change
                     drop(manager); // Release lock before acquiring MIDI manager lock
                     if let Ok(mut midi_mgr) = midi_manager.try_write() {
-                        let _ = midi_mgr.send_note_feedback(channel, true);
+                        let _ = midi_mgr.send_note_feedback(channel, focus_toggle_note, true);
                     }
                 }
             } else {
@@ -69,9 +88,9 @@ async fn handle_midi_command(
             }
         }
 
-        MidiCommand::NoteOff { channel, note } if note == 60 => {
-            // Note C3 (60) Off = Switch to auto focus mode
-            log::debug!("MIDI: Note Off C3 on channel {}", channel);
+        MidiCommand::NoteOff { channel, note } if note == focus_toggle_note => {
+            // Focus toggle Note Off = Switch to auto focus mode
+            log::debug!("MIDI: Note Off {} on channel {}", note, channel);
 
             let manager = camera_manager.read().await;
             if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
@@ -89,7 +108,7 @@ async fn handle_midi_command(
                     // Send feedback to confirm mode change
                     drop(manager); // Release lock before acquiring MIDI manager lock
                     if let Ok(mut midi_mgr) = midi_manager.try_write() {
-                        let _ = midi_mgr.send_note_feedback(channel, false);
+                        let _ = midi_mgr.send_note_feedback(channel, focus_toggle_note, false);
                     }
                 }
             }
@@ -152,6 +171,7 @@ async fn handle_midi_command(
 struct AppState {
     camera_manager: Arc<RwLock<CameraManager>>,
     midi_manager: Arc<RwLock<MidiManager>>,
+    learn_mode_tx: Arc<RwLock<Option<tokio::sync::oneshot::Sender<u8>>>>,
 }
 
 // MARK: - Tauri Commands
@@ -431,6 +451,7 @@ async fn connect_midi_input(
             settings.midi = Some(MidiSettings {
                 input_device_name: None,
                 output_device_name: None,
+                notes: MidiNoteConfig::default(),
             });
         }
         settings.midi.as_mut().unwrap().input_device_name = Some(device_name);
@@ -456,6 +477,7 @@ async fn connect_midi_output(
             settings.midi = Some(MidiSettings {
                 input_device_name: None,
                 output_device_name: None,
+                notes: MidiNoteConfig::default(),
             });
         }
         settings.midi.as_mut().unwrap().output_device_name = Some(device_name);
@@ -505,6 +527,72 @@ async fn get_midi_connection_status(
         manager.input_device_name().map(|s| s.to_string()),
         manager.output_device_name().map(|s| s.to_string()),
     ))
+}
+
+#[tauri::command]
+async fn get_midi_notes_config(
+    state: State<'_, AppState>,
+) -> Result<MidiNoteConfig, String> {
+    let manager = state.camera_manager.read().await;
+    manager.get_midi_notes_config().await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_midi_notes_config(
+    state: State<'_, AppState>,
+    notes: MidiNoteConfig,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.update_midi_notes_config(notes).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn start_midi_learn_mode(
+    state: State<'_, AppState>,
+) -> Result<u8, String> {
+    // Create a oneshot channel to receive the learned note
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    
+    // Store the sender in app state
+    {
+        let mut learn_tx = state.learn_mode_tx.write().await;
+        if learn_tx.is_some() {
+            return Err("Learn mode already active".to_string());
+        }
+        *learn_tx = Some(tx);
+    }
+    
+    log::info!("MIDI Learn mode activated - waiting for note...");
+    
+    // Wait for note to be captured (with timeout)
+    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(note)) => {
+            log::info!("MIDI Learn mode: captured note {}", note);
+            Ok(note)
+        }
+        Ok(Err(_)) => {
+            // Channel closed without sending (shouldn't happen)
+            Err("Learn mode channel closed unexpectedly".to_string())
+        }
+        Err(_) => {
+            // Timeout - cleanup
+            let mut learn_tx = state.learn_mode_tx.write().await;
+            *learn_tx = None;
+            Err("Learn mode timeout - no note received within 10 seconds".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn cancel_midi_learn_mode(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut learn_tx = state.learn_mode_tx.write().await;
+    *learn_tx = None;
+    log::info!("MIDI Learn mode cancelled");
+    Ok(())
 }
 
 // App settings commands
@@ -645,14 +733,17 @@ fn main() {
             // Spawn MIDI dispatcher thread
             let camera_manager_clone = camera_manager.clone();
             let midi_manager_clone = midi_manager.clone();
+            let learn_mode_tx = Arc::new(RwLock::new(None));
+            let learn_mode_tx_clone = learn_mode_tx.clone();
             tauri::async_runtime::spawn(async move {
-                midi_dispatcher_loop(midi_rx, camera_manager_clone, midi_manager_clone).await;
+                midi_dispatcher_loop(midi_rx, camera_manager_clone, midi_manager_clone, learn_mode_tx_clone).await;
             });
 
             // Set app state
             app.manage(AppState {
                 camera_manager,
                 midi_manager,
+                learn_mode_tx,
             });
 
             Ok(())
@@ -693,6 +784,10 @@ fn main() {
             disconnect_midi_output,
             update_camera_midi_channel,
             get_midi_connection_status,
+            get_midi_notes_config,
+            update_midi_notes_config,
+            start_midi_learn_mode,
+            cancel_midi_learn_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

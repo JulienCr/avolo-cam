@@ -10,7 +10,6 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 
 // MIDI constants
-const NOTE_C3: u8 = 60; // Middle C for manual mode toggle
 const PITCH_BEND_EPSILON: i16 = 50; // ~0.3% deadband to avoid jitter
 const FEEDBACK_DEBOUNCE_MS: u64 = 100; // Anti-echo debounce time
 
@@ -343,7 +342,7 @@ impl MidiManager {
     }
 
     /// Send note on/off feedback for manual mode LED
-    pub fn send_note_feedback(&mut self, channel: u8, is_manual: bool) -> Result<()> {
+    pub fn send_note_feedback(&mut self, channel: u8, note: u8, is_manual: bool) -> Result<()> {
         let Some(ref mut conn) = self.output_connection else {
             return Ok(()); // No output connected, skip silently
         };
@@ -360,14 +359,14 @@ impl MidiManager {
 
         let velocity = if is_manual { 127 } else { 0 };
 
-        conn.send(&[status, NOTE_C3, velocity])
+        conn.send(&[status, note, velocity])
             .context("Failed to send note feedback")?;
 
         log::debug!(
             "Sent note feedback: channel={}, manual={}, note={}",
             channel,
             is_manual,
-            NOTE_C3
+            note
         );
 
         Ok(())
