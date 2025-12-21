@@ -257,7 +257,8 @@ struct CameraSettingsPanel: View {
                 zoomFactor: zoomFactor,
                 cameraPosition: nil,
                 lens: nil,
-                orientationLock: nil
+                orientationLock: nil,
+                torchLevel: nil
             )
 
             do {
