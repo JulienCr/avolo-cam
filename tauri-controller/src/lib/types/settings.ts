@@ -2,6 +2,7 @@ import type {
   WhiteBalanceMode,
   IsoMode,
   ShutterMode,
+  FocusMode,
   TorchMode,
   LensType,
   CameraPosition
@@ -24,6 +25,8 @@ export interface CameraSettings {
   iso: number;
   shutter_mode: ShutterMode;
   shutter_s: number;
+  focus_mode: FocusMode;
+  focus_distance: number;
   zoom_factor: number;
   lens: LensType;
   camera_position: CameraPosition;
@@ -53,6 +56,8 @@ export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
   iso: 400,
   shutter_mode: 'auto',
   shutter_s: 0.01, // 1/100
+  focus_mode: 'auto',
+  focus_distance: 0.5,  // Midpoint (0.0=near, 1.0=far)
   zoom_factor: 2.0,
   lens: 'wide',
   camera_position: 'back',

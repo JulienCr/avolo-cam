@@ -18,6 +18,8 @@ struct CameraSettingsPanel: View {
     @State private var iso: Double = 160
     @State private var selectedShutterMode: ExposureMode = .auto
     @State private var shutterSpeed: Double = 0.01
+    @State private var selectedFocusMode: FocusMode = .auto
+    @State private var focusDistance: Double = 0.5
     @State private var zoomFactor: Double = 2.0  // Device zoom (wide lens = 2.0x)
     @State private var selectedLens: String = "wide"  // "ultra_wide", "wide", "telephoto"
 
@@ -141,6 +143,38 @@ struct CameraSettingsPanel: View {
                     .background(Color(.systemGray6))
                     .cornerRadius(12)
 
+                    // Focus
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Focus", systemImage: "scope")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+
+                        Picker("Mode", selection: $selectedFocusMode) {
+                            Text("Auto").tag(FocusMode.auto)
+                            Text("Manual").tag(FocusMode.manual)
+                        }
+                        .pickerStyle(.segmented)
+
+                        if selectedFocusMode == .manual {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Distance")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text(String(format: "%.2f", focusDistance))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+
+                                Slider(value: $focusDistance, in: 0.0...1.0, step: 0.01)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+
                     // Lens & Zoom
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Lens & Zoom", systemImage: "camera.metering.center.weighted")
@@ -225,6 +259,8 @@ struct CameraSettingsPanel: View {
             iso = Double(settings.iso)
             selectedShutterMode = settings.shutterMode
             shutterSpeed = settings.shutterS
+            selectedFocusMode = settings.focusMode
+            focusDistance = settings.focusDistance ?? 0.5
             zoomFactor = settings.zoomFactor
             updateLensFromZoom(zoomFactor)  // Update lens based on current zoom
         }
@@ -253,7 +289,8 @@ struct CameraSettingsPanel: View {
                 iso: selectedISOMode == .manual ? Int(iso) : nil,
                 shutterMode: selectedShutterMode,
                 shutterS: selectedShutterMode == .manual ? shutterSpeed : nil,
-                focusMode: nil,
+                focusMode: selectedFocusMode,
+                focusDistance: selectedFocusMode == .manual ? focusDistance : nil,
                 zoomFactor: zoomFactor,
                 cameraPosition: nil,
                 lens: nil,

@@ -215,6 +215,8 @@
         iso: current.iso || 400,
         shutter_mode: current.shutter_mode || 'auto',
         shutter_s: current.shutter_s || 0.01,
+        focus_mode: current.focus_mode || 'auto',
+        focus_distance: current.focus_distance || 0.5,
         zoom_factor: current.zoom_factor || 2.0,
         lens: current.lens || 'wide',
         camera_position: current.camera_position || 'back',
@@ -264,6 +266,7 @@
         wb_mode: $currentCameraSettings.wb_mode,
         iso_mode: $currentCameraSettings.iso_mode,
         shutter_mode: $currentCameraSettings.shutter_mode,
+        focus_mode: $currentCameraSettings.focus_mode,
         zoom_factor: $currentCameraSettings.zoom_factor,
         lens: $currentCameraSettings.lens,
         camera_position: $currentCameraSettings.camera_position,
@@ -278,6 +281,9 @@
       }
       if ($currentCameraSettings.shutter_mode === 'manual') {
         settings.shutter_s = $currentCameraSettings.shutter_s;
+      }
+      if ($currentCameraSettings.focus_mode === 'manual') {
+        settings.focus_distance = $currentCameraSettings.focus_distance;
       }
       if ($currentCameraSettings.torch_mode === 'manual') {
         settings.torch_level = $currentCameraSettings.torch_level;

@@ -127,6 +127,24 @@
     </div>
   </div>
 
+  <!-- Focus -->
+  <div>
+    <SectionHeader title="Focus" />
+    <div class="flex flex-col gap-3">
+      <SliderField
+        label="Focus Distance"
+        bind:value={settings.focus_distance}
+        bind:autoMode={settings.focus_mode}
+        min={0.0}
+        max={1.0}
+        step={0.01}
+        unit=""
+        minLabel="Near"
+        maxLabel="Far"
+      />
+    </div>
+  </div>
+
   <!-- Camera & Lens -->
   <div>
     <SectionHeader title="Camera & Lens" />

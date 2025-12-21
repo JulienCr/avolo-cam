@@ -48,6 +48,7 @@ impl PersistedCamera {
                 shutter_mode: Some(status.current.shutter_mode),
                 shutter_s: Some(status.current.shutter_s),
                 focus_mode: Some(status.current.focus_mode),
+                focus_distance: status.current.focus_distance,
                 zoom_factor: Some(status.current.zoom_factor),
                 lens: Some(status.current.lens.clone()),
                 camera_position: Some(status.current.camera_position.clone()),

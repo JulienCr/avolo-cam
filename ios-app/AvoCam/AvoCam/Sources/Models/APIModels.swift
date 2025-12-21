@@ -47,6 +47,7 @@ struct CurrentSettings: Codable {
     var shutterMode: ExposureMode
     var shutterS: Double
     var focusMode: FocusMode
+    var focusDistance: Double?
     var zoomFactor: Double
     var cameraPosition: String  // "back" or "front"
     var lens: String            // "wide", "ultra_wide", "telephoto"
@@ -64,6 +65,7 @@ struct CurrentSettings: Codable {
         case shutterMode = "shutter_mode"
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
+        case focusDistance = "focus_distance"
         case zoomFactor = "zoom_factor"
         case cameraPosition = "camera_position"
         case lens
@@ -151,6 +153,7 @@ struct CameraSettingsRequest: Codable {
     let shutterMode: ExposureMode?
     let shutterS: Double?
     let focusMode: FocusMode?
+    let focusDistance: Double?
     let zoomFactor: Double?
     let cameraPosition: String?
     let lens: String?
@@ -166,6 +169,7 @@ struct CameraSettingsRequest: Codable {
         case shutterMode = "shutter_mode"
         case shutterS = "shutter_s"
         case focusMode = "focus_mode"
+        case focusDistance = "focus_distance"
         case zoomFactor = "zoom_factor"
         case cameraPosition = "camera_position"
         case lens

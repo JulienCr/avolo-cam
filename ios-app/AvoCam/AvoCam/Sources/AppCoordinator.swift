@@ -461,6 +461,9 @@ class AppCoordinator: ObservableObject {
         if let focusMode = settings.focusMode {
             current.focusMode = focusMode
         }
+        if let focusDistance = settings.focusDistance {
+            current.focusDistance = focusDistance
+        }
         if let zoomFactor = settings.zoomFactor {
             current.zoomFactor = zoomFactor
         }
@@ -493,10 +496,18 @@ class AppCoordinator: ObservableObject {
         // Get current tally state if streaming
         let tallyState = isStreaming ? tallyPoller?.getCurrentState() : nil
 
+        // Get current settings and update with real-time focus state
+        var settings = currentSettings ?? createDefaultSettings()
+        if let captureManager = captureManager {
+            let focusState = await captureManager.getCurrentFocusState()
+            settings.focusMode = focusState.mode
+            settings.focusDistance = focusState.distance
+        }
+
         return StatusResponse(
             alias: cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
-            current: currentSettings ?? createDefaultSettings(),
+            current: settings,
             telemetry: telemetry ?? createDefaultTelemetry(),
             capabilities: await getCapabilities(),
             tallyProgram: tallyState?.program,
@@ -530,6 +541,7 @@ class AppCoordinator: ObservableObject {
                 shutterMode: .auto,
                 shutterS: 0.0,
                 focusMode: .auto,
+                focusDistance: nil,
                 zoomFactor: 1.0,
                 cameraPosition: "back",
                 lens: "wide"
@@ -553,6 +565,7 @@ class AppCoordinator: ObservableObject {
             shutterMode: .auto,
             shutterS: 0.0,
             focusMode: .auto,
+            focusDistance: nil,
             zoomFactor: 1.0,
             cameraPosition: "back",
             lens: "wide"

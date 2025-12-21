@@ -14,6 +14,7 @@ export type NdiState = 'streaming' | 'idle' | 'unknown';
 export type WhiteBalanceMode = 'auto' | 'manual';
 export type IsoMode = 'auto' | 'manual';
 export type ShutterMode = 'auto' | 'manual';
+export type FocusMode = 'auto' | 'manual';
 export type TorchMode = 'auto' | 'manual';
 export type CameraPosition = 'front' | 'back';
 export type LensType = 'ultra_wide' | 'wide' | 'telephoto';
@@ -30,6 +31,8 @@ export interface CurrentSettings {
   iso?: number;
   shutter_mode?: ShutterMode;
   shutter_s?: number;
+  focus_mode?: FocusMode;
+  focus_distance?: number;
   zoom_factor?: number;
   lens?: LensType;
   camera_position?: CameraPosition;

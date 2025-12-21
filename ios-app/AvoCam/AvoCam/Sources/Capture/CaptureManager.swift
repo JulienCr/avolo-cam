@@ -61,11 +61,25 @@ actor CaptureManager: NSObject {
     private var currentShutterMode: ExposureMode = .auto
     private var currentShutterS: Double = 0
 
+    // Focus state tracking
+    private var currentFocusMode: FocusMode = .auto
+    private var currentFocusDistance: Double? = nil
+
     // MARK: - Public Access
 
     nonisolated func getSession() -> AVCaptureSession? {
         // AVCaptureSession is thread-safe for reading to provide to preview layer
         return captureSession
+    }
+
+    func getCurrentFocusState() -> (mode: FocusMode, distance: Double?) {
+        guard let device = videoDevice else {
+            return (mode: currentFocusMode, distance: currentFocusDistance)
+        }
+        
+        // Read actual device state
+        let actualDistance = Double(device.lensPosition)
+        return (mode: currentFocusMode, distance: actualDistance)
     }
 
     // MARK: - Configuration
@@ -626,14 +640,45 @@ actor CaptureManager: NSObject {
 
         // Focus
         if let focusMode = settings.focusMode {
+            currentFocusMode = focusMode
             switch focusMode {
             case .auto:
                 if device.isFocusModeSupported(.continuousAutoFocus) {
                     device.focusMode = .continuousAutoFocus
+                    currentFocusDistance = nil
+                    print("✅ Focus mode set to continuous autofocus")
                 }
             case .manual:
                 if device.isFocusModeSupported(.locked) {
-                    device.focusMode = .locked
+                    // If focus distance is provided, set it; otherwise just lock at current position
+                    if let focusDistance = settings.focusDistance {
+                        let clampedDistance = min(max(Float(focusDistance), 0.0), 1.0)
+                        if device.isLockingFocusWithCustomLensPositionSupported {
+                            device.setFocusModeLocked(lensPosition: clampedDistance) { _ in
+                                print("✅ Focus locked at distance: \(clampedDistance) (0.0=near, 1.0=far)")
+                            }
+                            currentFocusDistance = Double(clampedDistance)
+                        } else {
+                            device.focusMode = .locked
+                            currentFocusDistance = Double(device.lensPosition)
+                            print("⚠️ Device doesn't support custom lens position, locked at current position")
+                        }
+                    } else {
+                        device.focusMode = .locked
+                        currentFocusDistance = Double(device.lensPosition)
+                        print("✅ Focus mode locked at current position")
+                    }
+                }
+            }
+        } else if let focusDistance = settings.focusDistance {
+            // Focus distance provided without mode change - update distance if in manual mode
+            if device.focusMode == .locked {
+                let clampedDistance = min(max(Float(focusDistance), 0.0), 1.0)
+                if device.isLockingFocusWithCustomLensPositionSupported {
+                    device.setFocusModeLocked(lensPosition: clampedDistance) { _ in
+                        print("✅ Focus distance updated: \(clampedDistance)")
+                    }
+                    currentFocusDistance = Double(clampedDistance)
                 }
             }
         }
