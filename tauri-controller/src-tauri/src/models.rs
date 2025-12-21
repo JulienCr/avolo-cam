@@ -275,11 +275,27 @@ pub struct AlertSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiNoteConfig {
+    pub focus_toggle_note: u8, // Default: 60 (C3)
+    // Future notes can be added here
+}
+
+impl Default for MidiNoteConfig {
+    fn default() -> Self {
+        Self {
+            focus_toggle_note: 60, // C3 - preserve current behavior
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_device_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_device_name: Option<String>,
+    #[serde(default)]
+    pub notes: MidiNoteConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -359,6 +359,34 @@ impl CameraManager {
         Ok(())
     }
 
+    /// Get MIDI notes configuration
+    pub async fn get_midi_notes_config(&self) -> Result<MidiNoteConfig> {
+        let settings = self.get_app_settings().await?;
+        Ok(settings.midi
+            .map(|m| m.notes)
+            .unwrap_or_default())
+    }
+
+    /// Update MIDI notes configuration
+    pub async fn update_midi_notes_config(&mut self, notes: MidiNoteConfig) -> Result<()> {
+        let mut settings = self.get_app_settings().await?;
+        
+        // Ensure midi settings exist
+        if let Some(ref mut midi) = settings.midi {
+            midi.notes = notes;
+        } else {
+            settings.midi = Some(MidiSettings {
+                input_device_name: None,
+                output_device_name: None,
+                notes,
+            });
+        }
+
+        self.save_app_settings(settings).await?;
+        log::info!("Updated MIDI notes configuration");
+        Ok(())
+    }
+
     /// Delete cameras.json file (useful for resetting the app)
     pub async fn delete_cameras_data(&mut self) -> Result<()> {
         let Some(path) = &self.persistence_file_path else {
