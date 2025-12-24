@@ -398,3 +398,11 @@ impl Drop for MidiManager {
     }
 }
 
+// SAFETY: MidiManager is safe to Send/Sync because:
+// 1. MidiInputConnection and MidiOutputConnection are only accessed via RwLock in AppState
+// 2. The MIDI callback uses a thread-safe mpsc::Sender for communication
+// 3. The midir library manages its own threading internally
+// 4. All mutable state is protected by RwLock in the application
+unsafe impl Send for MidiManager {}
+unsafe impl Sync for MidiManager {}
+
