@@ -163,11 +163,15 @@ class NDIManager {
             // PERF: Retain buffer for async send (explicit memory management avoids closure capture overhead)
             CVPixelBufferRetain(pixelBuffer)
             
+            // Capture backpressure state and semaphore to avoid leak if self is deallocated
+            let backpressureEnabled = enableBackpressure
+            let semaphore = ndiSemaphore
+            
             ndiQueue.async { [weak self] in
                 defer {
                     CVPixelBufferRelease(pixelBuffer)
-                    if self?.enableBackpressure == true {
-                        self?.ndiSemaphore.signal()
+                    if backpressureEnabled {
+                        semaphore.signal()
                     }
                 }
                 guard let self = self else { return }

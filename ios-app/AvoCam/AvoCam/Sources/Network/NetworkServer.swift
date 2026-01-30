@@ -42,9 +42,8 @@ class NetworkServer {
     private var bootstrap: ServerBootstrap?
     private var channel: Channel?
 
-    // WebSocket clients
-    private var wsClients: [WebSocketClient] = []
-    private let wsClientsLock = OSAllocatedUnfairLock(uncheckedState: ())
+    // WebSocket clients (thread-safe access via lock)
+    private let wsClients = OSAllocatedUnfairLock(uncheckedState: [WebSocketClient]())
 
     // Rate limiting
     private var lastCameraUpdateTime: Date = Date.distantPast
@@ -140,11 +139,11 @@ class NetworkServer {
 
     func stop() {
         // Close all WebSocket connections
-        wsClientsLock.withLock { _ in
-            for client in wsClients {
+        wsClients.withLock { clients in
+            for client in clients {
                 client.close()
             }
-            wsClients.removeAll()
+            clients.removeAll()
         }
 
         // Shutdown server
@@ -161,25 +160,25 @@ class NetworkServer {
     // MARK: - WebSocket Management
 
     func addWebSocketClient(_ client: WebSocketClient) {
-        let count = wsClientsLock.withLock { _ -> Int in
-            wsClients.append(client)
-            return wsClients.count
+        let count = wsClients.withLock { clients -> Int in
+            clients.append(client)
+            return clients.count
         }
 
         print("🔌 WebSocket client connected (total: \(count))")
     }
 
     func removeWebSocketClient(_ client: WebSocketClient) {
-        let count = wsClientsLock.withLock { _ -> Int in
-            wsClients.removeAll { $0 === client }
-            return wsClients.count
+        let count = wsClients.withLock { clients -> Int in
+            clients.removeAll { $0 === client }
+            return clients.count
         }
 
         print("🔌 WebSocket client disconnected (total: \(count))")
     }
 
     func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
-        let clients = wsClientsLock.withLock { _ in wsClients }
+        let clients = wsClients.withLock { Array($0) }
 
         // Encode telemetry to JSON
         let message = WebSocketTelemetryMessage(
