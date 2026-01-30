@@ -923,8 +923,8 @@ actor CaptureManager: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
-    // Static counter for rate-limited dropped frame logging
-    private static var droppedFrameCount: Int = 0
+    // PERF: Thread-safe counter for rate-limited dropped frame logging
+    private static let droppedFrameCounter = OSAllocatedUnfairLock(uncheckedState: 0)
 
     nonisolated func captureOutput(
         _ output: AVCaptureOutput,
@@ -955,10 +955,14 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didDrop sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        CaptureManager.droppedFrameCount += 1
+        // PERF: Atomic increment with single lock acquisition
+        let count = CaptureManager.droppedFrameCounter.withLock { state -> Int in
+            state += 1
+            return state
+        }
         // Log every 30 drops to avoid spam
-        if CaptureManager.droppedFrameCount == 1 || CaptureManager.droppedFrameCount % 30 == 0 {
-            print("⚠️ AVFoundation dropped frames: \(CaptureManager.droppedFrameCount) total")
+        if count == 1 || count % 30 == 0 {
+            print("⚠️ AVFoundation dropped frames: \(count) total")
         }
     }
 

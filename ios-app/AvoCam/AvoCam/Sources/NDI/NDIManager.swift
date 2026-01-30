@@ -145,8 +145,11 @@ class NDIManager {
         if enableBackpressure {
             let acquired = ndiSemaphore.wait(timeout: .now())
             if acquired == .timedOut {
-                statsLock.withLock { $0.dropped += 1 }
-                let dropped = statsLock.withLock { $0.dropped }
+                // PERF: Single lock acquisition for increment + read
+                let dropped = statsLock.withLock { state -> Int64 in
+                    state.dropped += 1
+                    return state.dropped
+                }
                 // Log every 30 drops to avoid spam
                 if dropped % 30 == 1 {
                     print("⚠️ NDI backpressure: dropped \(dropped) frames total")
