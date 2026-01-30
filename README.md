@@ -127,6 +127,21 @@ Standard NDI Source plugin (no custom development required).
    - Configure project: Rec.709 / Full
    - Add NDI sources
 
+### Build
+
+Build both apps using Make:
+
+```bash
+make build        # Build iOS + Tauri
+make build-ios    # Build iOS Ad Hoc IPA only
+make build-tauri  # Build Tauri desktop app only
+make clean        # Clean all build artifacts
+```
+
+**Output:**
+- iOS IPA: `ios-app/AvoCam/build/ipa/AvoloCam.ipa`
+- Tauri app: `tauri-controller/src-tauri/target/release/`
+
 ### Usage
 
 1. Launch AvoCam on iPhones (same WiFi network)
