@@ -2,7 +2,7 @@
 //  AppCoordinator.swift
 //  AvoCam
 //
-//  Central coordinator managing all app components
+//  UI coordinator - manages published state and orchestrates services
 //
 
 import Foundation
@@ -12,7 +12,7 @@ import AVFoundation
 
 @MainActor
 class AppCoordinator: ObservableObject {
-    // MARK: - Published State
+    // MARK: - Published State (for SwiftUI binding)
 
     @Published var isStreaming: Bool = false
     @Published var currentSettings: CurrentSettings?
@@ -21,181 +21,121 @@ class AppCoordinator: ObservableObject {
     @Published var captureSession: AVCaptureSession?
     @Published var isScreenDimmed: Bool = false
     @Published var localIPAddress: String?
-    
-    // Thermal management state
-    private var thermalThrottleApplied = false   // Tracks if we warned in .serious
-    private var thermalCriticalStopped = false   // Tracks if we stopped in .critical
     @Published var bearerTokenForDisplay: String = ""
     @Published var isAuthenticationEnabled: Bool = false
 
-    // MARK: - Components
+    // MARK: - Configuration & Services
 
-    private var captureManager: CaptureManager?
-    private var ndiManager: NDIManager?
-    private var networkServer: NetworkServer?
-    private var telemetryCollector: TelemetryCollector
-    private var bonjourService: BonjourService?
-    private var tallyPoller: NDITallyPoller?
+    private var configuration: AppConfiguration
 
-    // MARK: - Configuration
+    // Core components
+    private let captureManager: CaptureManager
+    private let ndiManager: NDIManager
+    private var networkServer: NetworkServer  // var to allow re-initialization with self
+    private let bonjourService: BonjourService
+    private let tallyPoller: NDITallyPoller
 
-    private var cameraAlias: String  // Changed to var to allow updates
-    private let serverPort: Int = 8888
-    private let bearerToken: String
-
-    // MARK: - Cancellables
-
-    private var cancellables = Set<AnyCancellable>()
+    // Modular services
+    private let streamingCoordinator: StreamingCoordinator
+    private let telemetryAggregator: TelemetryAggregator
+    private let thermalManager: ThermalManager
 
     // MARK: - Initialization
 
     init() {
-        // Generate or load alias and token
-        self.cameraAlias = UserDefaults.standard.string(forKey: "camera_alias") ?? "AVOLO-CAM-\(Self.generateShortID())"
-        self.bearerToken = UserDefaults.standard.string(forKey: "bearer_token") ?? Self.generateToken()
-        self.telemetryCollector = TelemetryCollector()
+        // Load configuration
+        self.configuration = AppConfiguration.load()
 
-        // Save if newly generated
-        UserDefaults.standard.set(cameraAlias, forKey: "camera_alias")
-        UserDefaults.standard.set(bearerToken, forKey: "bearer_token")
+        // Initialize core components (order matters for initialization)
+        self.captureManager = CaptureManager()
+        self.ndiManager = NDIManager(alias: configuration.cameraAlias)
+        self.tallyPoller = NDITallyPoller(ndiManager: ndiManager)
+        self.bonjourService = BonjourService(
+            alias: configuration.cameraAlias,
+            port: configuration.serverPort,
+            bearerToken: configuration.bearerToken
+        )
 
-        // Set display token
-        self.bearerTokenForDisplay = bearerToken
+        // Initialize modular services
+        self.thermalManager = ThermalManager()
+        self.streamingCoordinator = StreamingCoordinator(
+            captureManager: captureManager,
+            ndiManager: ndiManager
+        )
+        self.telemetryAggregator = TelemetryAggregator(
+            telemetryCollector: TelemetryCollector(),
+            thermalManager: thermalManager
+        )
 
-        // Load authentication setting (default: disabled)
-        self.isAuthenticationEnabled = UserDefaults.standard.bool(forKey: "authentication_enabled")
+        // Initialize network server last (after all other properties) so we can pass self
+        self.networkServer = NetworkServer(
+            port: configuration.serverPort,
+            bearerToken: configuration.bearerToken,
+            requestHandler: nil  // Temporarily nil
+        )
 
-        // Load persisted camera settings
+        // Set display properties
+        self.bearerTokenForDisplay = configuration.bearerToken
+        self.isAuthenticationEnabled = configuration.isAuthenticationEnabled
+
+        // Load persisted settings
         self.currentSettings = loadPersistedSettings()
+
+        // Now recreate NetworkServer with self as handler (after all properties initialized)
+        self.networkServer = NetworkServer(
+            port: configuration.serverPort,
+            bearerToken: configuration.bearerToken,
+            requestHandler: self
+        )
+
+        // Wire up service dependencies
+        Task {
+            await streamingCoordinator.setTallyPoller(tallyPoller)
+            await telemetryAggregator.setStreamingCoordinator(streamingCoordinator)
+        }
     }
 
     // MARK: - Lifecycle
 
     func start() {
-        print("🚀 Starting AvoCam with alias: \(cameraAlias)")
-        print("🔑 Bearer Token: \(bearerToken)")
+        print("🚀 Starting AvoCam with alias: \(configuration.cameraAlias)")
+        print("🔑 Bearer Token: \(configuration.bearerToken)")
 
-        // Initialize components
-        captureManager = CaptureManager()
-        ndiManager = NDIManager(alias: cameraAlias)
-
-        // Initialize tally poller (requires ndiManager)
-        if let ndiManager = ndiManager {
-            tallyPoller = NDITallyPoller(ndiManager: ndiManager)
-
-            // Log torch level at startup
-            Task {
-                let torchLevel = await tallyPoller?.getTorchLevel() ?? 0.03
-                let defaultLevel = await tallyPoller?.getDefaultTorchLevel() ?? 0.03
-                let deviceModel = await tallyPoller?.getDeviceModel() ?? "Unknown"
-                print("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
-            }
+        // Log torch level at startup
+        Task {
+            let torchLevel = await tallyPoller.getTorchLevel()
+            let defaultLevel = await tallyPoller.getDefaultTorchLevel()
+            let deviceModel = await tallyPoller.getDeviceModel()
+            print("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
         }
 
         // Detect local IP address
         detectLocalIPAddress()
 
-        // Start network server
-        startNetworkServer()
+        // Start network services
+        networkServer.setAuthenticationEnabled(configuration.isAuthenticationEnabled)
+        do {
+            try networkServer.start()
+            print("✅ Network server started on port \(configuration.serverPort)")
+            print("🔐 Authentication: \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
+        } catch {
+            self.error = "Failed to start network server: \(error.localizedDescription)"
+            print("❌ Failed to start network server: \(error)")
+        }
 
-        // Start Bonjour advertisement
-        startBonjourService()
+        bonjourService.start()
+        print("✅ Bonjour service started: _avolocam._tcp.local")
 
         // Disable idle timer during app lifetime
         UIApplication.shared.isIdleTimerDisabled = true
 
-        // Start telemetry collection
-        startTelemetryCollection()
+        // Setup telemetry and thermal monitoring
+        setupTelemetryBroadcasting()
+        setupThermalMonitoring()
 
         // Initialize preview session early
         Task {
             await initializePreviewSession()
-        }
-    }
-
-    // MARK: - Network Detection
-
-    private func detectLocalIPAddress() {
-        var address: String?
-
-        // Get list of all interfaces on the local machine
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else {
-            print("⚠️ Failed to get network interfaces")
-            return
-        }
-        defer { freeifaddrs(ifaddr) }
-
-        var ptr = ifaddr
-        while ptr != nil {
-            defer { ptr = ptr?.pointee.ifa_next }
-
-            guard let interface = ptr else { continue }
-            let addrFamily = interface.pointee.ifa_addr.pointee.sa_family
-
-            // Check for IPv4 or IPv6 interface
-            if addrFamily == UInt8(AF_INET) || addrFamily == UInt8(AF_INET6) {
-                // Get interface name
-                let name = String(cString: interface.pointee.ifa_name)
-
-                // We're interested in en0 (Wi-Fi) or en1 (Ethernet)
-                if name == "en0" || name == "en1" || name.hasPrefix("en") {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-
-                    if getnameinfo(
-                        interface.pointee.ifa_addr,
-                        socklen_t(interface.pointee.ifa_addr.pointee.sa_len),
-                        &hostname,
-                        socklen_t(hostname.count),
-                        nil,
-                        socklen_t(0),
-                        NI_NUMERICHOST
-                    ) == 0 {
-                        address = String(cString: hostname)
-                        // Prefer IPv4 over IPv6
-                        if addrFamily == UInt8(AF_INET) {
-                            break
-                        }
-                    }
-                }
-            }
-        }
-
-        self.localIPAddress = address
-        if let ip = address {
-            print("📡 Local IP Address: \(ip)")
-        } else {
-            print("⚠️ Could not determine local IP address")
-        }
-    }
-
-    // MARK: - Preview Session
-
-    private func initializePreviewSession() async {
-        // Configure capture with default settings to enable preview
-        // This allows camera preview to show even when not streaming
-        do {
-            try await captureManager?.configure(
-                resolution: "1920x1080",
-                framerate: 30
-            )
-
-            // Get the session for preview
-            if let session = captureManager?.getSession() {
-                self.captureSession = session
-
-                // Start the session for preview (but not streaming yet)
-                // Must be called on background thread to avoid UI hang
-                if !session.isRunning {
-                    await Task.detached {
-                        session.startRunning()
-                    }.value
-                }
-
-                print("✅ Preview session initialized and running")
-            }
-        } catch {
-            print("⚠️ Failed to initialize preview session: \(error)")
         }
     }
 
@@ -215,23 +155,129 @@ class AppCoordinator: ObservableObject {
         }
 
         // Stop all services
-        tallyPoller?.stop()
-        bonjourService?.stop()
-        networkServer?.stop()
+        Task {
+            await telemetryAggregator.stopCollection()
+        }
+        tallyPoller.stop()
+        bonjourService.stop()
+        networkServer.stop()
 
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    // MARK: - Telemetry Setup
+
+    private func setupTelemetryBroadcasting() {
+        Task {
+            await telemetryAggregator.startCollection { [weak self] telemetry, ndiState in
+                guard let self = self else { return }
+                self.telemetry = telemetry
+                self.networkServer.broadcastTelemetry(telemetry, ndiState: ndiState)
+            }
+        }
+    }
+
+    private func setupThermalMonitoring() {
+        thermalManager.setActionCallback { [weak self] action in
+            guard let self = self else { return }
+            switch action {
+            case .stopStream(let message):
+                await self.stopStreaming()
+                self.error = message
+            case .warning(let message):
+                print("⚠️ Thermal warning: \(message)")
+            case .recovered:
+                print("✅ Thermal state recovered")
+            case .none:
+                break
+            }
+        }
+    }
+
+    // MARK: - Network Detection
+
+    private func detectLocalIPAddress() {
+        var address: String?
+
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else {
+            print("⚠️ Failed to get network interfaces")
+            return
+        }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr = ifaddr
+        while ptr != nil {
+            defer { ptr = ptr?.pointee.ifa_next }
+
+            guard let interface = ptr else { continue }
+            let addrFamily = interface.pointee.ifa_addr.pointee.sa_family
+
+            if addrFamily == UInt8(AF_INET) || addrFamily == UInt8(AF_INET6) {
+                let name = String(cString: interface.pointee.ifa_name)
+
+                if name == "en0" || name == "en1" || name.hasPrefix("en") {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+
+                    if getnameinfo(
+                        interface.pointee.ifa_addr,
+                        socklen_t(interface.pointee.ifa_addr.pointee.sa_len),
+                        &hostname,
+                        socklen_t(hostname.count),
+                        nil,
+                        socklen_t(0),
+                        NI_NUMERICHOST
+                    ) == 0 {
+                        address = String(cString: hostname)
+                        if addrFamily == UInt8(AF_INET) {
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        self.localIPAddress = address
+        if let ip = address {
+            print("📡 Local IP Address: \(ip)")
+        } else {
+            print("⚠️ Could not determine local IP address")
+        }
+    }
+
+    // MARK: - Preview Session
+
+    private func initializePreviewSession() async {
+        do {
+            try await captureManager.configure(
+                resolution: "1920x1080",
+                framerate: 30
+            )
+
+            if let session = captureManager.getSession() {
+                self.captureSession = session
+
+                if !session.isRunning {
+                    await Task.detached {
+                        session.startRunning()
+                    }.value
+                }
+
+                print("✅ Preview session initialized and running")
+            }
+        } catch {
+            print("⚠️ Failed to initialize preview session: \(error)")
+        }
+    }
+
     private func stopPreviewSession() async {
-        // Stop the capture session completely when app is closing
         captureSession?.stopRunning()
         captureSession = nil
         print("⏹ Preview session stopped")
     }
 
     func pausePreview() async {
-        // Pause preview when app goes to background (unless actively streaming)
         guard !isStreaming else {
             print("⏸ App backgrounded but continuing capture for active stream")
             return
@@ -242,7 +288,6 @@ class AppCoordinator: ObservableObject {
     }
 
     func resumePreview() async {
-        // Resume preview when app comes back to foreground
         if let session = captureSession, !session.isRunning {
             session.startRunning()
             print("▶️ Preview resumed (app in foreground)")
@@ -250,14 +295,14 @@ class AppCoordinator: ObservableObject {
     }
 
     // MARK: - Authentication Control
-    
+
     func toggleAuthentication() {
-        isAuthenticationEnabled.toggle()
-        UserDefaults.standard.set(isAuthenticationEnabled, forKey: "authentication_enabled")
-        networkServer?.setAuthenticationEnabled(isAuthenticationEnabled)
-        print("🔐 Authentication \(isAuthenticationEnabled ? "enabled" : "disabled")")
+        configuration = configuration.withAuthenticationToggled()
+        isAuthenticationEnabled = configuration.isAuthenticationEnabled
+        networkServer.setAuthenticationEnabled(configuration.isAuthenticationEnabled)
+        print("🔐 Authentication \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
     }
-    
+
     // MARK: - Screen Brightness Control
 
     func toggleScreenBrightness() {
@@ -268,265 +313,78 @@ class AppCoordinator: ObservableObject {
         isScreenDimmed = dimmed
 
         if dimmed {
-            // Dim screen to minimum to save battery
             UIScreen.main.brightness = 0.01
             print("🔅 Screen dimmed to save battery")
         } else {
-            // Restore to normal brightness
             UIScreen.main.brightness = 0.5
             print("🔆 Screen brightness restored")
         }
     }
 
-    // MARK: - Network Server
-
-    private func startNetworkServer() {
-        networkServer = NetworkServer(
-            port: serverPort,
-            bearerToken: bearerToken,
-            requestHandler: self
-        )
-        
-        // Set authentication state
-        networkServer?.setAuthenticationEnabled(isAuthenticationEnabled)
-
-        do {
-            try networkServer?.start()
-            print("✅ Network server started on port \(serverPort)")
-            print("🔐 Authentication: \(isAuthenticationEnabled ? "enabled" : "disabled")")
-        } catch {
-            self.error = "Failed to start network server: \(error.localizedDescription)"
-            print("❌ Failed to start network server: \(error)")
-        }
-    }
-
-    // MARK: - Bonjour Service
-
-    private func startBonjourService() {
-        bonjourService = BonjourService(
-            alias: cameraAlias,
-            port: serverPort,
-            bearerToken: bearerToken
-        )
-        bonjourService?.start()
-        print("✅ Bonjour service started: _avolocam._tcp.local")
-    }
-
-    // MARK: - Telemetry Collection
-
-    private func startTelemetryCollection() {
-        // Collect telemetry every second
-        Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                Task { await self.updateTelemetry() }
-            }
-            .store(in: &cancellables)
-    }
-
-    private func updateTelemetry() async {
-        let systemTelemetry = await telemetryCollector.collect()
-
-        // Get NDI telemetry stats (FPS, sent frames, dropped frames)
-        let ndiStats = ndiManager?.getTelemetryStats() ?? (fps: 0.0, sentFrames: 0, droppedFrames: 0)
-
-        // Use real network bitrate from interface statistics
-        let networkBitrate = systemTelemetry.networkBitrate
-
-        self.telemetry = Telemetry(
-            fps: ndiStats.fps,
-            bitrate: networkBitrate,
-            battery: systemTelemetry.battery,
-            tempC: systemTelemetry.temperature,
-            wifiRssi: systemTelemetry.wifiRssi,
-            cpuUsage: systemTelemetry.cpuUsage,
-            queueMs: nil,  // Not available from NDI SDK
-            droppedFrames: Int(ndiStats.droppedFrames),
-            chargingState: systemTelemetry.chargingState
-        )
-
-        // Broadcast telemetry via WebSocket
-        if let telemetry = self.telemetry {
-            let currentNDIState: NDIState = self.isStreaming ? .streaming : .idle
-            networkServer?.broadcastTelemetry(telemetry, ndiState: currentNDIState)
-        }
-
-        // Check thermal state and adjust if needed
-        checkThermalState(systemTelemetry.thermalState)
-    }
-
-    // MARK: - Thermal Management
-
-    private func checkThermalState(_ state: ProcessInfo.ThermalState) {
-        guard isStreaming else { return }
-
-        switch state {
-        case .serious:
-            if !thermalThrottleApplied {
-                thermalThrottleApplied = true
-                print("⚠️ Thermal throttle activated: device heating up")
-                // Log warning but don't stop - let user decide
-                // Could optionally reduce FPS here in the future
-            }
-        case .critical:
-            // Prevent multiple stop attempts (race condition if called rapidly)
-            guard !thermalCriticalStopped else { return }
-            thermalCriticalStopped = true
-            print("🔥 Thermal state CRITICAL: stopping stream to prevent damage")
-            // Stop streaming to protect the device
-            Task {
-                await stopStreaming()
-                self.error = "Stream stopped: device overheating. Please let it cool down."
-            }
-        case .nominal, .fair:
-            if thermalThrottleApplied || thermalCriticalStopped {
-                thermalThrottleApplied = false
-                thermalCriticalStopped = false
-                print("✅ Thermal state returned to normal")
-            }
-        @unknown default:
-            break
-        }
-    }
-
-    // MARK: - Streaming Control
+    // MARK: - Streaming Control (delegate to coordinator)
 
     func startStreaming(request: StreamStartRequest) async throws {
         guard !isStreaming else {
-            throw AppError.alreadyStreaming
+            throw AVOCamError.alreadyStreaming
         }
 
-        print("▶️ Starting stream: \(request.resolution) @ \(request.framerate)fps, \(request.bitrate)bps")
-
-        // Configure capture
-        try await captureManager?.configure(
-            resolution: request.resolution,
-            framerate: request.framerate
-        )
-
-        // Note: NDI SDK handles encoding internally, no separate encoder needed
-
-        // Start NDI sender
-        try ndiManager?.start()
-
-        // Start capture session
-        try await captureManager?.startCapture { [weak self] sampleBuffer in
-            guard let self = self else { return }
-
-            // Extract pixel buffer from sample buffer
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                return
-            }
-
-            // Send directly to NDI (NDI handles compression internally)
-            self.ndiManager?.send(pixelBuffer: pixelBuffer)
-        }
-
+        try await streamingCoordinator.startStreaming(request: request)
         isStreaming = true
-
-        // Start tally poller for torch control
-        tallyPoller?.start()
-
-        // Update current settings
         updateCurrentSettings(from: request)
     }
 
     func stopStreaming() async {
         guard isStreaming else { return }
 
-        print("⏹ Stopping stream")
-
-        // Stop tally poller (turns off torch)
-        tallyPoller?.stop()
-
-        // Stop capture
-        await captureManager?.stopCapture()
-
-        // Stop NDI
-        ndiManager?.stop()
-
+        await streamingCoordinator.stopStreaming()
         isStreaming = false
+        thermalManager.reset()
     }
 
     // MARK: - Camera Control
 
     func updateCameraSettings(_ settings: CameraSettingsRequest) async throws {
-        try await captureManager?.updateSettings(settings)
+        try await captureManager.updateSettings(settings)
 
-        // Ensure currentSettings exists (should always be loaded from persistence at init)
         var current = currentSettings ?? createDefaultSettings()
 
-        // Update with new values
-        if let wbMode = settings.wbMode {
-            current.wbMode = wbMode
-        }
-        if let wbKelvin = settings.wbKelvin {
-            current.wbKelvin = wbKelvin
-        }
-        if let wbTint = settings.wbTint {
-            current.wbTint = wbTint
-        }
-        if let isoMode = settings.isoMode {
-            current.isoMode = isoMode
-        }
-        if let iso = settings.iso {
-            current.iso = iso
-        }
-        if let shutterMode = settings.shutterMode {
-            current.shutterMode = shutterMode
-        }
-        if let shutterS = settings.shutterS {
-            current.shutterS = shutterS
-        }
-        if let focusMode = settings.focusMode {
-            current.focusMode = focusMode
-        }
-        if let focusDistance = settings.focusDistance {
-            current.focusDistance = focusDistance
-        }
-        if let zoomFactor = settings.zoomFactor {
-            current.zoomFactor = zoomFactor
-        }
-        if let cameraPosition = settings.cameraPosition {
-            current.cameraPosition = cameraPosition
-        }
-        if let lens = settings.lens {
-            current.lens = lens
-        }
+        if let wbMode = settings.wbMode { current.wbMode = wbMode }
+        if let wbKelvin = settings.wbKelvin { current.wbKelvin = wbKelvin }
+        if let wbTint = settings.wbTint { current.wbTint = wbTint }
+        if let isoMode = settings.isoMode { current.isoMode = isoMode }
+        if let iso = settings.iso { current.iso = iso }
+        if let shutterMode = settings.shutterMode { current.shutterMode = shutterMode }
+        if let shutterS = settings.shutterS { current.shutterS = shutterS }
+        if let focusMode = settings.focusMode { current.focusMode = focusMode }
+        if let focusDistance = settings.focusDistance { current.focusDistance = focusDistance }
+        if let zoomFactor = settings.zoomFactor { current.zoomFactor = zoomFactor }
+        if let cameraPosition = settings.cameraPosition { current.cameraPosition = cameraPosition }
+        if let lens = settings.lens { current.lens = lens }
 
         currentSettings = current
-        // Persist settings so they survive page refresh
         persistSettings(current)
 
-        // Handle torch level separately via tally poller
         if let torchLevel = settings.torchLevel {
-            _ = await tallyPoller?.setTorchLevel(torchLevel)
+            _ = await tallyPoller.setTorchLevel(torchLevel)
         }
     }
 
-    // MARK: - Capabilities
+    // MARK: - Capabilities & Status
 
     func getCapabilities() async -> [Capability] {
-        return await captureManager?.getCapabilities() ?? []
+        return await captureManager.getCapabilities()
     }
 
-    // MARK: - Status
-
     func getStatus() async -> StatusResponse {
-        // Get current tally state if streaming
-        let tallyState = isStreaming ? tallyPoller?.getCurrentState() : nil
+        let tallyState = isStreaming ? tallyPoller.getCurrentState() : nil
 
-        // Get current settings and update with real-time focus state
         var settings = currentSettings ?? createDefaultSettings()
-        if let captureManager = captureManager {
-            let focusState = await captureManager.getCurrentFocusState()
-            settings.focusMode = focusState.mode
-            settings.focusDistance = focusState.distance
-        }
+        let focusState = await captureManager.getCurrentFocusState()
+        settings.focusMode = focusState.mode
+        settings.focusDistance = focusState.distance
 
         return StatusResponse(
-            alias: cameraAlias,
+            alias: configuration.cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
             current: settings,
             telemetry: telemetry ?? createDefaultTelemetry(),
@@ -536,10 +394,48 @@ class AppCoordinator: ObservableObject {
         )
     }
 
+    // MARK: - Alias Management
+
+    func updateAlias(_ newAlias: String) async throws -> (alias: String, requiresRestart: Bool) {
+        let wasStreaming = isStreaming
+
+        if wasStreaming {
+            await stopStreaming()
+        }
+
+        bonjourService.stop()
+
+        // Update configuration
+        configuration = configuration.withAlias(newAlias)
+        print("✅ Camera alias updated to: \(newAlias)")
+
+        // Note: This requires restarting network services with new NDIManager
+        // For now, return requiresRestart = true to signal app restart needed
+        return (alias: newAlias, requiresRestart: true)
+    }
+
+    // MARK: - Settings Persistence
+
+    private func loadPersistedSettings() -> CurrentSettings? {
+        guard let data = UserDefaults.standard.data(forKey: "camera_settings"),
+              let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
+            return createDefaultSettings()
+        }
+        print("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+        return settings
+    }
+
+    private func persistSettings(_ settings: CurrentSettings) {
+        if let data = try? JSONEncoder().encode(settings) {
+            UserDefaults.standard.set(data, forKey: "camera_settings")
+            let uiZoom = settings.zoomFactor / 2.0
+            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
+        }
+    }
+
     // MARK: - Helpers
 
     private func updateCurrentSettings(from request: StreamStartRequest) {
-        // Preserve existing camera settings, only update stream parameters
         if var current = currentSettings {
             current.resolution = request.resolution
             current.fps = request.framerate
@@ -548,7 +444,6 @@ class AppCoordinator: ObservableObject {
             currentSettings = current
             persistSettings(current)
         } else {
-            // First time - create new settings
             let newSettings = CurrentSettings(
                 resolution: request.resolution,
                 fps: request.framerate,
@@ -606,95 +501,6 @@ class AppCoordinator: ObservableObject {
             chargingState: nil
         )
     }
-
-    // MARK: - Alias Management
-
-    func updateAlias(_ newAlias: String) async throws -> (alias: String, requiresRestart: Bool) {
-        let wasStreaming = isStreaming
-
-        // Stop streaming if active (we'll restart it with the new alias)
-        if wasStreaming {
-            await stopStreaming()
-        }
-
-        // Stop Bonjour service
-        bonjourService?.stop()
-
-        // Update alias
-        cameraAlias = newAlias
-        UserDefaults.standard.set(newAlias, forKey: "camera_alias")
-        print("✅ Camera alias updated to: \(newAlias)")
-
-        // Restart Bonjour with new alias
-        startBonjourService()
-
-        // Recreate NDI manager with new alias
-        ndiManager = NDIManager(alias: newAlias)
-
-        // Restart streaming if it was active
-        if wasStreaming, let settings = currentSettings {
-            let request = StreamStartRequest(
-                resolution: settings.resolution,
-                framerate: settings.fps,
-                bitrate: settings.bitrate,
-                codec: settings.codec
-            )
-            try await startStreaming(request: request)
-        }
-
-        return (alias: newAlias, requiresRestart: wasStreaming)
-    }
-
-    // MARK: - Settings Persistence
-
-    private func loadPersistedSettings() -> CurrentSettings? {
-        // Try to load from UserDefaults
-        guard let data = UserDefaults.standard.data(forKey: "camera_settings"),
-              let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
-            // Return defaults if nothing saved
-            return createDefaultSettings()
-        }
-        print("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
-        return settings
-    }
-
-    private func persistSettings(_ settings: CurrentSettings) {
-        if let data = try? JSONEncoder().encode(settings) {
-            UserDefaults.standard.set(data, forKey: "camera_settings")
-            let uiZoom = settings.zoomFactor / 2.0  // Convert device zoom to UI zoom
-            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
-        }
-    }
-
-    private static func generateShortID() -> String {
-        return String(format: "%02X", Int.random(in: 0...255))
-    }
-
-    private static func generateToken() -> String {
-        return UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    }
-}
-
-// MARK: - App Errors
-
-enum AppError: LocalizedError {
-    case alreadyStreaming
-    case notStreaming
-    case invalidConfiguration
-    case networkError(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .alreadyStreaming:
-            return "Stream is already active"
-        case .notStreaming:
-            return "Stream is not active"
-        case .invalidConfiguration:
-            return "Invalid configuration provided"
-        case .networkError(let message):
-            return "Network error: \(message)"
-        }
-    }
 }
 
 // MARK: - NetworkRequestHandler Extension
@@ -746,7 +552,6 @@ extension AppCoordinator: NetworkRequestHandler {
     func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws {
         var settings = VideoSettingsManager.load()
 
-        // Update settings from request
         settings.selectedPresetId = request.selectedPresetId
         settings.customResolution = request.customResolution
         settings.customFps = request.customFps
@@ -755,23 +560,18 @@ extension AppCoordinator: NetworkRequestHandler {
         }
         settings.customBitrate = request.customBitrate
 
-        // Save settings
         VideoSettingsManager.save(settings)
 
         print("✅ Video settings updated and saved")
     }
-  
+
     func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
         setScreenBrightness(dimmed: request.dimmed)
     }
 
     func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse {
-        let result = try await captureManager?.measureWhiteBalance()
-        guard let (sceneCCT_K, tint) = result else {
-            throw AppError.invalidConfiguration
-        }
-        // Return physical scene CCT - UI will convert to UIKelvin if needed
-        return WhiteBalanceMeasureResponse(sceneCCT_K: sceneCCT_K, tint: tint)
+        let result = try await captureManager.measureWhiteBalance()
+        return WhiteBalanceMeasureResponse(sceneCCT_K: result.sceneCCT_K, tint: result.tint)
     }
 
     func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
@@ -780,15 +580,6 @@ extension AppCoordinator: NetworkRequestHandler {
     }
 
     func handleGetTorchLevel() async -> TorchLevelResponse {
-        guard let tallyPoller = tallyPoller else {
-            // Return default values if tally poller not initialized
-            return TorchLevelResponse(
-                currentLevel: 0.03,
-                defaultLevel: 0.03,
-                deviceModel: "Unknown"
-            )
-        }
-
         let currentLevel = await tallyPoller.getTorchLevel()
         let defaultLevel = await tallyPoller.getDefaultTorchLevel()
         let deviceModel = await tallyPoller.getDeviceModel()
@@ -801,22 +592,15 @@ extension AppCoordinator: NetworkRequestHandler {
     }
 
     func handleUpdateTorchLevel(_ request: TorchLevelUpdateRequest) async throws -> TorchLevelResponse {
-        guard let tallyPoller = tallyPoller else {
-            throw NSError(domain: "com.avocam", code: 500, userInfo: [NSLocalizedDescriptionKey: "Tally poller not initialized"])
-        }
-
         if let level = request.level {
-            // Set custom level
             let success = await tallyPoller.setTorchLevel(level)
             if !success {
                 throw NSError(domain: "com.avocam", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid torch level (must be 0.01-1.0)"])
             }
         } else {
-            // Reset to default
             await tallyPoller.resetTorchToDefault()
         }
 
-        // Return updated values
         return await handleGetTorchLevel()
     }
 }
