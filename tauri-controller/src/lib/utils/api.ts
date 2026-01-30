@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Camera, DiscoveredCamera } from '../types/camera';
 import type { StreamSettings, CameraSettings, WhiteBalanceResult } from '../types/settings';
 import type { Profile, GroupOperationResult } from '../types/profile';
+import type { MidiNoteConfig } from '../types/app-settings';
 
 // Camera Management
 export async function discoverCameras(): Promise<DiscoveredCamera[]> {
@@ -118,3 +119,56 @@ export async function applyProfile(
 ): Promise<GroupOperationResult[]> {
   return invoke('apply_profile', { profileName, cameraIds });
 }
+
+// MIDI
+export async function listMidiInputDevices(): Promise<string[]> {
+  return invoke('list_midi_input_devices');
+}
+
+export async function listMidiOutputDevices(): Promise<string[]> {
+  return invoke('list_midi_output_devices');
+}
+
+export async function connectMidiInput(deviceName: string): Promise<void> {
+  return invoke('connect_midi_input', { deviceName });
+}
+
+export async function connectMidiOutput(deviceName: string): Promise<void> {
+  return invoke('connect_midi_output', { deviceName });
+}
+
+export async function disconnectMidiInput(): Promise<void> {
+  return invoke('disconnect_midi_input');
+}
+
+export async function disconnectMidiOutput(): Promise<void> {
+  return invoke('disconnect_midi_output');
+}
+
+export async function updateCameraMidiChannel(
+  cameraId: string,
+  channel: number | null
+): Promise<void> {
+  return invoke('update_camera_midi_channel', { cameraId, channel });
+}
+
+export async function getMidiConnectionStatus(): Promise<[boolean, boolean, string | null, string | null]> {
+  return invoke('get_midi_connection_status');
+}
+
+export async function getMidiNotesConfig(): Promise<MidiNoteConfig> {
+  return invoke('get_midi_notes_config');
+}
+
+export async function updateMidiNotesConfig(notes: MidiNoteConfig): Promise<void> {
+  return invoke('update_midi_notes_config', { notes });
+}
+
+export async function startMidiLearnMode(): Promise<number> {
+  return invoke('start_midi_learn_mode');
+}
+
+export async function cancelMidiLearnMode(): Promise<void> {
+  return invoke('cancel_midi_learn_mode');
+}
+

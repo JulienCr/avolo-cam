@@ -66,6 +66,7 @@
   } from '$lib/stores/profiles';
 
   import { loadAppSettings } from '$lib/stores/appSettings';
+  import { loadMidiConnectionStatus, loadMidiNotesConfig } from '$lib/stores/midi';
 
   import * as api from '$lib/utils/api';
   import { debounce } from '$lib/utils/debounce';
@@ -75,6 +76,9 @@
   onMount(async () => {
     await loadAppSettings();
     await loadProfiles();
+    // Load MIDI settings and restore connections
+    await loadMidiConnectionStatus();
+    await loadMidiNotesConfig();
     startAutoRefresh(2000);
     // Auto-discover and add cameras on startup after a short delay
     // to allow mDNS discovery to complete

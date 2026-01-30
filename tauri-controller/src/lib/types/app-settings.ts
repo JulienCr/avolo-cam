@@ -6,6 +6,17 @@ export interface AlertSettings {
   batteryCriticalThreshold: number; // Percentage
 }
 
+export interface MidiNoteConfig {
+  focusToggleNote: number; // 0-127, default 60 (C3)
+  // Future notes can be added here
+}
+
+export interface MidiSettings {
+  inputDeviceName?: string;
+  outputDeviceName?: string;
+  notes: MidiNoteConfig;
+}
+
 export interface AppSettings {
   alerts: {
     temperature: AlertSettings;
@@ -13,7 +24,12 @@ export interface AppSettings {
     batteryLow: AlertSettings;
     batteryCritical: AlertSettings;
   };
+  midi?: MidiSettings;
 }
+
+export const DEFAULT_MIDI_NOTE_CONFIG: MidiNoteConfig = {
+  focusToggleNote: 60, // C3
+};
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   alerts: {
