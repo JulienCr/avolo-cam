@@ -23,7 +23,8 @@ class AppCoordinator: ObservableObject {
     @Published var localIPAddress: String?
     
     // Thermal management state
-    private var thermalThrottleApplied = false
+    private var thermalThrottleApplied = false   // Tracks if we warned in .serious
+    private var thermalCriticalStopped = false   // Tracks if we stopped in .critical
     @Published var bearerTokenForDisplay: String = ""
     @Published var isAuthenticationEnabled: Bool = false
 
@@ -369,6 +370,9 @@ class AppCoordinator: ObservableObject {
                 // Could optionally reduce FPS here in the future
             }
         case .critical:
+            // Prevent multiple stop attempts (race condition if called rapidly)
+            guard !thermalCriticalStopped else { return }
+            thermalCriticalStopped = true
             print("🔥 Thermal state CRITICAL: stopping stream to prevent damage")
             // Stop streaming to protect the device
             Task {
@@ -376,8 +380,9 @@ class AppCoordinator: ObservableObject {
                 self.error = "Stream stopped: device overheating. Please let it cool down."
             }
         case .nominal, .fair:
-            if thermalThrottleApplied {
+            if thermalThrottleApplied || thermalCriticalStopped {
                 thermalThrottleApplied = false
+                thermalCriticalStopped = false
                 print("✅ Thermal state returned to normal")
             }
         @unknown default:
