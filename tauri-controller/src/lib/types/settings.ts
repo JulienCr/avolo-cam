@@ -5,15 +5,19 @@ import type {
   FocusMode,
   TorchMode,
   LensType,
-  CameraPosition
+  CameraPosition,
+  StreamingMode
 } from './camera';
 
-// Stream Settings (for starting NDI stream)
+// Stream Settings (for starting NDI/SRT stream)
 export interface StreamSettings {
   resolution: string;
   framerate: number;
   bitrate: number;
   codec: string;
+  streaming_mode?: StreamingMode;
+  srt_port?: number;
+  srt_latency?: number;
 }
 
 // Camera Settings (for camera controls)
@@ -46,6 +50,9 @@ export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   framerate: 30,
   bitrate: 10000000, // 10 Mbps
   codec: 'h264',
+  streaming_mode: 'ndi',
+  srt_port: 9000,
+  srt_latency: 120,
 };
 
 export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {

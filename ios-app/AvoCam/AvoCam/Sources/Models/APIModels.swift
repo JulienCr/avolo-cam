@@ -7,6 +7,13 @@
 
 import Foundation
 
+// MARK: - Streaming Mode
+
+enum StreamingMode: String, Codable, CaseIterable, Sendable {
+    case ndi = "ndi"
+    case srt = "srt"
+}
+
 // MARK: - Status Response
 
 struct StatusResponse: Codable {
@@ -17,6 +24,9 @@ struct StatusResponse: Codable {
     let capabilities: [Capability]
     let tallyProgram: Bool?
     let tallyPreview: Bool?
+    let streamingMode: StreamingMode
+    let srtConnectionUrl: String?
+    let srtPort: Int?
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -26,6 +36,9 @@ struct StatusResponse: Codable {
         case capabilities
         case tallyProgram = "tally_program"
         case tallyPreview = "tally_preview"
+        case streamingMode = "streaming_mode"
+        case srtConnectionUrl = "srt_connection_url"
+        case srtPort = "srt_port"
     }
 }
 
@@ -51,6 +64,9 @@ struct CurrentSettings: Codable {
     var zoomFactor: Double
     var cameraPosition: String  // "back" or "front"
     var lens: String            // "wide", "ultra_wide", "telephoto"
+    var streamingMode: StreamingMode
+    var srtPort: Int?
+    var srtLatency: Int?
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -69,6 +85,9 @@ struct CurrentSettings: Codable {
         case zoomFactor = "zoom_factor"
         case cameraPosition = "camera_position"
         case lens
+        case streamingMode = "streaming_mode"
+        case srtPort = "srt_port"
+        case srtLatency = "srt_latency"
     }
 }
 
@@ -140,6 +159,21 @@ struct StreamStartRequest: Codable {
     let framerate: Int
     let bitrate: Int
     let codec: String
+    let streamingMode: StreamingMode?
+    let srtPort: Int?
+    let srtLatency: Int?
+    let srtPassphrase: String?
+
+    enum CodingKeys: String, CodingKey {
+        case resolution
+        case framerate
+        case bitrate
+        case codec
+        case streamingMode = "streaming_mode"
+        case srtPort = "srt_port"
+        case srtLatency = "srt_latency"
+        case srtPassphrase = "srt_passphrase"
+    }
 }
 
 // MARK: - Camera Control

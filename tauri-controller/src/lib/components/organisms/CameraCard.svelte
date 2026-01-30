@@ -25,6 +25,9 @@
   $: streamDetails = camera.status?.current;
   $: droppedFrames = telemetry?.dropped_frames || 0;
   $: hasDroppedFrames = droppedFrames > 0;
+  $: streamingMode = streamDetails?.streaming_mode || 'ndi';
+  $: srtPort = streamDetails?.srt_port;
+  $: srtConnectionUrl = streamDetails?.srt_connection_url;
 
   // Check if WiFi RSSI is real data (not the default -50 placeholder)
   $: hasRealWifiData =
@@ -128,7 +131,7 @@
   async function handleMidiChannelChange(event: Event) {
     const target = event.target as HTMLSelectElement;
     const value = target.value;
-    
+
     midiChannelSaving = true;
     try {
       const channel = value === '' ? null : parseInt(value);
@@ -143,6 +146,18 @@
       selectedMidiChannel = camera.midi_channel?.toString() || '';
     } finally {
       midiChannelSaving = false;
+    }
+  }
+
+  // Copy to clipboard
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Could add a toast notification here
+      console.log('Copied to clipboard:', text);
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      alert('Failed to copy to clipboard');
     }
   }
 </script>
@@ -278,16 +293,50 @@
       <div
         class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900"
       >
-        <div class="flex items-center justify-between text-sm">
+        <div class="flex items-center justify-between text-sm gap-2">
           <span class="font-medium text-gray-700 dark:text-gray-300"
             >Stream:</span
           >
-          <span class="font-mono text-gray-900 dark:text-gray-100">
-            {streamDetails.resolution || "N/A"} @ {streamDetails.fps ||
-              "N/A"}fps ({streamDetails.codec?.toUpperCase() || "N/A"})
-          </span>
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-gray-900 dark:text-gray-100">
+              {streamDetails.resolution || "N/A"} @ {streamDetails.fps ||
+                "N/A"}fps ({streamDetails.codec?.toUpperCase() || "N/A"})
+            </span>
+            <span
+              class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold {streamingMode === 'ndi'
+                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'}"
+            >
+              {streamingMode === 'ndi' ? 'NDI' : `SRT:${srtPort || 'N/A'}`}
+            </span>
+          </div>
         </div>
       </div>
+
+      <!-- SRT Connection URL -->
+      {#if streamingMode === 'srt' && srtConnectionUrl}
+        <div
+          class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-700 dark:bg-green-900/20"
+        >
+          <div class="flex items-center justify-between gap-2 text-sm">
+            <span class="font-medium text-gray-700 dark:text-gray-300">SRT URL:</span>
+            <div class="flex items-center gap-2 flex-1 justify-end">
+              <code class="text-xs font-mono text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-600">
+                {srtConnectionUrl}
+              </code>
+              <button
+                on:click={() => copyToClipboard(srtConnectionUrl)}
+                class="p-1.5 rounded hover:bg-green-100 dark:hover:bg-green-800/30 transition-colors"
+                title="Copy SRT URL to clipboard"
+              >
+                <svg class="h-4 w-4 text-gray-600 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
     {/if}
 
     <!-- WiFi Strength (only show if we have real data, not default -50) -->

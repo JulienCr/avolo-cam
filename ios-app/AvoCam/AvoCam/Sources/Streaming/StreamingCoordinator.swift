@@ -8,21 +8,24 @@
 import Foundation
 import AVFoundation
 
-/// Actor that coordinates the streaming pipeline between capture and NDI output
+/// Actor that coordinates the streaming pipeline between capture and output (NDI or SRT)
 actor StreamingCoordinator: StreamingService {
     // MARK: - Properties
 
     private(set) var isStreaming: Bool = false
+    private var currentMode: StreamingMode = .ndi
 
     private let captureManager: CaptureManager
     private let ndiManager: NDIManager
+    private let srtManager: SRTManager
     private var tallyPoller: NDITallyPoller?
 
     // MARK: - Initialization
 
-    init(captureManager: CaptureManager, ndiManager: NDIManager) {
+    init(captureManager: CaptureManager, ndiManager: NDIManager, srtManager: SRTManager) {
         self.captureManager = captureManager
         self.ndiManager = ndiManager
+        self.srtManager = srtManager
     }
 
     func setTallyPoller(_ poller: NDITallyPoller) {
@@ -40,7 +43,11 @@ actor StreamingCoordinator: StreamingService {
             throw AVOCamError.alreadyStreaming
         }
 
-        print("▶️ Starting stream: \(request.resolution) @ \(request.framerate)fps, \(request.bitrate)bps")
+        // Determine streaming mode
+        let mode = request.streamingMode ?? .ndi
+        currentMode = mode
+
+        print("▶️ Starting \(mode.rawValue.uppercased()) stream: \(request.resolution) @ \(request.framerate)fps, \(request.bitrate)bps")
 
         // 1. Configure capture
         try await captureManager.configure(
@@ -48,38 +55,69 @@ actor StreamingCoordinator: StreamingService {
             framerate: request.framerate
         )
 
-        // 2. Start NDI sender
-        try ndiManager.start(
-            width: parseWidth(from: request.resolution),
-            height: parseHeight(from: request.resolution),
-            fps: request.framerate
-        )
+        let width = parseWidth(from: request.resolution)
+        let height = parseHeight(from: request.resolution)
 
-        // 3. Start capture with frame callback that feeds NDI
-        try await captureManager.startCapture { [ndiManager] sampleBuffer in
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                return
+        // 2. Start appropriate streaming backend
+        switch mode {
+        case .ndi:
+            try ndiManager.start(
+                width: width,
+                height: height,
+                fps: request.framerate
+            )
+
+            // 3. Start capture with frame callback that feeds NDI
+            try await captureManager.startCapture { [ndiManager] sampleBuffer in
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    return
+                }
+                ndiManager.send(pixelBuffer: pixelBuffer)
             }
-            ndiManager.send(pixelBuffer: pixelBuffer)
+
+            // 4. Start tally poller for torch control (NDI only)
+            tallyPoller?.start()
+
+        case .srt:
+            // Configure SRT manager
+            let srtConfig = SRTConfiguration.from(request: request)
+            try await srtManager.start(config: srtConfig.toManagerConfiguration())
+
+            // Start capture with frame callback that feeds SRT encoder
+            try await captureManager.startCapture { [srtManager] sampleBuffer in
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    return
+                }
+                let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                let duration = CMSampleBufferGetDuration(sampleBuffer)
+
+                Task {
+                    await srtManager.send(pixelBuffer: pixelBuffer, timestamp: timestamp, duration: duration)
+                }
+            }
         }
 
         isStreaming = true
 
-        // 4. Start tally poller for torch control
-        tallyPoller?.start()
-
-        print("✅ Streaming started successfully")
+        print("✅ \(mode.rawValue.uppercased()) streaming started successfully")
     }
 
     func stopStreaming() async {
         guard isStreaming else { return }
 
-        print("⏹ Stopping stream")
+        print("⏹ Stopping \(currentMode.rawValue.uppercased()) stream")
 
-        // Stop in reverse order
-        tallyPoller?.stop()
-        await captureManager.stopCapture()
-        ndiManager.stop()
+        // Stop in reverse order based on current mode
+        switch currentMode {
+        case .ndi:
+            tallyPoller?.stop()
+            await captureManager.stopCapture()
+            ndiManager.stop()
+
+        case .srt:
+            await captureManager.stopCapture()
+            await srtManager.stop()
+        }
 
         isStreaming = false
 
@@ -96,8 +134,17 @@ actor StreamingCoordinator: StreamingService {
         return ndiManager.getTallyState()
     }
 
-    func getTelemetryStats() -> (fps: Double, sentFrames: Int64, droppedFrames: Int64) {
-        return ndiManager.getTelemetryStats()
+    func getTelemetryStats() async -> (fps: Double, sentFrames: Int64, droppedFrames: Int64) {
+        switch currentMode {
+        case .ndi:
+            return ndiManager.getTelemetryStats()
+        case .srt:
+            return await srtManager.getStats()
+        }
+    }
+
+    func getCurrentStreamingMode() -> StreamingMode {
+        return currentMode
     }
 
     // MARK: - Private Helpers

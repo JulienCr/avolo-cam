@@ -39,6 +39,28 @@ struct VideoSettingsView: View {
                     }
                 }
 
+                Section(header: Text("STREAMING MODE")) {
+                    Picker("Mode", selection: $viewModel.streamingMode) {
+                        Text("NDI (Low Latency)").tag(StreamingMode.ndi)
+                        Text("SRT (Low CPU)").tag(StreamingMode.srt)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if viewModel.streamingMode == .srt {
+                        HStack {
+                            Text("Port")
+                            Spacer()
+                            Text("\(viewModel.srtPort)")
+                                .foregroundColor(.secondary)
+                        }
+
+                        Stepper("Latency: \(viewModel.srtLatency)ms",
+                                value: $viewModel.srtLatency,
+                                in: 20...500,
+                                step: 10)
+                    }
+                }
+
                 Section(header: Text("CUSTOM SETTINGS")) {
                     Toggle("Use Custom Settings", isOn: $viewModel.useCustomSettings)
 
@@ -146,6 +168,9 @@ class VideoSettingsViewModel: ObservableObject {
     @Published var customFps: Int
     @Published var customCodec: VideoCodec
     @Published var customBitrate: Int
+    @Published var streamingMode: StreamingMode
+    @Published var srtPort: Int
+    @Published var srtLatency: Int
 
     var effectiveConfiguration: StreamConfiguration? {
         if useCustomSettings {
@@ -170,6 +195,11 @@ class VideoSettingsViewModel: ObservableObject {
         self.customFps = loadedSettings.customFps ?? 30
         self.customCodec = loadedSettings.customCodec ?? .h264
         self.customBitrate = loadedSettings.customBitrate ?? 10_000_000
+
+        // Initialize streaming mode settings
+        self.streamingMode = loadedSettings.streamingMode
+        self.srtPort = loadedSettings.srtPort
+        self.srtLatency = loadedSettings.srtLatency
     }
 
     func selectPreset(_ preset: VideoPreset) {
@@ -190,8 +220,13 @@ class VideoSettingsViewModel: ObservableObject {
             settings.customBitrate = nil
         }
 
+        // Save streaming mode settings
+        settings.streamingMode = streamingMode
+        settings.srtPort = srtPort
+        settings.srtLatency = srtLatency
+
         VideoSettingsManager.save(settings)
-        print("✅ Video settings saved")
+        print("✅ Video settings saved (mode: \(streamingMode.rawValue), SRT port: \(srtPort), latency: \(srtLatency)ms)")
     }
 }
 

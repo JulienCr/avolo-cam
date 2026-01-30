@@ -233,13 +233,27 @@ async fn start_stream(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        _ => None,
+    });
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
     };
     manager.start_stream(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -274,13 +288,27 @@ async fn update_stream_settings(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        _ => None,
+    });
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
     };
     manager.update_stream_settings(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -316,13 +344,27 @@ async fn group_start_stream(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
 ) -> Result<Vec<GroupCommandResult>, String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        _ => None,
+    });
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
     };
     manager.group_start_stream(&camera_ids, request).await
         .map_err(|e| e.to_string())

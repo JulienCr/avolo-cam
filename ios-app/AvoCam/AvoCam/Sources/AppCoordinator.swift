@@ -31,6 +31,7 @@ class AppCoordinator: ObservableObject {
     // Core components
     private let captureManager: CaptureManager
     private let ndiManager: NDIManager
+    private let srtManager: SRTManager
     private var networkServer: NetworkServer  // var to allow re-initialization with self
     private let bonjourService: BonjourService
     private let tallyPoller: NDITallyPoller
@@ -49,6 +50,7 @@ class AppCoordinator: ObservableObject {
         // Initialize core components (order matters for initialization)
         self.captureManager = CaptureManager()
         self.ndiManager = NDIManager(alias: configuration.cameraAlias)
+        self.srtManager = SRTManager()
         self.tallyPoller = NDITallyPoller(ndiManager: ndiManager)
         self.bonjourService = BonjourService(
             alias: configuration.cameraAlias,
@@ -60,7 +62,8 @@ class AppCoordinator: ObservableObject {
         self.thermalManager = ThermalManager()
         self.streamingCoordinator = StreamingCoordinator(
             captureManager: captureManager,
-            ndiManager: ndiManager
+            ndiManager: ndiManager,
+            srtManager: srtManager
         )
         self.telemetryAggregator = TelemetryAggregator(
             telemetryCollector: TelemetryCollector(),
@@ -383,6 +386,14 @@ class AppCoordinator: ObservableObject {
         settings.focusMode = focusState.mode
         settings.focusDistance = focusState.distance
 
+        // Build SRT connection URL if in SRT mode
+        let srtConnectionUrl: String? = {
+            if settings.streamingMode == .srt, let ip = localIPAddress, let port = settings.srtPort {
+                return "srt://\(ip):\(port)?mode=caller"
+            }
+            return nil
+        }()
+
         return StatusResponse(
             alias: configuration.cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
@@ -390,7 +401,10 @@ class AppCoordinator: ObservableObject {
             telemetry: telemetry ?? createDefaultTelemetry(),
             capabilities: await getCapabilities(),
             tallyProgram: tallyState?.program,
-            tallyPreview: tallyState?.preview
+            tallyPreview: tallyState?.preview,
+            streamingMode: settings.streamingMode,
+            srtConnectionUrl: srtConnectionUrl,
+            srtPort: settings.srtPort
         )
     }
 
@@ -436,11 +450,15 @@ class AppCoordinator: ObservableObject {
     // MARK: - Helpers
 
     private func updateCurrentSettings(from request: StreamStartRequest) {
+        let videoSettings = VideoSettingsManager.load()
         if var current = currentSettings {
             current.resolution = request.resolution
             current.fps = request.framerate
             current.bitrate = request.bitrate
             current.codec = request.codec
+            current.streamingMode = request.streamingMode ?? videoSettings.streamingMode
+            current.srtPort = request.srtPort ?? videoSettings.srtPort
+            current.srtLatency = request.srtLatency ?? videoSettings.srtLatency
             currentSettings = current
             persistSettings(current)
         } else {
@@ -460,7 +478,10 @@ class AppCoordinator: ObservableObject {
                 focusDistance: nil,
                 zoomFactor: 1.0,
                 cameraPosition: "back",
-                lens: "wide"
+                lens: "wide",
+                streamingMode: request.streamingMode ?? videoSettings.streamingMode,
+                srtPort: request.srtPort ?? videoSettings.srtPort,
+                srtLatency: request.srtLatency ?? videoSettings.srtLatency
             )
             currentSettings = newSettings
             persistSettings(newSettings)
@@ -468,6 +489,7 @@ class AppCoordinator: ObservableObject {
     }
 
     private func createDefaultSettings() -> CurrentSettings {
+        let videoSettings = VideoSettingsManager.load()
         return CurrentSettings(
             resolution: "1920x1080",
             fps: 30,
@@ -484,7 +506,10 @@ class AppCoordinator: ObservableObject {
             focusDistance: nil,
             zoomFactor: 1.0,
             cameraPosition: "back",
-            lens: "wide"
+            lens: "wide",
+            streamingMode: videoSettings.streamingMode,
+            srtPort: videoSettings.srtPort,
+            srtLatency: videoSettings.srtLatency
         )
     }
 

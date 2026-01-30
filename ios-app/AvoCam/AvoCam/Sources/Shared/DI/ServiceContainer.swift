@@ -23,6 +23,7 @@ final class ServiceContainer {
 
     let captureManager: CaptureManager
     let ndiManager: NDIManager
+    let srtManager: SRTManager
     let telemetryCollector: TelemetryCollector
 
     // MARK: - Coordinators
@@ -49,6 +50,7 @@ final class ServiceContainer {
         // Create core services
         captureManager = CaptureManager()
         ndiManager = NDIManager(alias: configuration.cameraAlias)
+        srtManager = SRTManager()
         telemetryCollector = TelemetryCollector()
 
         // Initialize other components
@@ -59,7 +61,8 @@ final class ServiceContainer {
         // Create streaming coordinator
         streamingCoordinator = StreamingCoordinator(
             captureManager: captureManager,
-            ndiManager: ndiManager
+            ndiManager: ndiManager,
+            srtManager: srtManager
         )
 
         // Create tally poller (depends on ndiManager)

@@ -41,6 +41,9 @@ impl PersistedCamera {
                 framerate: status.current.fps,
                 bitrate: status.current.bitrate,
                 codec: status.current.codec.clone(),
+                streaming_mode: status.current.streaming_mode,
+                srt_port: status.current.srt_port,
+                srt_latency: status.current.srt_latency,
             };
 
             let camera = CameraSettingsRequest {
@@ -912,6 +915,9 @@ impl CameraManager {
                     framerate: 30,
                     bitrate: 10_000_000,
                     codec: "h264".to_string(),
+                    streaming_mode: None,
+                    srt_port: None,
+                    srt_latency: None,
                 });
 
             let client = camera.client.clone();

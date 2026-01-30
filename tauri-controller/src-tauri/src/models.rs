@@ -20,12 +20,23 @@ pub enum NdiState {
     Idle,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamingMode {
+    Ndi,
+    Srt,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentSettings {
     pub resolution: String,
     pub fps: u32,
     pub bitrate: u32,
     pub codec: String,
+    pub streaming_mode: Option<StreamingMode>,
+    pub srt_port: Option<u32>,
+    pub srt_latency: Option<u32>,
+    pub srt_connection_url: Option<String>,
     pub wb_mode: WhiteBalanceMode,
     pub wb_kelvin: Option<u32>,
     pub wb_tint: Option<f64>,
@@ -99,6 +110,12 @@ pub struct StreamStartRequest {
     pub framerate: u32,
     pub bitrate: u32,
     pub codec: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streaming_mode: Option<StreamingMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_port: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_latency: Option<u32>,
 }
 
 // MARK: - Camera Control

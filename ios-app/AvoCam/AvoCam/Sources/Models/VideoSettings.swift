@@ -53,6 +53,9 @@ struct VideoSettings: Codable {
     var customFps: Int?
     var customCodec: VideoCodec?
     var customBitrate: Int?
+    var streamingMode: StreamingMode = .ndi
+    var srtPort: Int = 9000
+    var srtLatency: Int = 120
 
     // Computed property to get effective settings
     func effectiveSettings(presets: [VideoPreset]) -> StreamConfiguration? {
@@ -93,12 +96,16 @@ struct StreamConfiguration {
     let codec: VideoCodec
     let bitrate: Int
 
-    func toStreamStartRequest() -> StreamStartRequest {
+    func toStreamStartRequest(videoSettings: VideoSettings) -> StreamStartRequest {
         return StreamStartRequest(
             resolution: resolution,
             framerate: fps,
             bitrate: bitrate,
-            codec: codec.rawValue
+            codec: codec.rawValue,
+            streamingMode: videoSettings.streamingMode,
+            srtPort: videoSettings.srtPort,
+            srtLatency: videoSettings.srtLatency,
+            srtPassphrase: nil
         )
     }
 }

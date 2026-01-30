@@ -32,6 +32,9 @@ export async function startStream(
     framerate: settings.framerate,
     bitrate: settings.bitrate,
     codec: settings.codec,
+    streamingMode: settings.streaming_mode,
+    srtPort: settings.srt_port,
+    srtLatency: settings.srt_latency,
   });
 }
 
@@ -57,6 +60,9 @@ export async function updateStreamSettings(
     framerate: settings.framerate,
     bitrate: settings.bitrate,
     codec: settings.codec,
+    streamingMode: settings.streaming_mode,
+    srtPort: settings.srt_port,
+    srtLatency: settings.srt_latency,
   });
 }
 
@@ -75,6 +81,9 @@ export async function groupStartStream(
     framerate: settings.framerate,
     bitrate: settings.bitrate,
     codec: settings.codec,
+    streamingMode: settings.streaming_mode,
+    srtPort: settings.srt_port,
+    srtLatency: settings.srt_latency,
   });
 }
 
