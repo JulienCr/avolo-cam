@@ -9,6 +9,7 @@ import Foundation
 import NIO
 import NIOHTTP1
 import NIOWebSocket
+import os
 
 // MARK: - Request Handler Protocol
 
@@ -41,9 +42,8 @@ class NetworkServer {
     private var bootstrap: ServerBootstrap?
     private var channel: Channel?
 
-    // WebSocket clients
-    private var wsClients: [WebSocketClient] = []
-    private let wsClientsLock = NSLock()
+    // WebSocket clients (thread-safe access via lock)
+    private let wsClients = OSAllocatedUnfairLock(uncheckedState: [WebSocketClient]())
 
     // Rate limiting
     private var lastCameraUpdateTime: Date = Date.distantPast
@@ -139,12 +139,12 @@ class NetworkServer {
 
     func stop() {
         // Close all WebSocket connections
-        wsClientsLock.lock()
-        for client in wsClients {
-            client.close()
+        wsClients.withLock { clients in
+            for client in clients {
+                client.close()
+            }
+            clients.removeAll()
         }
-        wsClients.removeAll()
-        wsClientsLock.unlock()
 
         // Shutdown server
         try? channel?.close().wait()
@@ -160,25 +160,25 @@ class NetworkServer {
     // MARK: - WebSocket Management
 
     func addWebSocketClient(_ client: WebSocketClient) {
-        wsClientsLock.lock()
-        wsClients.append(client)
-        wsClientsLock.unlock()
+        let count = wsClients.withLock { clients -> Int in
+            clients.append(client)
+            return clients.count
+        }
 
-        print("🔌 WebSocket client connected (total: \(wsClients.count))")
+        print("🔌 WebSocket client connected (total: \(count))")
     }
 
     func removeWebSocketClient(_ client: WebSocketClient) {
-        wsClientsLock.lock()
-        wsClients.removeAll { $0 === client }
-        wsClientsLock.unlock()
+        let count = wsClients.withLock { clients -> Int in
+            clients.removeAll { $0 === client }
+            return clients.count
+        }
 
-        print("🔌 WebSocket client disconnected (total: \(wsClients.count))")
+        print("🔌 WebSocket client disconnected (total: \(count))")
     }
 
     func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
-        wsClientsLock.lock()
-        let clients = wsClients
-        wsClientsLock.unlock()
+        let clients = wsClients.withLock { Array($0) }
 
         // Encode telemetry to JSON
         let message = WebSocketTelemetryMessage(
