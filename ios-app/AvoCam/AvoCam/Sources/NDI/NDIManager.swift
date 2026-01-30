@@ -160,22 +160,22 @@ class NDIManager {
 
         // PERF: Send on dedicated queue (off capture thread, 8% CPU reduction)
         if enableDedicatedQueue {
-            // PERF: Retain buffer for async send (explicit memory management avoids closure capture overhead)
-            CVPixelBufferRetain(pixelBuffer)
-            
             // Capture backpressure state and semaphore to avoid leak if self is deallocated
             let backpressureEnabled = enableBackpressure
             let semaphore = ndiSemaphore
+            // Capture pixelBuffer explicitly to ensure ARC retains it for the async block
+            let buffer = pixelBuffer
             
             ndiQueue.async { [weak self] in
                 defer {
-                    CVPixelBufferRelease(pixelBuffer)
                     if backpressureEnabled {
                         semaphore.signal()
                     }
+                    // ARC automatically releases buffer when closure completes
+                    _ = buffer
                 }
                 guard let self = self else { return }
-                self.sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
+                self.sendFrameSync(pixelBuffer: buffer, sender: sender)
                 self.statsLock.withLock { $0.sent += 1 }
             }
         } else {
