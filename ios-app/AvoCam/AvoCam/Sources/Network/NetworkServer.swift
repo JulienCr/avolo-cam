@@ -9,6 +9,7 @@ import Foundation
 import NIO
 import NIOHTTP1
 import NIOWebSocket
+import os
 
 // MARK: - Request Handler Protocol
 
@@ -43,7 +44,7 @@ class NetworkServer {
 
     // WebSocket clients
     private var wsClients: [WebSocketClient] = []
-    private let wsClientsLock = NSLock()
+    private let wsClientsLock = OSAllocatedUnfairLock(uncheckedState: ())
 
     // Rate limiting
     private var lastCameraUpdateTime: Date = Date.distantPast
@@ -139,12 +140,12 @@ class NetworkServer {
 
     func stop() {
         // Close all WebSocket connections
-        wsClientsLock.lock()
-        for client in wsClients {
-            client.close()
+        wsClientsLock.withLock { _ in
+            for client in wsClients {
+                client.close()
+            }
+            wsClients.removeAll()
         }
-        wsClients.removeAll()
-        wsClientsLock.unlock()
 
         // Shutdown server
         try? channel?.close().wait()
@@ -160,25 +161,25 @@ class NetworkServer {
     // MARK: - WebSocket Management
 
     func addWebSocketClient(_ client: WebSocketClient) {
-        wsClientsLock.lock()
-        wsClients.append(client)
-        wsClientsLock.unlock()
+        let count = wsClientsLock.withLock { _ -> Int in
+            wsClients.append(client)
+            return wsClients.count
+        }
 
-        print("🔌 WebSocket client connected (total: \(wsClients.count))")
+        print("🔌 WebSocket client connected (total: \(count))")
     }
 
     func removeWebSocketClient(_ client: WebSocketClient) {
-        wsClientsLock.lock()
-        wsClients.removeAll { $0 === client }
-        wsClientsLock.unlock()
+        let count = wsClientsLock.withLock { _ -> Int in
+            wsClients.removeAll { $0 === client }
+            return wsClients.count
+        }
 
-        print("🔌 WebSocket client disconnected (total: \(wsClients.count))")
+        print("🔌 WebSocket client disconnected (total: \(count))")
     }
 
     func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
-        wsClientsLock.lock()
-        let clients = wsClients
-        wsClientsLock.unlock()
+        let clients = wsClientsLock.withLock { _ in wsClients }
 
         // Encode telemetry to JSON
         let message = WebSocketTelemetryMessage(

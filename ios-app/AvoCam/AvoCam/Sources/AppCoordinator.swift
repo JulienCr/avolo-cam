@@ -21,6 +21,9 @@ class AppCoordinator: ObservableObject {
     @Published var captureSession: AVCaptureSession?
     @Published var isScreenDimmed: Bool = false
     @Published var localIPAddress: String?
+    
+    // Thermal management state
+    private var thermalThrottleApplied = false
     @Published var bearerTokenForDisplay: String = ""
     @Published var isAuthenticationEnabled: Bool = false
 
@@ -359,12 +362,25 @@ class AppCoordinator: ObservableObject {
 
         switch state {
         case .serious:
-            print("⚠️ Thermal state: serious - consider reducing bitrate")
-            // TODO: Implement gradual bitrate reduction
+            if !thermalThrottleApplied {
+                thermalThrottleApplied = true
+                print("⚠️ Thermal throttle activated: device heating up")
+                // Log warning but don't stop - let user decide
+                // Could optionally reduce FPS here in the future
+            }
         case .critical:
-            print("🔥 Thermal state: critical - reducing bitrate/fps")
-            // TODO: Implement aggressive bitrate/fps reduction
-        default:
+            print("🔥 Thermal state CRITICAL: stopping stream to prevent damage")
+            // Stop streaming to protect the device
+            Task {
+                await stopStreaming()
+                self.error = "Stream stopped: device overheating. Please let it cool down."
+            }
+        case .nominal, .fair:
+            if thermalThrottleApplied {
+                thermalThrottleApplied = false
+                print("✅ Thermal state returned to normal")
+            }
+        @unknown default:
             break
         }
     }

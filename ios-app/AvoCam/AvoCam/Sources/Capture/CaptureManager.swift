@@ -923,25 +923,30 @@ actor CaptureManager: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+    // Static counter for rate-limited dropped frame logging
+    private static var droppedFrameCount: Int = 0
+
     nonisolated func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // PERF: Signpost begin (compiled out in Release builds)
-        if enableSignposts {
-            os_signpost(.begin, log: perfLog, name: "Frame Capture", signpostID: captureSignpostID)
-        }
+        autoreleasepool {
+            // PERF: Signpost begin (compiled out in Release builds)
+            if enableSignposts {
+                os_signpost(.begin, log: perfLog, name: "Frame Capture", signpostID: captureSignpostID)
+            }
 
-        // HOT PATH: Invoke callback directly without actor hop or metadata writes
-        // Color space is set at device level (sRGB) and output level (video range NV12)
-        // Thread-safe access to callback via lock
-        let callback = frameCallbackLock.withLock { _frameCallback }
-        callback?(sampleBuffer)
+            // HOT PATH: Invoke callback directly without actor hop or metadata writes
+            // Color space is set at device level (sRGB) and output level (video range NV12)
+            // Thread-safe access to callback via lock
+            let callback = frameCallbackLock.withLock { _frameCallback }
+            callback?(sampleBuffer)
 
-        // PERF: Signpost end
-        if enableSignposts {
-            os_signpost(.end, log: perfLog, name: "Frame Capture", signpostID: captureSignpostID)
+            // PERF: Signpost end
+            if enableSignposts {
+                os_signpost(.end, log: perfLog, name: "Frame Capture", signpostID: captureSignpostID)
+            }
         }
     }
 
@@ -950,8 +955,11 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didDrop sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // Log dropped frames
-        print("⚠️ Dropped frame")
+        CaptureManager.droppedFrameCount += 1
+        // Log every 30 drops to avoid spam
+        if CaptureManager.droppedFrameCount == 1 || CaptureManager.droppedFrameCount % 30 == 0 {
+            print("⚠️ AVFoundation dropped frames: \(CaptureManager.droppedFrameCount) total")
+        }
     }
 
     // MARK: - Helper Functions

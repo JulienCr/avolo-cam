@@ -38,8 +38,9 @@ class NDIManager {
 
     // PERF: Backpressure control (max 3 frames in-flight to NDI)
     private let ndiSemaphore = DispatchSemaphore(value: 3)
-    private var droppedFrameCount: Int64 = 0
-    private var sentFrameCount: Int64 = 0
+    
+    // PERF: Thread-safe stats counters using OSAllocatedUnfairLock (replaces deprecated OSAtomicIncrement64)
+    private let statsLock = OSAllocatedUnfairLock(uncheckedState: (dropped: Int64(0), sent: Int64(0)))
 
     // PERF: Reusable NDI frame struct (eliminates 25 allocs/sec at 4K25)
     private var ndiVideoFrame = NDIlib_video_frame_v2_t()
@@ -144,38 +145,39 @@ class NDIManager {
         if enableBackpressure {
             let acquired = ndiSemaphore.wait(timeout: .now())
             if acquired == .timedOut {
-                OSAtomicIncrement64(&droppedFrameCount)
+                statsLock.withLock { $0.dropped += 1 }
+                let dropped = statsLock.withLock { $0.dropped }
                 // Log every 30 drops to avoid spam
-                if droppedFrameCount % 30 == 1 {
-                    print("⚠️ NDI backpressure: dropped \(droppedFrameCount) frames total")
+                if dropped % 30 == 1 {
+                    print("⚠️ NDI backpressure: dropped \(dropped) frames total")
                 }
                 return
             }
-        }
-
-        // Capture buffer for async send (ARC handles memory management)
-        let sendBlock = { [weak self] in
-            guard let self = self else {
-                if self?.enableBackpressure == true {
-                    self?.ndiSemaphore.signal()
-                }
-                return
-            }
-
-            self.sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
-
-            if self.enableBackpressure {
-                self.ndiSemaphore.signal()
-            }
-
-            OSAtomicIncrement64(&self.sentFrameCount)
         }
 
         // PERF: Send on dedicated queue (off capture thread, 8% CPU reduction)
         if enableDedicatedQueue {
-            ndiQueue.async(execute: sendBlock)
+            // PERF: Retain buffer for async send (explicit memory management avoids closure capture overhead)
+            CVPixelBufferRetain(pixelBuffer)
+            
+            ndiQueue.async { [weak self] in
+                defer {
+                    CVPixelBufferRelease(pixelBuffer)
+                    if self?.enableBackpressure == true {
+                        self?.ndiSemaphore.signal()
+                    }
+                }
+                guard let self = self else { return }
+                self.sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
+                self.statsLock.withLock { $0.sent += 1 }
+            }
         } else {
-            sendBlock()  // Original synchronous behavior for rollback
+            // Original synchronous behavior for rollback
+            sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
+            statsLock.withLock { $0.sent += 1 }
+            if enableBackpressure {
+                ndiSemaphore.signal()
+            }
         }
     }
 
@@ -266,10 +268,9 @@ class NDIManager {
 
         if elapsed >= oneSecondNanos {
             let connections = getConnectionCount()
-            let sent = sentFrameCount  // Atomic read
-            let dropped = droppedFrameCount
+            let stats = statsLock.withLock { $0 }
 
-            print("📡 NDI: \(frameStatsCounter) fps, \(connections) conn, sent: \(sent), dropped: \(dropped)")
+            print("📡 NDI: \(frameStatsCounter) fps, \(connections) conn, sent: \(stats.sent), dropped: \(stats.dropped)")
 
             frameStatsCounter = 0
             frameStatsLastPrint = now
@@ -332,9 +333,8 @@ class NDIManager {
         }
 
         let fps = Double(enableReducedAllocation ? frameStatsCounter : frameCount)
-        let sent = sentFrameCount
-        let dropped = droppedFrameCount
+        let stats = statsLock.withLock { $0 }
 
-        return (fps, sent, dropped)
+        return (fps, stats.sent, stats.dropped)
     }
 }
