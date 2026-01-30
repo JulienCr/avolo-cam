@@ -277,7 +277,7 @@ WebSocket telemetry: `ws://<ip>:8888/ws` (1Hz updates)
 - [SwiftNIO Examples](https://github.com/apple/swift-nio-examples)
 - [AVFoundation Programming Guide](https://developer.apple.com/documentation/avfoundation)
 - [VideoToolbox Reference](https://developer.apple.com/documentation/videotoolbox)
-- [LOT A Checklist](../LOT-A-CHECKLIST.md)
+- [LOT A Checklist](../docs/LOT-A-CHECKLIST.md)
 
 ## Support
 

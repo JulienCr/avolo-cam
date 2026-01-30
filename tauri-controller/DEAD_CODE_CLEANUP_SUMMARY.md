@@ -114,7 +114,7 @@ When implementing real-time controls:
 
 - **Full Analysis:** [DEAD_CODE_ANALYSIS.md](DEAD_CODE_ANALYSIS.md)
 - **Project Roadmap:** [../CLAUDE.md](../CLAUDE.md)
-- **Task Breakdown:** [../LOT-A-CHECKLIST.md](../LOT-A-CHECKLIST.md)
+- **Task Breakdown:** [../docs/LOT-A-CHECKLIST.md](../docs/LOT-A-CHECKLIST.md)
 
 ---
 

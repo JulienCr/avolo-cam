@@ -97,10 +97,10 @@ The project is now ready for:
 ✅ **Complete Documentation**:
 - `README.md` - Main project overview
 - `CLAUDE.md` - Architecture guidance (enhanced with surgical upgrades)
-- `LOT-A-CHECKLIST.md` - 150+ task breakdown
+- `docs/LOT-A-CHECKLIST.md` - 150+ task breakdown
 - `ios-app/README.md` - iOS setup guide
 - `tauri-controller/README.md` - Desktop controller guide
-- `PROJECT-STATUS.md` - This file
+- `docs/PROJECT-STATUS.md` - This file
 - `.gitignore` - Proper exclusions
 
 ## Next Steps
@@ -328,7 +328,7 @@ wscat -c ws://<ip>:8888/ws?token=<token>
 - **iOS Development**: [ios-app/README.md](ios-app/README.md)
 - **Tauri Development**: [tauri-controller/README.md](tauri-controller/README.md)
 - **Architecture**: [CLAUDE.md](CLAUDE.md)
-- **Task Breakdown**: [LOT-A-CHECKLIST.md](LOT-A-CHECKLIST.md)
+- **Task Breakdown**: [LOT-A-CHECKLIST.md](LOT-A-CHECKLIST.md) (same folder)
 - **Specifications**: [docs/specs.md](docs/specs.md)
 
 ## Questions?
@@ -336,7 +336,7 @@ wscat -c ws://<ip>:8888/ws?token=<token>
 - Check inline code comments (especially `NDIManager.swift` and `NetworkServer.swift`)
 - Review `CLAUDE.md` for architectural decisions
 - See component READMEs for specific setup instructions
-- Refer to `LOT-A-CHECKLIST.md` for detailed task breakdown
+- Refer to `LOT-A-CHECKLIST.md` (same folder) for detailed task breakdown
 
 ---
 

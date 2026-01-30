@@ -357,7 +357,7 @@ tauri-controller/src/
 ## 🔗 RESOURCES
 
 - **Project Docs:** `/docs/specs.md`
-- **Checklist:** `/LOT-A-CHECKLIST.md`
+- **Checklist:** `LOT-A-CHECKLIST.md`
 - **README:** `/ios-app/README.md`
 - **Branch:** `claude/camera-controls-and-fixes-011CUsY9sz5Ct1cEGK4itMr7`
 

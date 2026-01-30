@@ -330,7 +330,7 @@ Logs show:
 - [Tokio Async Runtime](https://tokio.rs/)
 - [mdns-sd Crate](https://docs.rs/mdns-sd/)
 - [reqwest HTTP Client](https://docs.rs/reqwest/)
-- [LOT A Checklist](../LOT-A-CHECKLIST.md)
+- [LOT A Checklist](../docs/LOT-A-CHECKLIST.md)
 - [CLAUDE.md](../CLAUDE.md)
 
 ## Support

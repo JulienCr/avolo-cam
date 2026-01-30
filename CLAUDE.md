@@ -231,6 +231,6 @@ All endpoints require Bearer token authentication.
 
 ## Development Resources
 
-- **Implementation Checklist**: See [LOT-A-CHECKLIST.md](LOT-A-CHECKLIST.md) for detailed task breakdown (150+ items)
+- **Implementation Checklist**: See [docs/LOT-A-CHECKLIST.md](docs/LOT-A-CHECKLIST.md) for detailed task breakdown
 - **Specifications**: See [docs/specs.md](docs/specs.md) for complete project requirements
 - **Estimated Timeline**: 4-6 weeks for LOT A MCP completion
