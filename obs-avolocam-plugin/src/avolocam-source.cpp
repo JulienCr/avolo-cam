@@ -36,6 +36,7 @@
 #define PROP_SHOW_LATENCY     "show_latency"
 #define PROP_AUTH_TOKEN       "auth_token"
 #define PROP_PREFER_ZERO_COPY "prefer_zero_copy"
+#define PROP_DEBUG_MODE       "debug_mode"
 
 // Jitter buffer modes
 #define JITTER_ULTRA_LOW  0  // 0-8ms buffer
@@ -59,6 +60,7 @@ struct SourceData {
     bool show_latency = false;
     std::string auth_token;
     bool prefer_zero_copy = true;
+    bool debug_mode = false;
 
     // Pipeline components
     std::unique_ptr<UdpReceiver> receiver;
@@ -236,15 +238,15 @@ struct SourceData {
             for (auto& nal : nal_units) {
                 uint8_t nal_type = static_cast<uint8_t>(nal.type);
 
-                // Log SPS/PPS/IDR
-                if (nal_type == 7 || nal_type == 8 || nal_type == 5) {
+                // Log SPS/PPS/IDR only in debug mode
+                if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
                     blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
                          nal_type, nal.data.size(), nal.marker);
                 }
 
                 // Check sync state
                 if (!sync_state->can_decode(nal.type, nal.is_idr)) {
-                    if (nal_type == 7 || nal_type == 8 || nal_type == 5) {
+                    if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
                         blog(LOG_WARNING, "[avolocam] Sync state rejected NAL type=%d", nal_type);
                     }
                     frames_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -275,8 +277,8 @@ struct SourceData {
             return;
         }
 
-        // Log IDR frames and periodically
-        if (au.is_idr || au_count % 100 == 0) {
+        // Log IDR frames and periodically (only in debug mode or for important events)
+        if (debug_mode && (au.is_idr || au_count % 100 == 0)) {
             blog(LOG_INFO, "[avolocam] AU #%d: size=%zu, idr=%d, init=%d",
                  au_count, au.data.size(), au.is_idr ? 1 : 0, decoder->is_initialized() ? 1 : 0);
         }
@@ -343,20 +345,8 @@ struct SourceData {
         }
 
         // Decode the access unit
-        static int decode_call_count = 0;
-        decode_call_count++;
-        if (decode_call_count <= 10) {
-            blog(LOG_WARNING, "[avolocam] About to call decode() #%d, AU size=%zu",
-                 decode_call_count, au.data.size());
-        }
-
         DecodedFrame frame;
         bool decode_ok = decoder->decode(au.data.data(), au.data.size(), frame);
-
-        if (decode_call_count <= 10) {
-            blog(LOG_WARNING, "[avolocam] decode() #%d returned %d, frame: %ux%u, y=%p",
-                 decode_call_count, decode_ok ? 1 : 0, frame.width, frame.height, (void*)frame.y_plane);
-        }
 
         if (!decode_ok) {
             blog(LOG_WARNING, "[avolocam] Decode failed");
@@ -366,9 +356,6 @@ struct SourceData {
 
         // Skip empty frames (SPS/PPS only AUs)
         if (!frame.y_plane) {
-            if (decode_call_count <= 10) {
-                blog(LOG_WARNING, "[avolocam] decode() #%d: frame has no data (SPS/PPS only AU)", decode_call_count);
-            }
             return;
         }
 
@@ -389,21 +376,9 @@ struct SourceData {
 
         // Validate frame data
         if (!frame.y_plane || !frame.uv_plane) {
-            blog(LOG_ERROR, "[avolocam] output_frame #%d: null plane pointers! y=%p uv=%p",
-                 output_count, (void*)frame.y_plane, (void*)frame.uv_plane);
+            blog(LOG_ERROR, "[avolocam] output_frame: null plane pointers! y=%p uv=%p",
+                 (void*)frame.y_plane, (void*)frame.uv_plane);
             return;
-        }
-
-        // Log detailed info for first few frames
-        if (output_count <= 5) {
-            blog(LOG_WARNING, "[avolocam] output_frame #%d: %ux%u, y_stride=%u, uv_stride=%u",
-                 output_count, frame.width, frame.height, frame.y_stride, frame.uv_stride);
-            blog(LOG_WARNING, "[avolocam]   y_plane=%p, first bytes: %02x %02x %02x %02x",
-                 (void*)frame.y_plane, frame.y_plane[0], frame.y_plane[1],
-                 frame.y_plane[2], frame.y_plane[3]);
-            blog(LOG_WARNING, "[avolocam]   uv_plane=%p, first bytes: %02x %02x %02x %02x",
-                 (void*)frame.uv_plane, frame.uv_plane[0], frame.uv_plane[1],
-                 frame.uv_plane[2], frame.uv_plane[3]);
         }
 
         // Use the actual decoded video frame
@@ -426,17 +401,14 @@ struct SourceData {
                                     obs_frame.color_range_max);
         obs_frame.full_range = true;
 
-        if (output_count <= 5) {
-            blog(LOG_WARNING, "[avolocam] NV12 frame #%d: %ux%u, y_stride=%u, uv_stride=%u",
-                 output_count, frame.width, frame.height, frame.y_stride, frame.uv_stride);
-        }
-
         // Output the frame
         obs_source_output_video(source, &obs_frame);
 
-        // Log periodically
-        if (output_count == 1 || output_count % 300 == 0) {
-            blog(LOG_INFO, "[avolocam] Output frame #%d (TEST PATTERN): %ux%u",
+        // Log first frame and periodically
+        if (output_count == 1) {
+            blog(LOG_INFO, "[avolocam] First frame output: %ux%u", obs_frame.width, obs_frame.height);
+        } else if (output_count % 300 == 0) {
+            blog(LOG_INFO, "[avolocam] Output frame #%d: %ux%u",
                  output_count, obs_frame.width, obs_frame.height);
         }
     }
@@ -523,6 +495,7 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     data->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
     data->auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
     data->prefer_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
+    data->debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
 
     if (data->camera_port == 0) {
         data->camera_port = 5000;
@@ -548,6 +521,7 @@ static void avolocam_update(void *data, obs_data_t *settings)
     int new_jitter = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
     std::string new_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
     bool new_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
+    bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
 
     if (new_port == 0) new_port = 5000;
 
@@ -564,6 +538,7 @@ static void avolocam_update(void *data, obs_data_t *settings)
     src->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
     src->auth_token = new_token;
     src->prefer_zero_copy = new_zero_copy;
+    src->debug_mode = new_debug_mode;
 
     if (needs_restart && src->running.load()) {
         src->stop();
@@ -621,6 +596,9 @@ static obs_properties_t *avolocam_get_properties(void *)
     obs_properties_add_bool(props, PROP_PREFER_ZERO_COPY,
                             "Prefer GPU Zero-Copy (requires compatible GPU)");
 
+    // Debug mode
+    obs_properties_add_bool(props, PROP_DEBUG_MODE, "Enable debug logging");
+
     return props;
 }
 
@@ -632,6 +610,7 @@ static void avolocam_get_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, PROP_SHOW_LATENCY, false);
     obs_data_set_default_string(settings, PROP_AUTH_TOKEN, "");
     obs_data_set_default_bool(settings, PROP_PREFER_ZERO_COPY, true);
+    obs_data_set_default_bool(settings, PROP_DEBUG_MODE, false);
 }
 
 // Video render callback for latency overlay

@@ -203,17 +203,17 @@ void VideoToolboxDecoder::on_frame_decoded(CVPixelBufferRef pixel_buffer, CMTime
                                             OSStatus status, VTDecodeInfoFlags flags)
 {
     if (status != noErr) {
-        blog(LOG_WARNING, "[avolocam-vt] Decode callback error: %d", (int)status);
+        blog(LOG_WARNING, "[avolocam] Decode callback error: %d", (int)status);
         return;
     }
 
     if (!pixel_buffer) {
-        blog(LOG_WARNING, "[avolocam-vt] Decode callback: null pixel buffer");
+        blog(LOG_WARNING, "[avolocam] Decode callback: null pixel buffer");
         return;
     }
 
     if (flags & kVTDecodeInfo_FrameDropped) {
-        blog(LOG_DEBUG, "[avolocam-vt] Frame dropped by decoder");
+        blog(LOG_DEBUG, "[avolocam] Frame dropped by decoder");
         return;
     }
 
@@ -240,14 +240,12 @@ bool VideoToolboxDecoder::decode(const uint8_t *data, size_t size, DecodedFrame 
     // Convert Annex B to AVCC format
     std::vector<uint8_t> avcc_data;
     if (!convert_annex_b_to_avcc(data, size, avcc_data)) {
-        blog(LOG_WARNING, "[avolocam-vt] Failed to convert Annex B to AVCC");
+        blog(LOG_WARNING, "[avolocam] Failed to convert Annex B to AVCC");
         return false;
     }
 
-
     if (avcc_data.empty()) {
         // AU only contained SPS/PPS - this is normal, not an error
-        blog(LOG_DEBUG, "[avolocam] AU contained only parameter sets, no frame to decode");
         return true;
     }
 
@@ -319,7 +317,6 @@ bool VideoToolboxDecoder::decode(const uint8_t *data, size_t size, DecodedFrame 
         CFRelease(cf_data);
         return false;
     }
-
 
     // Wait for output (for synchronous behavior)
     VTDecompressionSessionWaitForAsynchronousFrames(session_);
