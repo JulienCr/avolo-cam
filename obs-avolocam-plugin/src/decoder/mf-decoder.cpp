@@ -4,6 +4,10 @@
 
 #include "mf-decoder.h"
 
+#ifdef HAVE_FFMPEG_D3D11VA
+#include "ffmpeg-d3d11va-decoder.h"
+#endif
+
 #ifdef _WIN32
 
 #include <obs-module.h>
@@ -18,6 +22,16 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "strmiids.lib")
+
+// High-resolution timing helper
+namespace {
+    inline uint64_t get_time_ns() {
+        LARGE_INTEGER freq, counter;
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&counter);
+        return (uint64_t)((counter.QuadPart * 1000000000LL) / freq.QuadPart);
+    }
+}
 
 namespace avolocam {
 
@@ -44,6 +58,7 @@ MFDecoder::MFDecoder(const DecoderConfig &config)
 MFDecoder::~MFDecoder()
 {
     destroy_decoder();
+    release_staging_textures();
 
     if (device_manager_) {
         device_manager_->Release();
@@ -66,6 +81,56 @@ MFDecoder::~MFDecoder()
     }
 
     blog(LOG_INFO, "[avolocam] Media Foundation decoder destroyed");
+}
+
+void MFDecoder::release_staging_textures()
+{
+    for (int i = 0; i < 2; i++) {
+        if (staging_textures_[i]) {
+            staging_textures_[i]->Release();
+            staging_textures_[i] = nullptr;
+        }
+    }
+    staging_write_idx_ = 0;
+    staging_read_idx_ = -1;
+    staging_width_ = 0;
+    staging_height_ = 0;
+}
+
+bool MFDecoder::create_staging_textures(uint32_t width, uint32_t height)
+{
+    if (!d3d_device_) return false;
+
+    // Check if we need to recreate
+    if (staging_textures_[0] && staging_width_ == width && staging_height_ == height) {
+        return true;
+    }
+
+    release_staging_textures();
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+    for (int i = 0; i < 2; i++) {
+        HRESULT hr = d3d_device_->CreateTexture2D(&desc, nullptr, &staging_textures_[i]);
+        if (FAILED(hr)) {
+            blog(LOG_ERROR, "[avolocam] Failed to create staging texture %d: 0x%08X", i, hr);
+            release_staging_textures();
+            return false;
+        }
+    }
+
+    staging_width_ = width;
+    staging_height_ = height;
+    blog(LOG_INFO, "[avolocam] Created async staging textures %ux%u", width, height);
+    return true;
 }
 
 bool MFDecoder::create_d3d11_device()
@@ -470,11 +535,15 @@ IMFSample *MFDecoder::create_sample(const uint8_t *data, size_t size)
 
 bool MFDecoder::process_input(const uint8_t *data, size_t size)
 {
+    uint64_t start = get_time_ns();
+
     IMFSample *sample = create_sample(data, size);
     if (!sample) return false;
 
     HRESULT hr = decoder_->ProcessInput(0, sample, 0);
     sample->Release();
+
+    timing_stats_.process_input_ns = get_time_ns() - start;
 
     if (hr == MF_E_NOTACCEPTING) {
         // Decoder needs output to be retrieved first
@@ -486,6 +555,10 @@ bool MFDecoder::process_input(const uint8_t *data, size_t size)
 
 bool MFDecoder::process_output(DecodedFrame &out)
 {
+    uint64_t start_total = get_time_ns();
+    uint64_t lock_time = 0;
+    uint64_t memcpy_time = 0;
+
     MFT_OUTPUT_DATA_BUFFER output = {};
     MFT_OUTPUT_STREAM_INFO stream_info = {};
 
@@ -518,8 +591,10 @@ bool MFDecoder::process_output(DecodedFrame &out)
 
     output.pSample = output_sample;
 
+    uint64_t process_start = get_time_ns();
     DWORD status = 0;
     hr = decoder_->ProcessOutput(0, 1, &output, &status);
+    uint64_t process_time = get_time_ns() - process_start;
 
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
         if (output_sample) output_sample->Release();
@@ -571,13 +646,19 @@ bool MFDecoder::process_output(DecodedFrame &out)
         // Use 2D buffer for stride information
         BYTE *data = nullptr;
         LONG pitch = 0;
+
+        uint64_t lock_start = get_time_ns();
         hr = buffer_2d->Lock2D(&data, &pitch);
+        lock_time = get_time_ns() - lock_start;
+
         if (SUCCEEDED(hr)) {
             // Use actual dimensions, not config dimensions
             // NV12: Y plane is pitch * height, UV plane is pitch * height/2
             size_t y_size = (size_t)pitch * actual_height;
             size_t uv_size = (size_t)pitch * actual_height / 2;
             output_buffer_.resize(y_size + uv_size);
+
+            uint64_t copy_start = get_time_ns();
 
             // Copy Y plane row by row (handles padding correctly)
             BYTE *dst_y = output_buffer_.data();
@@ -593,6 +674,8 @@ bool MFDecoder::process_output(DecodedFrame &out)
             for (UINT32 row = 0; row < actual_height / 2; row++) {
                 memcpy(dst_uv + row * pitch, src_uv + row * pitch, actual_width);
             }
+
+            memcpy_time = get_time_ns() - copy_start;
 
             buffer_2d->Unlock2D();
 
@@ -611,7 +694,10 @@ bool MFDecoder::process_output(DecodedFrame &out)
         DWORD max_length = 0;
         DWORD current_length = 0;
 
+        uint64_t lock_start = get_time_ns();
         hr = media_buffer->Lock(&data, &max_length, &current_length);
+        lock_time = get_time_ns() - lock_start;
+
         if (SUCCEEDED(hr)) {
             // Query the actual stride from Media Foundation
             LONG stride = 0;
@@ -627,8 +713,10 @@ bool MFDecoder::process_output(DecodedFrame &out)
             size_t uv_size = (size_t)stride * actual_height / 2;
 
             if (current_length >= y_size + uv_size) {
+                uint64_t copy_start = get_time_ns();
                 output_buffer_.resize(y_size + uv_size);
                 memcpy(output_buffer_.data(), data, y_size + uv_size);
+                memcpy_time = get_time_ns() - copy_start;
 
                 out.width = actual_width;
                 out.height = actual_height;
@@ -645,7 +733,177 @@ bool MFDecoder::process_output(DecodedFrame &out)
     media_buffer->Release();
     result_sample->Release();
 
+    // Update timing stats
+    timing_stats_.process_output_ns = process_time;
+    timing_stats_.lock_buffer_ns = lock_time;
+    timing_stats_.memcpy_ns = memcpy_time;
+    timing_stats_.total_decode_ns = get_time_ns() - start_total;
+    timing_stats_.accumulate();
+    timing_stats_.reset_per_frame();
+
     return out.y_plane != nullptr;
+}
+
+bool MFDecoder::process_output_async(DecodedFrame &out)
+{
+    // Async double-buffered staging: read previous frame while GPU decodes current
+    // This avoids waiting for GPU decode to complete
+
+    static int async_frame_count = 0;
+    static uint64_t total_async_time = 0;
+
+    uint64_t start_total = get_time_ns();
+
+    MFT_OUTPUT_DATA_BUFFER output = {};
+    MFT_OUTPUT_STREAM_INFO stream_info = {};
+
+    HRESULT hr = decoder_->GetOutputStreamInfo(0, &stream_info);
+    if (FAILED(hr)) return false;
+
+    bool decoder_allocates = (stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
+
+    IMFSample *output_sample = nullptr;
+    if (!decoder_allocates) {
+        IMFMediaBuffer *buffer = nullptr;
+        hr = MFCreateMemoryBuffer(stream_info.cbSize, &buffer);
+        if (FAILED(hr)) return false;
+
+        hr = MFCreateSample(&output_sample);
+        if (FAILED(hr)) { buffer->Release(); return false; }
+
+        hr = output_sample->AddBuffer(buffer);
+        buffer->Release();
+        if (FAILED(hr)) { output_sample->Release(); return false; }
+    }
+
+    output.pSample = output_sample;
+
+    DWORD status = 0;
+    hr = decoder_->ProcessOutput(0, 1, &output, &status);
+
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+        if (output_sample) output_sample->Release();
+        return false;
+    }
+
+    if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
+        if (output.pSample) output.pSample->Release();
+        if (!configure_output_type()) return false;
+        return process_output_async(out);
+    }
+
+    if (FAILED(hr)) {
+        if (output.pSample) output.pSample->Release();
+        return false;
+    }
+
+    IMFSample *result_sample = output.pSample;
+    if (!result_sample) return false;
+
+    // Get buffer and try to get DXGI buffer for GPU texture
+    IMFMediaBuffer *media_buffer = nullptr;
+    hr = result_sample->GetBufferByIndex(0, &media_buffer);
+    if (FAILED(hr)) {
+        result_sample->Release();
+        return false;
+    }
+
+    // Try DXGI buffer for async copy
+    IMFDXGIBuffer *dxgi_buffer = nullptr;
+    hr = media_buffer->QueryInterface(__uuidof(IMFDXGIBuffer), (void **)&dxgi_buffer);
+
+    if (SUCCEEDED(hr) && dxgi_buffer && d3d_context_) {
+        ID3D11Texture2D *decoder_texture = nullptr;
+        UINT subresource = 0;
+
+        hr = dxgi_buffer->GetResource(__uuidof(ID3D11Texture2D), (void **)&decoder_texture);
+        if (SUCCEEDED(hr) && decoder_texture) {
+            dxgi_buffer->GetSubresourceIndex(&subresource);
+
+            D3D11_TEXTURE2D_DESC desc;
+            decoder_texture->GetDesc(&desc);
+
+            // Create staging textures if needed
+            if (!create_staging_textures(desc.Width, desc.Height)) {
+                decoder_texture->Release();
+                dxgi_buffer->Release();
+                media_buffer->Release();
+                result_sample->Release();
+                // Fall back to sync path
+                return process_output(out);
+            }
+
+            // Copy to staging (async - returns immediately)
+            d3d_context_->CopySubresourceRegion(
+                staging_textures_[staging_write_idx_], 0,
+                0, 0, 0,
+                decoder_texture, subresource,
+                nullptr);
+
+            decoder_texture->Release();
+            dxgi_buffer->Release();
+            media_buffer->Release();
+            result_sample->Release();
+
+            // If we have a previous frame ready, read it
+            if (staging_read_idx_ >= 0) {
+                D3D11_MAPPED_SUBRESOURCE mapped;
+                // Use DO_NOT_WAIT to avoid blocking if GPU isn't done
+                hr = d3d_context_->Map(staging_textures_[staging_read_idx_], 0,
+                                        D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+
+                if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+                    // GPU not done yet - wait this time but next frame will be pipelined
+                    hr = d3d_context_->Map(staging_textures_[staging_read_idx_], 0,
+                                            D3D11_MAP_READ, 0, &mapped);
+                }
+
+                if (SUCCEEDED(hr)) {
+                    // Copy to output buffer
+                    size_t y_size = (size_t)mapped.RowPitch * staging_height_;
+                    size_t uv_size = (size_t)mapped.RowPitch * staging_height_ / 2;
+                    output_buffer_.resize(y_size + uv_size);
+
+                    // Copy Y plane
+                    memcpy(output_buffer_.data(), mapped.pData, y_size);
+                    // Copy UV plane (follows Y in NV12)
+                    memcpy(output_buffer_.data() + y_size,
+                           (uint8_t*)mapped.pData + y_size, uv_size);
+
+                    d3d_context_->Unmap(staging_textures_[staging_read_idx_], 0);
+
+                    out.width = staging_width_;
+                    out.height = staging_height_;
+                    out.y_plane = output_buffer_.data();
+                    out.uv_plane = output_buffer_.data() + y_size;
+                    out.y_stride = (uint32_t)mapped.RowPitch;
+                    out.uv_stride = (uint32_t)mapped.RowPitch;
+                    out.owns_memory = true;
+
+                    // Swap buffers
+                    staging_read_idx_ = staging_write_idx_;
+                    staging_write_idx_ = 1 - staging_write_idx_;
+
+                    timing_stats_.total_decode_ns = get_time_ns() - start_total;
+                    timing_stats_.accumulate();
+                    timing_stats_.reset_per_frame();
+
+                    return true;
+                }
+            }
+
+            // First frame or map failed - swap and wait for next frame
+            staging_read_idx_ = staging_write_idx_;
+            staging_write_idx_ = 1 - staging_write_idx_;
+            return false;  // No frame ready yet
+        }
+        if (dxgi_buffer) dxgi_buffer->Release();
+    }
+
+    // Fall back to synchronous path
+    media_buffer->Release();
+    result_sample->Release();
+    return process_output(out);
 }
 
 bool MFDecoder::decode(const uint8_t *data, size_t size, DecodedFrame &out)
@@ -660,7 +918,16 @@ bool MFDecoder::decode(const uint8_t *data, size_t size, DecodedFrame &out)
         // Still try to get output
     }
 
-    // Process output
+    // Process output - use GPU path if enabled
+    if (gpu_output_enabled_) {
+        return process_output_gpu(out);
+    }
+
+    // Use async staging if hardware decoding is available
+    if (use_async_staging_ && hardware_enabled_ && d3d_device_) {
+        return process_output_async(out);
+    }
+
     return process_output(out);
 }
 
@@ -717,11 +984,168 @@ bool MFDecoder::is_initialized() const
     return initialized_;
 }
 
+const DecodeTimingStats &MFDecoder::get_timing_stats() const
+{
+    return timing_stats_;
+}
+
+void MFDecoder::reset_timing_stats()
+{
+    timing_stats_ = DecodeTimingStats{};
+}
+
+bool MFDecoder::supports_gpu_output() const
+{
+    // GPU output requires hardware decoding with D3D11
+    return hardware_enabled_ && device_manager_ != nullptr;
+}
+
+bool MFDecoder::set_gpu_output(bool enable)
+{
+    if (enable && !supports_gpu_output()) {
+        blog(LOG_WARNING, "[avolocam] GPU output requested but not supported");
+        return false;
+    }
+    gpu_output_enabled_ = enable;
+    blog(LOG_INFO, "[avolocam] GPU output %s", enable ? "enabled" : "disabled");
+    return true;
+}
+
+bool MFDecoder::process_output_gpu(DecodedFrame &out)
+{
+    uint64_t start_total = get_time_ns();
+
+    MFT_OUTPUT_DATA_BUFFER output = {};
+    MFT_OUTPUT_STREAM_INFO stream_info = {};
+
+    HRESULT hr = decoder_->GetOutputStreamInfo(0, &stream_info);
+    if (FAILED(hr)) return false;
+
+    // Hardware decoder should provide its own samples
+    bool decoder_allocates = (stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
+    if (!decoder_allocates) {
+        // Fallback to CPU path - decoder doesn't provide GPU samples
+        return process_output(out);
+    }
+
+    output.pSample = nullptr;
+
+    uint64_t process_start = get_time_ns();
+    DWORD status = 0;
+    hr = decoder_->ProcessOutput(0, 1, &output, &status);
+    uint64_t process_time = get_time_ns() - process_start;
+
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+        return false;
+    }
+
+    if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
+        if (output.pSample) output.pSample->Release();
+        if (!configure_output_type()) {
+            return false;
+        }
+        return process_output_gpu(out);
+    }
+
+    if (FAILED(hr)) {
+        if (output.pSample) output.pSample->Release();
+        blog(LOG_WARNING, "[avolocam] ProcessOutput (GPU) failed: 0x%08X", hr);
+        return false;
+    }
+
+    IMFSample *result_sample = output.pSample;
+    if (!result_sample) {
+        return false;
+    }
+
+    // Get the buffer
+    IMFMediaBuffer *media_buffer = nullptr;
+    hr = result_sample->GetBufferByIndex(0, &media_buffer);
+    if (FAILED(hr)) {
+        result_sample->Release();
+        return false;
+    }
+
+    // Try to get DXGI buffer for GPU texture access
+    IMFDXGIBuffer *dxgi_buffer = nullptr;
+    hr = media_buffer->QueryInterface(__uuidof(IMFDXGIBuffer), (void **)&dxgi_buffer);
+
+    if (SUCCEEDED(hr) && dxgi_buffer) {
+        ID3D11Texture2D *texture = nullptr;
+        UINT subresource = 0;
+
+        hr = dxgi_buffer->GetResource(__uuidof(ID3D11Texture2D), (void **)&texture);
+        if (SUCCEEDED(hr) && texture) {
+            hr = dxgi_buffer->GetSubresourceIndex(&subresource);
+
+            // Get dimensions from texture
+            D3D11_TEXTURE2D_DESC desc;
+            texture->GetDesc(&desc);
+
+            out.width = desc.Width;
+            out.height = desc.Height;
+            out.gpu_texture = texture;
+            out.gpu_subresource = subresource;
+            out.has_gpu_texture = true;
+            out.owns_memory = false;
+
+            // Keep sample reference for texture lifetime
+            out.platform_handle = result_sample;
+
+            // Don't release texture or sample here - caller is responsible
+
+            dxgi_buffer->Release();
+            media_buffer->Release();
+
+            // Update timing stats
+            timing_stats_.process_output_ns = process_time;
+            timing_stats_.lock_buffer_ns = 0;  // No lock in GPU path
+            timing_stats_.memcpy_ns = 0;       // No memcpy in GPU path
+            timing_stats_.total_decode_ns = get_time_ns() - start_total;
+            timing_stats_.accumulate();
+            timing_stats_.reset_per_frame();
+
+            return true;
+        }
+        dxgi_buffer->Release();
+    }
+
+    // GPU extraction failed, fall back to CPU
+    media_buffer->Release();
+    result_sample->Release();
+
+    blog(LOG_DEBUG, "[avolocam] GPU texture extraction failed, falling back to CPU");
+    return process_output(out);
+}
+
 // Factory method implementation for Windows
 std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
 {
-    blog(LOG_INFO, "[avolocam] Creating platform decoder (Windows)");
-    return std::make_unique<MFDecoder>(config);
+    blog(LOG_INFO, "[avolocam] Creating platform decoder (Windows), type=%d",
+         static_cast<int>(config.decoder_type));
+
+    switch (config.decoder_type) {
+#ifdef HAVE_FFMPEG_D3D11VA
+    case DecoderType::FFMPEG_D3D11VA:
+        blog(LOG_INFO, "[avolocam] Explicitly requested FFmpeg D3D11VA decoder");
+        if (FFmpegD3D11VADecoder::is_available()) {
+            return std::make_unique<FFmpegD3D11VADecoder>(config);
+        }
+        blog(LOG_WARNING, "[avolocam] FFmpeg D3D11VA not available, falling back to MF");
+        return std::make_unique<MFDecoder>(config);
+#endif
+
+    case DecoderType::MEDIA_FOUNDATION:
+        blog(LOG_INFO, "[avolocam] Explicitly requested Media Foundation decoder");
+        return std::make_unique<MFDecoder>(config);
+
+    case DecoderType::AUTO:
+    default:
+        // AUTO: Use MF by default on Windows (proven stable)
+        // User can explicitly select FFmpeg D3D11VA via UI if desired
+        blog(LOG_INFO, "[avolocam] AUTO: Using Media Foundation decoder");
+        return std::make_unique<MFDecoder>(config);
+    }
 }
 
 } // namespace avolocam

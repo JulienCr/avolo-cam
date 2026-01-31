@@ -14,6 +14,52 @@
 namespace avolocam {
 
 /**
+ * Decode timing statistics for performance analysis
+ *
+ * Measures time spent in each stage of the decode pipeline.
+ * All times are in nanoseconds.
+ */
+struct DecodeTimingStats {
+    uint64_t process_input_ns = 0;    // Time in ProcessInput()
+    uint64_t process_output_ns = 0;   // Time in ProcessOutput() (excluding buffer ops)
+    uint64_t lock_buffer_ns = 0;      // Time in Lock2D() or buffer lock
+    uint64_t memcpy_ns = 0;           // Time in memcpy operations
+    uint64_t total_decode_ns = 0;     // Total decode time for this frame
+    uint64_t frame_count = 0;         // Number of frames processed
+
+    // Cumulative stats for averaging
+    uint64_t cumulative_input_ns = 0;
+    uint64_t cumulative_output_ns = 0;
+    uint64_t cumulative_lock_ns = 0;
+    uint64_t cumulative_memcpy_ns = 0;
+    uint64_t cumulative_total_ns = 0;
+
+    void accumulate() {
+        cumulative_input_ns += process_input_ns;
+        cumulative_output_ns += process_output_ns;
+        cumulative_lock_ns += lock_buffer_ns;
+        cumulative_memcpy_ns += memcpy_ns;
+        cumulative_total_ns += total_decode_ns;
+        frame_count++;
+    }
+
+    void reset_per_frame() {
+        process_input_ns = 0;
+        process_output_ns = 0;
+        lock_buffer_ns = 0;
+        memcpy_ns = 0;
+        total_decode_ns = 0;
+    }
+
+    // Get average times in milliseconds
+    double avg_input_ms() const { return frame_count > 0 ? (cumulative_input_ns / frame_count) / 1e6 : 0; }
+    double avg_output_ms() const { return frame_count > 0 ? (cumulative_output_ns / frame_count) / 1e6 : 0; }
+    double avg_lock_ms() const { return frame_count > 0 ? (cumulative_lock_ns / frame_count) / 1e6 : 0; }
+    double avg_memcpy_ms() const { return frame_count > 0 ? (cumulative_memcpy_ns / frame_count) / 1e6 : 0; }
+    double avg_total_ms() const { return frame_count > 0 ? (cumulative_total_ns / frame_count) / 1e6 : 0; }
+};
+
+/**
  * Decoded frame output structure
  *
  * Contains NV12 format video data (Y plane + interleaved UV plane)
@@ -28,6 +74,21 @@ struct DecodedFrame {
     uint64_t pts = 0;               // Presentation timestamp
     bool owns_memory = false;       // If true, decoder manages memory lifetime
     void *platform_handle = nullptr; // Platform-specific handle (CVPixelBuffer, IMFSample, etc.)
+
+    // GPU texture info (Windows D3D11)
+    void *gpu_texture = nullptr;    // ID3D11Texture2D* when using GPU path
+    uint32_t gpu_subresource = 0;   // Subresource index for texture arrays
+    bool has_gpu_texture = false;   // True if gpu_texture is valid
+};
+
+/**
+ * Decoder type selection
+ */
+enum class DecoderType {
+    AUTO,                 // Best available for platform (default)
+    MEDIA_FOUNDATION,     // Windows Media Foundation D3D11VA
+    FFMPEG_D3D11VA,       // FFmpeg with D3D11VA hardware acceleration
+    FFMPEG_SOFTWARE       // FFmpeg software decoder (CPU fallback)
 };
 
 /**
@@ -39,6 +100,7 @@ struct DecoderConfig {
     bool output_nv12 = true;        // Output NV12 format (vs I420)
     uint32_t max_width = 1920;      // Maximum expected width
     uint32_t max_height = 1080;     // Maximum expected height
+    DecoderType decoder_type = DecoderType::AUTO;  // Explicit decoder selection
 };
 
 /**
@@ -51,14 +113,19 @@ public:
     virtual ~PlatformDecoder() = default;
 
     /**
-     * Factory method - creates the best decoder available for this platform
+     * Factory method - creates decoder based on config.decoder_type
      *
-     * Order of preference:
+     * AUTO selection order:
      * - macOS: VideoToolbox
      * - Windows: Media Foundation (D3D11VA if available)
      * - Fallback: FFmpeg software decoder (if compiled with HAVE_FFMPEG)
      *
-     * @param config Decoder configuration options
+     * Explicit types:
+     * - MEDIA_FOUNDATION: Windows MF decoder only
+     * - FFMPEG_D3D11VA: FFmpeg with D3D11VA hardware (if HAVE_FFMPEG_D3D11VA)
+     * - FFMPEG_SOFTWARE: FFmpeg CPU decoder (if HAVE_FFMPEG)
+     *
+     * @param config Decoder configuration options including decoder_type
      * @return Unique pointer to decoder, or nullptr on failure
      */
     static std::unique_ptr<PlatformDecoder> create(
@@ -132,6 +199,35 @@ public:
      * Check if decoder is initialized and ready
      */
     virtual bool is_initialized() const = 0;
+
+    /**
+     * Get decode timing statistics
+     * @return Reference to timing stats (accumulated over session)
+     */
+    virtual const DecodeTimingStats &get_timing_stats() const = 0;
+
+    /**
+     * Reset timing statistics
+     */
+    virtual void reset_timing_stats() = 0;
+
+    /**
+     * Check if GPU texture output is available
+     * @return true if decoder can output GPU textures directly
+     */
+    virtual bool supports_gpu_output() const { return false; }
+
+    /**
+     * Enable or disable GPU texture output mode
+     * When enabled, DecodedFrame::gpu_texture will be set instead of CPU planes
+     * @param enable true to enable GPU output
+     * @return true if mode was changed successfully
+     */
+    virtual bool set_gpu_output(bool enable) { (void)enable; return false; }
+
+    // D3D11 device access for GPU output path (Windows only, returns nullptr on other platforms)
+    virtual void *get_d3d_device() const { return nullptr; }
+    virtual void *get_d3d_context() const { return nullptr; }
 };
 
 } // namespace avolocam

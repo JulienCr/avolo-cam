@@ -114,6 +114,14 @@ public:
     bool is_zero_copy_available() const;
 
     /**
+     * Initialize GPU output with decoder's D3D11 device
+     * @param d3d_device ID3D11Device* from decoder
+     * @param d3d_context ID3D11DeviceContext* from decoder
+     * @return true on success
+     */
+    bool init_gpu_output(void *d3d_device, void *d3d_context);
+
+    /**
      * Get current output mode preference
      */
     OutputMode get_preferred_mode() const { return preferred_mode_; }
@@ -130,10 +138,36 @@ public:
     uint64_t cpu_copy_frames() const { return cpu_copy_frames_; }
     uint64_t total_frames() const { return total_frames_; }
 
+    /**
+     * Prepare GPU frame for video_render callback
+     * Converts NV12 to RGBA and stores the result for later rendering
+     * @param frame Decoded frame with GPU texture
+     * @return Result of the preparation operation
+     */
+    OutputResult prepare_gpu_frame(const DecodedFrame &frame);
+
+    /**
+     * Get the current prepared texture for rendering in video_render
+     * @return The prepared texture, or nullptr if none available
+     */
+    gs_texture_t *get_current_texture() const { return current_output_texture_; }
+
+    /**
+     * Output frame from FFmpeg decoder using shared texture handle
+     * FFmpeg provides NV12 shared textures that need conversion to RGBA
+     * @param frame Decoded frame with GPU texture info
+     * @param shared_handle DXGI shared handle from FFmpeg decoder
+     * @return Result of the output operation
+     */
+    OutputResult output_ffmpeg_gpu_frame(const DecodedFrame &frame, void *shared_handle);
+
 private:
     obs_source_t *source_ = nullptr;
     OutputMode preferred_mode_ = OutputMode::CPU_COPY;
     bool initialized_ = false;
+
+    // Current output texture for video_render
+    gs_texture_t *current_output_texture_ = nullptr;
 
     // Statistics
     uint64_t zero_copy_frames_ = 0;
@@ -157,6 +191,18 @@ private:
     gs_texture_t *win_texture_ = nullptr;
     uint32_t win_texture_width_ = 0;
     uint32_t win_texture_height_ = 0;
+
+    // Cache for opened shared textures (avoid OpenSharedResource every frame)
+    struct SharedTextureCache {
+        void *shared_handle = nullptr;      // HANDLE
+        void *opened_texture = nullptr;     // ID3D11Texture2D*
+    };
+    static const size_t SHARED_CACHE_SIZE = 4;
+    SharedTextureCache shared_cache_[SHARED_CACHE_SIZE] = {};
+    void *cached_obs_device_ = nullptr;     // ID3D11Device*
+
+    void *get_or_open_shared_texture(void *obs_device, void *shared_handle);
+    void release_shared_cache();
 
     OutputResult output_via_d3d11(const DecodedFrame &frame);
     void release_win_texture();

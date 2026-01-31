@@ -157,6 +157,8 @@ if(WIN32)
         src/decoder/mf-decoder.cpp
         src/decoder/mf-decoder.h
         src/texture-output-windows.cpp
+        src/gpu-converter.cpp
+        src/gpu-converter.h
     )
 endif()
 
@@ -170,6 +172,61 @@ if(ENABLE_FFMPEG_FALLBACK)
             src/decoder/ffmpeg-decoder.h
         )
         add_definitions(-DHAVE_FFMPEG)
+    endif()
+endif()
+
+# FFmpeg D3D11VA hardware decoder (Windows only) - detection phase
+# Actual linking happens after add_library below
+option(ENABLE_FFMPEG_D3D11VA "Enable FFmpeg D3D11VA hardware decoder (low-latency alternative)" ON)
+set(FFMPEG_D3D11VA_FOUND FALSE)
+if(ENABLE_FFMPEG_D3D11VA AND WIN32)
+    # Try to find FFmpeg with hardware support
+    # Check OBS bundled FFmpeg first, then system
+    if(NOT FFmpeg_FOUND)
+        # Look for FFmpeg in common locations
+        find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
+            PATHS
+                "${OBS_DIR}/include"
+                "${CMAKE_SOURCE_DIR}/deps/ffmpeg/include"
+                "$ENV{FFMPEG_DIR}/include"
+            NO_DEFAULT_PATH
+        )
+
+        find_library(AVCODEC_LIB avcodec
+            PATHS
+                "${OBS_DIR}/bin/64bit"
+                "${OBS_DIR}/lib"
+                "${CMAKE_SOURCE_DIR}/deps/ffmpeg/lib"
+                "$ENV{FFMPEG_DIR}/lib"
+            NO_DEFAULT_PATH
+        )
+
+        find_library(AVUTIL_LIB avutil
+            PATHS
+                "${OBS_DIR}/bin/64bit"
+                "${OBS_DIR}/lib"
+                "${CMAKE_SOURCE_DIR}/deps/ffmpeg/lib"
+                "$ENV{FFMPEG_DIR}/lib"
+            NO_DEFAULT_PATH
+        )
+
+        if(FFMPEG_INCLUDE_DIR AND AVCODEC_LIB AND AVUTIL_LIB)
+            set(FFMPEG_D3D11VA_FOUND TRUE)
+            message(STATUS "Found FFmpeg for D3D11VA: ${FFMPEG_INCLUDE_DIR}")
+        endif()
+    else()
+        # FFmpeg already found via find_package
+        set(FFMPEG_D3D11VA_FOUND TRUE)
+    endif()
+
+    if(FFMPEG_D3D11VA_FOUND)
+        list(APPEND SOURCES
+            src/decoder/ffmpeg-d3d11va-decoder.cpp
+            src/decoder/ffmpeg-d3d11va-decoder.h
+        )
+        message(STATUS "FFmpeg D3D11VA decoder will be enabled")
+    else()
+        message(STATUS "FFmpeg D3D11VA decoder disabled (FFmpeg not found)")
     endif()
 endif()
 
@@ -243,6 +300,7 @@ if(WIN32)
     target_link_libraries(obs-avolocam PRIVATE
         ${MF_LIBRARIES}
         ws2_32      # Winsock for UDP
+        d3dcompiler # For runtime shader compilation
     )
 
     # Link Bonjour SDK if found
@@ -272,6 +330,23 @@ if(ENABLE_FFMPEG_FALLBACK AND FFmpeg_FOUND)
         FFmpeg::avcodec
         FFmpeg::avutil
     )
+endif()
+
+# FFmpeg D3D11VA decoder - linking phase (after add_library)
+if(FFMPEG_D3D11VA_FOUND)
+    target_compile_definitions(obs-avolocam PRIVATE HAVE_FFMPEG_D3D11VA)
+
+    if(FFMPEG_INCLUDE_DIR)
+        target_include_directories(obs-avolocam PRIVATE ${FFMPEG_INCLUDE_DIR})
+    endif()
+
+    if(AVCODEC_LIB AND AVUTIL_LIB)
+        target_link_libraries(obs-avolocam PRIVATE ${AVCODEC_LIB} ${AVUTIL_LIB})
+    elseif(FFmpeg_FOUND)
+        target_link_libraries(obs-avolocam PRIVATE FFmpeg::avcodec FFmpeg::avutil)
+    endif()
+
+    message(STATUS "FFmpeg D3D11VA decoder enabled")
 endif()
 
 # Set output name
