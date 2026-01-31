@@ -35,6 +35,9 @@ mdns-sd = "0.11"
 # MIDI support
 midir = "0.10"
 
+# Local IP detection
+local-ip-address = "0.6"
+
 # Additional utilities
 anyhow = "1"
 thiserror = "1"

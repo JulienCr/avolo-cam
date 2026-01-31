@@ -5,8 +5,10 @@
   import SectionHeader from '../molecules/SectionHeader.svelte';
   import type { StreamSettings } from '$lib/types/settings';
   import type { StreamingMode } from '$lib/types/camera';
+  import { detectedLocalIP } from '$lib/stores/settings';
 
   export let settings: StreamSettings;
+  export let flashPort: number | undefined = undefined; // Auto-assigned port from camera
 
   const resolutionOptions = [
     { value: '1280x720', label: '1280×720 (720p)' },
@@ -52,6 +54,10 @@
   $: gopLatencyMs = settings.srt_gop_size && settings.framerate
     ? Math.round((settings.srt_gop_size / settings.framerate) * 1000)
     : 0;
+
+  // Effective flash destination: use settings if set, otherwise auto-detected
+  $: effectiveFlashHost = settings.flash_destination_host || $detectedLocalIP || 'Not configured';
+  $: effectiveFlashPort = flashPort ?? settings.flash_destination_port ?? 5000;
 </script>
 
 <div class="rounded-lg bg-gray-50 p-4">
@@ -140,20 +146,13 @@
       <SectionHeader title="Flash Advanced Settings" showDivider={false} />
 
       <div class="grid gap-4 md:grid-cols-2">
-        <FormRow label="Destination Host" layout="vertical">
-          <input
-            type="text"
-            bind:value={settings.flash_destination_host}
-            placeholder="e.g., 192.168.1.100"
-            class="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          <div class="mt-1 text-xs text-gray-500">
-            IP address of the receiving computer running OBS
+        <FormRow label="Destination" layout="vertical">
+          <div class="flex items-center gap-1 text-sm text-gray-700 dark:text-gray-300">
+            <span class="font-mono">{effectiveFlashHost}:{effectiveFlashPort}</span>
+            {#if !settings.flash_destination_host && $detectedLocalIP}
+              <span class="text-xs text-gray-500">(auto)</span>
+            {/if}
           </div>
-        </FormRow>
-
-        <FormRow label="Destination Port" layout="vertical">
-          <div class="text-sm text-gray-600">{settings.flash_destination_port ?? 5000}</div>
         </FormRow>
 
         <FormRow label="Jitter Buffer Mode" layout="vertical">

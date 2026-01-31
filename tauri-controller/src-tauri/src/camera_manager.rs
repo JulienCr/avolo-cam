@@ -109,11 +109,15 @@ pub struct CameraManager {
     persisted_settings: HashMap<String, (Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
     // MIDI manager for feedback
     pub(crate) midi_manager: Option<Arc<RwLock<MidiManager>>>,
+    /// Next camera index to assign for Flash port allocation
+    next_camera_index: u16,
 }
 
 struct Camera {
     info: CameraInfo,
     client: Arc<RwLock<CameraClient>>,
+    /// Index used for Flash port allocation (port = 5000 + camera_index)
+    camera_index: u16,
 }
 
 impl CameraManager {
@@ -127,6 +131,7 @@ impl CameraManager {
             settings_file_path: None,
             persisted_settings: HashMap::new(),
             midi_manager: None,
+            next_camera_index: 0,
         }
     }
 
@@ -480,6 +485,12 @@ impl CameraManager {
             log::info!("Auto-assigned MIDI channel {} to camera {}", channel, id);
         }
 
+        // Assign camera index for Flash port allocation
+        let camera_index = self.next_camera_index;
+        self.next_camera_index += 1;
+        let flash_port = 5000 + camera_index;
+        log::info!("Assigned Flash port {} to camera {}", flash_port, id);
+
         // Create camera info
         let info = CameraInfo {
             id: id.clone(),
@@ -491,12 +502,14 @@ impl CameraManager {
             connection_state: ConnectionState::Connected,
             midi_channel,
             capabilities,
+            flash_port: Some(flash_port),
         };
 
         // Store camera
         self.cameras.insert(id.clone(), Camera {
             info,
             client: client_arc,
+            camera_index,
         });
 
         log::info!("Added camera: {}", id);
@@ -698,27 +711,87 @@ impl CameraManager {
         camera_ids: &[String],
         request: StreamStartRequest,
     ) -> Result<Vec<GroupCommandResult>> {
-        // Store settings for each camera before starting streams
+        // Build per-camera requests with assigned flash ports
+        let mut per_camera_requests: HashMap<String, StreamStartRequest> = HashMap::new();
+
         for camera_id in camera_ids {
+            let mut camera_request = request.clone();
+
+            // Auto-assign flash_destination_port if not explicitly provided and mode is Flash
+            if camera_request.flash_destination_port.is_none() {
+                if let Some(flash_port) = self.get_flash_port_for_camera(camera_id) {
+                    camera_request.flash_destination_port = Some(flash_port as u32);
+                    log::info!("Auto-assigned Flash port {} to camera {} for group start", flash_port, camera_id);
+                }
+            }
+
+            // Store settings for persistence
             self.persisted_settings
                 .entry(camera_id.to_string())
-                .and_modify(|(stream, _)| *stream = Some(request.clone()))
-                .or_insert((Some(request.clone()), None));
+                .and_modify(|(stream, _)| *stream = Some(camera_request.clone()))
+                .or_insert((Some(camera_request.clone()), None));
+
+            per_camera_requests.insert(camera_id.clone(), camera_request);
         }
 
-        let result = self.execute_group_operation(camera_ids, move |client| {
-            let req = request.clone();
-            async move {
-                client.read().await.start_stream(req).await
+        // Execute group operation with per-camera requests
+        let mut tasks = Vec::new();
+
+        for camera_id in camera_ids {
+            let camera_id_owned = camera_id.clone();
+            let camera = match self.cameras.get(camera_id) {
+                Some(c) => c,
+                None => {
+                    let error_msg = format!("Camera not found: {}", camera_id_owned);
+                    tasks.push(tokio::spawn(async move {
+                        GroupCommandResult {
+                            camera_id: camera_id_owned,
+                            success: false,
+                            error: Some(error_msg),
+                        }
+                    }));
+                    continue;
+                }
+            };
+
+            let client = camera.client.clone();
+            let camera_id_clone = camera_id.clone();
+            let semaphore = self.operation_semaphore.clone();
+
+            // Get the per-camera request (safe because we built it above)
+            let req = per_camera_requests.get(&camera_id_clone).cloned()
+                .expect("Request should exist for camera_id");
+
+            tasks.push(tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.unwrap();
+
+                let result = client.read().await.start_stream(req).await;
+
+                GroupCommandResult {
+                    camera_id: camera_id_clone,
+                    success: result.is_ok(),
+                    error: result.err().map(|e| e.to_string()),
+                }
+            }));
+        }
+
+        // Wait for all tasks to complete
+        let mut results = Vec::new();
+        for task in tasks {
+            match task.await {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    log::error!("Group start stream task failed: {}", e);
+                }
             }
-        }).await;
+        }
 
         // Save to disk after successful group start
         if let Err(e) = self.save_cameras_to_disk().await {
             log::warn!("Failed to save cameras to disk after group start: {}", e);
         }
 
-        result
+        Ok(results)
     }
 
     pub async fn group_stop_stream(
@@ -895,6 +968,12 @@ impl CameraManager {
             .map(|(id, _)| id.clone())
     }
 
+    /// Get the auto-assigned Flash port for a camera
+    /// Returns the port (5000 + camera_index) if the camera exists
+    pub fn get_flash_port_for_camera(&self, camera_id: &str) -> Option<u16> {
+        self.cameras.get(camera_id).map(|camera| 5000 + camera.camera_index)
+    }
+
     // MARK: - Start/Stop All Operations
 
     /// Start all cameras with their persisted settings (or default settings if not available)
@@ -914,7 +993,7 @@ impl CameraManager {
             };
 
             // Get persisted stream settings or use defaults
-            let stream_settings = self.persisted_settings
+            let mut stream_settings = self.persisted_settings
                 .get(&camera_id)
                 .and_then(|(stream, _)| stream.clone())
                 .unwrap_or_else(|| StreamStartRequest {
@@ -933,6 +1012,13 @@ impl CameraManager {
                     flash_destination_port: None,
                     flash_jitter_mode: None,
                 });
+
+            // Auto-assign flash_destination_port if not explicitly set
+            if stream_settings.flash_destination_port.is_none() {
+                let flash_port = 5000 + camera.camera_index;
+                stream_settings.flash_destination_port = Some(flash_port as u32);
+                log::info!("Auto-assigned Flash port {} to camera {} for start all", flash_port, camera_id);
+            }
 
             let client = camera.client.clone();
             let camera_id_clone = camera_id.clone();

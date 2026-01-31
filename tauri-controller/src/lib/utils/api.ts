@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
+import { get } from 'svelte/store';
 import type { Camera, DiscoveredCamera } from '../types/camera';
 import type { StreamSettings, CameraSettings, WhiteBalanceResult } from '../types/settings';
 import type { Profile, GroupOperationResult } from '../types/profile';
 import type { MidiNoteConfig } from '../types/app-settings';
+import { detectedLocalIP } from '../stores/settings';
 
 // Camera Management
 export async function discoverCameras(): Promise<DiscoveredCamera[]> {
@@ -19,6 +21,12 @@ export async function addCameraManual(ip: string, port: number, token: string): 
 
 export async function removeCamera(cameraId: string): Promise<void> {
   return invoke('remove_camera', { cameraId });
+}
+
+// Helper to get effective flash destination host
+function getEffectiveFlashHost(settings: StreamSettings): string | undefined {
+  // Use explicit setting if provided, otherwise fallback to auto-detected IP
+  return settings.flash_destination_host || get(detectedLocalIP) || undefined;
 }
 
 // Streaming
@@ -40,9 +48,9 @@ export async function startStream(
     srtPeerLatency: settings.srt_peer_latency,
     srtTlpktdrop: settings.srt_tlpktdrop,
     srtGopSize: settings.srt_gop_size,
-    // Flash params
-    flashDestinationHost: settings.flash_destination_host,
-    flashDestinationPort: settings.flash_destination_port,
+    // Flash params - use auto-detected IP as fallback
+    // NOTE: Don't send flashDestinationPort - let backend auto-assign per-camera ports
+    flashDestinationHost: getEffectiveFlashHost(settings),
     flashJitterMode: settings.flash_jitter_mode,
   });
 }
@@ -107,9 +115,9 @@ export async function groupStartStream(
     srtPeerLatency: settings.srt_peer_latency,
     srtTlpktdrop: settings.srt_tlpktdrop,
     srtGopSize: settings.srt_gop_size,
-    // Flash params
-    flashDestinationHost: settings.flash_destination_host,
-    flashDestinationPort: settings.flash_destination_port,
+    // Flash params - use auto-detected IP as fallback
+    // NOTE: Don't send flashDestinationPort - let backend auto-assign per-camera ports
+    flashDestinationHost: getEffectiveFlashHost(settings),
     flashJitterMode: settings.flash_jitter_mode,
   });
 }

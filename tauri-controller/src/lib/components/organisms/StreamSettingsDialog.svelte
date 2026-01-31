@@ -5,10 +5,12 @@
   import Select from '../atoms/Select.svelte';
   import type { StreamSettings } from '$lib/types/settings';
   import type { Writable } from 'svelte/store';
+  import { detectedLocalIP } from '$lib/stores/settings';
 
   export let open: Writable<boolean>;
   export let settings: StreamSettings;
   export let onApply: (() => void) | undefined = undefined;
+  export let flashPort: number | undefined = undefined; // Auto-assigned port from camera
 
   let useSeparateLatencies = false;
 
@@ -75,9 +77,6 @@
 
   // Initialize Flash settings with defaults if not set
   $: if (settings.streaming_mode === 'flash') {
-    if (settings.flash_destination_port === undefined) {
-      settings.flash_destination_port = 5000;
-    }
     if (settings.flash_jitter_mode === undefined) {
       settings.flash_jitter_mode = 'stable';
     }
@@ -85,6 +84,9 @@
       settings.srt_gop_size = 25; // Smaller GOP for Flash
     }
   }
+
+  // Effective flash port: use auto-assigned if available, otherwise show placeholder
+  $: effectiveFlashPort = flashPort ?? settings.flash_destination_port ?? 5000;
 
   // Check if separate latencies are being used
   $: useSeparateLatencies = settings.srt_rcv_latency !== undefined || settings.srt_peer_latency !== undefined;
@@ -263,22 +265,31 @@
             <input
               type="text"
               bind:value={settings.flash_destination_host}
-              placeholder="e.g., 192.168.1.100"
+              placeholder={$detectedLocalIP ?? 'e.g., 192.168.1.100'}
               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-base text-gray-900 bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600"
             />
-            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">IP address of the receiving computer</span>
+            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+              {#if $detectedLocalIP}
+                Leave empty to use detected IP ({$detectedLocalIP})
+              {:else}
+                IP address of the receiving computer
+              {/if}
+            </span>
           </FormRow>
 
           <FormRow label="Destination Port" layout="vertical">
-            <input
-              type="number"
-              bind:value={settings.flash_destination_port}
-              min="1024"
-              max="65535"
-              readonly
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-base text-gray-700 bg-gray-100 cursor-not-allowed dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
-            />
-            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">Default: 5000</span>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                value={effectiveFlashPort}
+                readonly
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-base text-gray-700 bg-gray-100 cursor-not-allowed dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
+              />
+              <span class="inline-flex items-center px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 rounded dark:text-purple-300 dark:bg-purple-800 whitespace-nowrap">
+                Auto
+              </span>
+            </div>
+            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">Port auto-assigned per camera</span>
           </FormRow>
 
           <FormRow label="Jitter Buffer Mode" layout="vertical">

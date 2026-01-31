@@ -61,6 +61,7 @@ export interface Camera {
   port: number;
   status: CameraStatus | null;
   midi_channel?: number; // MIDI channel 1-8 or undefined
+  flash_port?: number; // Auto-assigned Flash UDP port (5000 + camera_index)
 }
 
 export interface DiscoveredCamera {

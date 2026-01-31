@@ -254,6 +254,17 @@ async fn start_stream(
         _ => None,
     });
 
+    // Auto-assign flash_destination_port if not explicitly provided and mode is Flash
+    let effective_flash_port = if flash_destination_port.is_some() {
+        // Use explicitly provided port (backward compatible)
+        flash_destination_port
+    } else if mode == Some(StreamingMode::Flash) {
+        // Auto-assign port from camera index
+        manager.get_flash_port_for_camera(&camera_id).map(u32::from)
+    } else {
+        None
+    };
+
     let request = StreamStartRequest {
         resolution,
         framerate,
@@ -267,7 +278,7 @@ async fn start_stream(
         srt_tlpktdrop,
         srt_gop_size,
         flash_destination_host,
-        flash_destination_port,
+        flash_destination_port: effective_flash_port,
         flash_jitter_mode,
     };
     manager.start_stream(&camera_id, request).await
@@ -762,6 +773,15 @@ async fn send_test_notification(app: AppHandle, title: String, body: String) -> 
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+// MARK: - Network Utilities
+
+#[tauri::command]
+async fn get_local_ip() -> Result<String, String> {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -911,6 +931,7 @@ fn main() {
             update_midi_notes_config,
             start_midi_learn_mode,
             cancel_midi_learn_mode,
+            get_local_ip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

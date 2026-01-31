@@ -265,6 +265,8 @@ pub struct CameraInfo {
     pub midi_channel: Option<u8>, // MIDI channel 1-8, None if not assigned
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<Vec<Capability>>, // Cached capabilities for max_zoom lookup
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash_port: Option<u16>, // Auto-assigned Flash UDP port (5000 + camera_index)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
