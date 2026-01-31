@@ -142,7 +142,11 @@ bool WebSocketClient::connect(const std::string &url, const std::string &auth_to
     return do_connect();
 }
 
-bool WebSocketClient::do_connect()
+/**
+ * Connect socket and perform handshake (without starting receive thread)
+ * Used for initial connect and reconnect.
+ */
+bool WebSocketClient::do_connect_socket()
 {
     set_state(WSState::CONNECTING);
 
@@ -220,6 +224,19 @@ bool WebSocketClient::do_connect()
 
     blog(LOG_INFO, "[avolocam-ws] Connected successfully");
     set_state(WSState::CONNECTED);
+
+    return true;
+}
+
+/**
+ * Full connect: connect socket and start receive thread
+ * Only called from connect() for initial connection.
+ */
+bool WebSocketClient::do_connect()
+{
+    if (!do_connect_socket()) {
+        return false;
+    }
 
     // Start receive thread
     running_ = true;
@@ -623,7 +640,7 @@ void WebSocketClient::attempt_reconnect()
     set_state(WSState::RECONNECTING);
     reconnect_attempts_++;
 
-    // Exponential backoff
+    // Exponential backoff with interruptible sleep
     int delay = initial_reconnect_delay_ms_ * (1 << (reconnect_attempts_ - 1));
     if (delay > max_reconnect_delay_ms_) {
         delay = max_reconnect_delay_ms_;
@@ -632,9 +649,17 @@ void WebSocketClient::attempt_reconnect()
     blog(LOG_INFO, "[avolocam-ws] Reconnect attempt %llu in %d ms",
          (unsigned long long)reconnect_attempts_.load(), delay);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+    // Sleep in small chunks to allow faster shutdown
+    int slept = 0;
+    while (slept < delay && running_.load()) {
+        int chunk = (std::min)(100, delay - slept);  // 100ms chunks, parentheses avoid Windows min macro
+        std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+        slept += chunk;
+    }
 
-    if (running_.load() && do_connect()) {
+    // Use do_connect_socket() instead of do_connect() to avoid spawning another thread
+    // The existing receive_loop() thread will continue running
+    if (running_.load() && do_connect_socket()) {
         reconnect_attempts_ = 0;
     }
 }

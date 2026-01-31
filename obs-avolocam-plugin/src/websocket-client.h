@@ -173,6 +173,7 @@ private:
 
     // Internal methods
     bool do_connect();
+    bool do_connect_socket();  // Connect socket without starting thread
     void do_disconnect();
     void receive_loop();
     bool send_raw(const std::vector<uint8_t> &data);
