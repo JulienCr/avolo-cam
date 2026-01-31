@@ -266,6 +266,7 @@ struct WebSocketTelemetryMessage: Codable {
     let ndiState: NDIState
     let droppedFrames: Int
     let chargingState: ChargingState
+    let flashUdpPort: Int?  // Active Flash UDP port for OBS auto-discovery
 
     enum CodingKeys: String, CodingKey {
         case fps
@@ -278,12 +279,21 @@ struct WebSocketTelemetryMessage: Codable {
         case ndiState = "ndi_state"
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
+        case flashUdpPort = "flash_udp_port"
     }
 }
 
 struct WebSocketCommandMessage: Codable {
     let op: String
     let camera: CameraSettingsRequest?
+}
+
+/// Tally message received from OBS plugin via WebSocket
+/// OBS sends: {"op":"tally","program":true,"preview":false}
+struct WebSocketTallyMessage: Codable {
+    let op: String  // "tally"
+    let program: Bool
+    let preview: Bool
 }
 
 struct WebSocketFrameInfo: Codable {

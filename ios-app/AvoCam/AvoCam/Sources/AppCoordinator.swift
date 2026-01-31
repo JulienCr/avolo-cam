@@ -24,6 +24,9 @@ class AppCoordinator: ObservableObject {
     @Published var bearerTokenForDisplay: String = ""
     @Published var isAuthenticationEnabled: Bool = false
 
+    // Cached Flash UDP port for telemetry broadcast (updated when streaming starts/stops)
+    private var cachedFlashUdpPort: Int? = nil
+
     // MARK: - Configuration & Services
 
     private var configuration: AppConfiguration
@@ -120,6 +123,12 @@ class AppCoordinator: ObservableObject {
 
         // Start network services
         networkServer.setAuthenticationEnabled(configuration.isAuthenticationEnabled)
+
+        // Connect tally callback for OBS WebSocket control
+        networkServer.onTallyUpdate = { [weak self] program, _ in
+            await self?.tallyPoller.setExternalTally(program: program)
+        }
+
         do {
             try networkServer.start()
             print("✅ Network server started on port \(configuration.serverPort)")
@@ -179,7 +188,11 @@ class AppCoordinator: ObservableObject {
             await telemetryAggregator.startCollection { [weak self] telemetry, ndiState in
                 guard let self = self else { return }
                 self.telemetry = telemetry
-                self.networkServer.broadcastTelemetry(telemetry, ndiState: ndiState)
+
+                // Use cached Flash UDP port (updated when streaming starts/stops)
+                let flashPort = self.cachedFlashUdpPort
+
+                self.networkServer.broadcastTelemetry(telemetry, ndiState: ndiState, flashUdpPort: flashPort)
             }
         }
     }
@@ -343,19 +356,26 @@ class AppCoordinator: ObservableObject {
             let flashPort = await flashManager.activeUdpPort
             bonjourService.updateFlashPort(flashPort)
 
+            // Cache the Flash UDP port for telemetry broadcast
+            cachedFlashUdpPort = flashPort > 0 ? Int(flashPort) : nil
+
             // Setup WebSocket callback for frame timing correlation
             await flashManager.setFrameInfoCallback { [weak networkServer] frameInfo in
                 networkServer?.broadcastFrameInfo(frameInfo)
             }
+        } else {
+            // Not Flash mode, clear cached port
+            cachedFlashUdpPort = nil
         }
     }
 
     func stopStreaming() async {
         guard isStreaming else { return }
 
-        // If Flash mode was active, clear Bonjour Flash port
+        // If Flash mode was active, clear Bonjour Flash port and cached port
         if currentSettings?.streamingMode == .flash {
             bonjourService.updateFlashPort(0)
+            cachedFlashUdpPort = nil
         }
 
         await streamingCoordinator.stopStreaming()
