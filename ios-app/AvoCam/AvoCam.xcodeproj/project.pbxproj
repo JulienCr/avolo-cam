@@ -11,8 +11,8 @@
 		B77F07452EBBFC3600C9F0ED /* NIO in Frameworks */ = {isa = PBXBuildFile; productRef = B77F07442EBBFC3600C9F0ED /* NIO */; };
 		B77F07472EBBFC3600C9F0ED /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = B77F07462EBBFC3600C9F0ED /* NIOHTTP1 */; };
 		B77F07492EBBFC3600C9F0ED /* NIOWebSocket in Frameworks */ = {isa = PBXBuildFile; productRef = B77F07482EBBFC3600C9F0ED /* NIOWebSocket */; };
-		B77F074C2EBC200000C9F0ED /* SwiftSRT.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B77F074D2EBC200000C9F0ED /* SwiftSRT.xcframework */; };
-		B77F074E2EBC200000C9F0ED /* SwiftSRT.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B77F074D2EBC200000C9F0ED /* SwiftSRT.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B77F074C2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B77F074D2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework */; };
+		B77F074E2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B77F074D2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -22,7 +22,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				B77F074E2EBC200000C9F0ED /* SwiftSRT.xcframework in Embed Frameworks */,
+				B77F074E2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -31,7 +31,7 @@
 
 /* Begin PBXFileReference section */
 		B77F05E82EBBF93D00C9F0ED /* AvoCam.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AvoCam.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B77F074D2EBC200000C9F0ED /* SwiftSRT.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = AvoCam/SwiftSRT.xcframework; sourceTree = "<group>"; };
+		B77F074D2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = AvoCam/SwiftSRT.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -65,7 +65,7 @@
 				B77F07452EBBFC3600C9F0ED /* NIO in Frameworks */,
 				B77F07422EBBFBFC00C9F0ED /* WebSocketKit in Frameworks */,
 				B77F07472EBBFC3600C9F0ED /* NIOHTTP1 in Frameworks */,
-				B77F074C2EBC200000C9F0ED /* SwiftSRT.xcframework in Frameworks */,
+				B77F074C2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,7 +92,7 @@
 		B77F07502EBC200000C9F0ED /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				B77F074D2EBC200000C9F0ED /* SwiftSRT.xcframework */,
+				B77F074D2EBC200000C9F0ED /* AvoCam/SwiftSRT.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -313,7 +313,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = U3P93WXUHR;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -357,7 +357,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = U3P93WXUHR;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

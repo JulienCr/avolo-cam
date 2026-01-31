@@ -58,6 +58,31 @@ struct VideoSettingsView: View {
                                 value: $viewModel.srtLatency,
                                 in: 20...500,
                                 step: 10)
+
+                        Toggle("Use separate RCV/Peer latencies", isOn: $viewModel.useSeparateLatencies)
+
+                        if viewModel.useSeparateLatencies {
+                            Stepper("RCV Latency: \(viewModel.srtRcvLatency)ms",
+                                    value: $viewModel.srtRcvLatency,
+                                    in: 20...500,
+                                    step: 10)
+
+                            Stepper("Peer Latency: \(viewModel.srtPeerLatency)ms",
+                                    value: $viewModel.srtPeerLatency,
+                                    in: 20...500,
+                                    step: 10)
+                        }
+
+                        Toggle("Drop late packets (tlpktdrop)", isOn: $viewModel.srtTlPktDrop)
+
+                        Stepper("GOP: \(viewModel.srtGopSize) frames (\(viewModel.gopDurationMs)ms)",
+                                value: $viewModel.srtGopSize,
+                                in: 1...120,
+                                step: 1)
+
+                        Text("GOP = 1 sec (fps) recommended for stable OBS playback")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -171,6 +196,16 @@ class VideoSettingsViewModel: ObservableObject {
     @Published var streamingMode: StreamingMode
     @Published var srtPort: Int
     @Published var srtLatency: Int
+    @Published var srtRcvLatency: Int
+    @Published var srtPeerLatency: Int
+    @Published var srtTlPktDrop: Bool
+    @Published var srtGopSize: Int
+    @Published var useSeparateLatencies: Bool
+
+    var gopDurationMs: Int {
+        guard customFps > 0 else { return 0 }
+        return (srtGopSize * 1000) / customFps
+    }
 
     var effectiveConfiguration: StreamConfiguration? {
         if useCustomSettings {
@@ -200,6 +235,11 @@ class VideoSettingsViewModel: ObservableObject {
         self.streamingMode = loadedSettings.streamingMode
         self.srtPort = loadedSettings.srtPort
         self.srtLatency = loadedSettings.srtLatency
+        self.srtRcvLatency = loadedSettings.srtRcvLatency ?? loadedSettings.srtLatency
+        self.srtPeerLatency = loadedSettings.srtPeerLatency ?? loadedSettings.srtLatency
+        self.srtTlPktDrop = loadedSettings.srtTlPktDrop
+        self.srtGopSize = loadedSettings.srtGopSize
+        self.useSeparateLatencies = loadedSettings.srtRcvLatency != nil || loadedSettings.srtPeerLatency != nil
     }
 
     func selectPreset(_ preset: VideoPreset) {
@@ -224,9 +264,13 @@ class VideoSettingsViewModel: ObservableObject {
         settings.streamingMode = streamingMode
         settings.srtPort = srtPort
         settings.srtLatency = srtLatency
+        settings.srtRcvLatency = useSeparateLatencies ? srtRcvLatency : nil
+        settings.srtPeerLatency = useSeparateLatencies ? srtPeerLatency : nil
+        settings.srtTlPktDrop = srtTlPktDrop
+        settings.srtGopSize = srtGopSize
 
         VideoSettingsManager.save(settings)
-        print("✅ Video settings saved (mode: \(streamingMode.rawValue), SRT port: \(srtPort), latency: \(srtLatency)ms)")
+        print("✅ Video settings saved (mode: \(streamingMode.rawValue), latency: \(srtLatency)ms, GOP: \(srtGopSize), tlpktdrop: \(srtTlPktDrop))")
     }
 }
 

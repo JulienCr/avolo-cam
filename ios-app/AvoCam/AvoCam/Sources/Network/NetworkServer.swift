@@ -209,6 +209,22 @@ class NetworkServer {
         }
     }
 
+    /// Broadcast frame timing info to all WebSocket clients (for Flash mode latency correlation)
+    /// - Parameter frameInfo: Frame timing and RTP timestamp information
+    func broadcastFrameInfo(_ frameInfo: WebSocketFrameInfo) {
+        let clients = wsClients.withLock { Array($0) }
+
+        guard let jsonData = try? JSONEncoder().encode(frameInfo),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return
+        }
+
+        // Send to all connected clients
+        for client in clients {
+            client.send(text: jsonString)
+        }
+    }
+
     // MARK: - Router Setup
 
     private func setupRouter() {

@@ -44,6 +44,13 @@ impl PersistedCamera {
                 streaming_mode: status.current.streaming_mode,
                 srt_port: status.current.srt_port,
                 srt_latency: status.current.srt_latency,
+                srt_rcv_latency: None,
+                srt_peer_latency: None,
+                srt_tlpktdrop: None,
+                srt_gop_size: None,
+                flash_destination_host: status.current.flash_destination_host.clone(),
+                flash_destination_port: status.current.flash_destination_port,
+                flash_jitter_mode: None,
             };
 
             let camera = CameraSettingsRequest {
@@ -918,6 +925,13 @@ impl CameraManager {
                     streaming_mode: None,
                     srt_port: None,
                     srt_latency: None,
+                    srt_rcv_latency: None,
+                    srt_peer_latency: None,
+                    srt_tlpktdrop: None,
+                    srt_gop_size: None,
+                    flash_destination_host: None,
+                    flash_destination_port: None,
+                    flash_jitter_mode: None,
                 });
 
             let client = camera.client.clone();

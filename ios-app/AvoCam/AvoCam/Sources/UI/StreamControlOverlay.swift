@@ -196,7 +196,14 @@ struct StreamControlOverlay: View {
                 streamingMode: videoSettings.streamingMode,
                 srtPort: videoSettings.srtPort,
                 srtLatency: videoSettings.srtLatency,
-                srtPassphrase: nil
+                srtRcvLatency: videoSettings.srtRcvLatency,
+                srtPeerLatency: videoSettings.srtPeerLatency,
+                srtTlPktDrop: videoSettings.srtTlPktDrop,
+                srtPassphrase: nil,
+                srtGopSize: videoSettings.srtGopSize,
+                flashDestinationHost: videoSettings.flashDestinationHost,
+                flashDestinationPort: videoSettings.flashDestinationPort,
+                flashJitterMode: videoSettings.flashJitterMode
             )
 
             do {

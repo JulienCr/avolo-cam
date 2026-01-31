@@ -25,6 +25,7 @@ pub enum NdiState {
 pub enum StreamingMode {
     Ndi,
     Srt,
+    Flash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +38,9 @@ pub struct CurrentSettings {
     pub srt_port: Option<u32>,
     pub srt_latency: Option<u32>,
     pub srt_connection_url: Option<String>,
+    // Flash mode settings
+    pub flash_destination_host: Option<String>,
+    pub flash_destination_port: Option<u32>,
     pub wb_mode: WhiteBalanceMode,
     pub wb_kelvin: Option<u32>,
     pub wb_tint: Option<f64>,
@@ -116,6 +120,21 @@ pub struct StreamStartRequest {
     pub srt_port: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub srt_latency: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_rcv_latency: Option<u32>,   // Receive latency in ms
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_peer_latency: Option<u32>,  // Peer latency in ms
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_tlpktdrop: Option<bool>,    // Drop too-late packets
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srt_gop_size: Option<u32>,      // GOP in frames
+    // Flash mode settings
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash_destination_host: Option<String>,  // Required for flash mode
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash_destination_port: Option<u32>,     // Default 5000
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash_jitter_mode: Option<String>,       // "ultra_low" or "stable"
 }
 
 // MARK: - Camera Control

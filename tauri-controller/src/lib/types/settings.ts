@@ -6,18 +6,28 @@ import type {
   TorchMode,
   LensType,
   CameraPosition,
-  StreamingMode
+  StreamingMode,
+  FlashJitterMode
 } from './camera';
 
-// Stream Settings (for starting NDI/SRT stream)
+// Stream Settings (for starting NDI/SRT/Flash stream)
 export interface StreamSettings {
   resolution: string;
   framerate: number;
   bitrate: number;
   codec: string;
   streaming_mode?: StreamingMode;
+  // SRT settings
   srt_port?: number;
   srt_latency?: number;
+  srt_rcv_latency?: number;   // Receive latency in ms (null = use srt_latency)
+  srt_peer_latency?: number;  // Peer latency in ms (null = use srt_latency)
+  srt_tlpktdrop?: boolean;    // Drop too-late packets
+  srt_gop_size?: number;      // GOP in frames (default = fps = 1 second)
+  // Flash mode settings
+  flash_destination_host?: string;  // Required for flash mode
+  flash_destination_port?: number;  // Default 5000
+  flash_jitter_mode?: FlashJitterMode;  // "ultra_low" or "stable"
 }
 
 // Camera Settings (for camera controls)
@@ -51,8 +61,16 @@ export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   bitrate: 10000000, // 10 Mbps
   codec: 'h264',
   streaming_mode: 'ndi',
+  // SRT defaults
   srt_port: 9000,
   srt_latency: 120,
+  srt_rcv_latency: undefined,  // Use srt_latency
+  srt_peer_latency: undefined, // Use srt_latency
+  srt_tlpktdrop: true,
+  srt_gop_size: 30,  // 1 second GOP for stable OBS playback
+  // Flash defaults
+  flash_destination_port: 5000,
+  flash_jitter_mode: 'stable',
 };
 
 export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {

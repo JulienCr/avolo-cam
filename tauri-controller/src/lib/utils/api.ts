@@ -33,8 +33,17 @@ export async function startStream(
     bitrate: settings.bitrate,
     codec: settings.codec,
     streamingMode: settings.streaming_mode,
+    // SRT params
     srtPort: settings.srt_port,
     srtLatency: settings.srt_latency,
+    srtRcvLatency: settings.srt_rcv_latency,
+    srtPeerLatency: settings.srt_peer_latency,
+    srtTlpktdrop: settings.srt_tlpktdrop,
+    srtGopSize: settings.srt_gop_size,
+    // Flash params
+    flashDestinationHost: settings.flash_destination_host,
+    flashDestinationPort: settings.flash_destination_port,
+    flashJitterMode: settings.flash_jitter_mode,
   });
 }
 
@@ -61,8 +70,17 @@ export async function updateStreamSettings(
     bitrate: settings.bitrate,
     codec: settings.codec,
     streamingMode: settings.streaming_mode,
+    // SRT params
     srtPort: settings.srt_port,
     srtLatency: settings.srt_latency,
+    srtRcvLatency: settings.srt_rcv_latency,
+    srtPeerLatency: settings.srt_peer_latency,
+    srtTlpktdrop: settings.srt_tlpktdrop,
+    srtGopSize: settings.srt_gop_size,
+    // Flash params
+    flashDestinationHost: settings.flash_destination_host,
+    flashDestinationPort: settings.flash_destination_port,
+    flashJitterMode: settings.flash_jitter_mode,
   });
 }
 
@@ -82,8 +100,17 @@ export async function groupStartStream(
     bitrate: settings.bitrate,
     codec: settings.codec,
     streamingMode: settings.streaming_mode,
+    // SRT params
     srtPort: settings.srt_port,
     srtLatency: settings.srt_latency,
+    srtRcvLatency: settings.srt_rcv_latency,
+    srtPeerLatency: settings.srt_peer_latency,
+    srtTlpktdrop: settings.srt_tlpktdrop,
+    srtGopSize: settings.srt_gop_size,
+    // Flash params
+    flashDestinationHost: settings.flash_destination_host,
+    flashDestinationPort: settings.flash_destination_port,
+    flashJitterMode: settings.flash_jitter_mode,
   });
 }
 

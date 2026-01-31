@@ -40,6 +40,7 @@ actor SRTManager {
     // MARK: - Properties
 
     private let encoder: H264Encoder
+    private let tsMuxer: TSMuxer
     private var isRunning = false
     private var srtSocket: SRTSocket?
     private var connectedClient: SRTSocket?
@@ -61,19 +62,24 @@ actor SRTManager {
     // Configuration
     struct Configuration {
         let port: Int
-        let latency: Int  // milliseconds
+        let latency: Int       // general latency in milliseconds
+        let rcvLatency: Int    // receive latency in milliseconds
+        let peerLatency: Int   // peer latency in milliseconds
+        let tlPktDrop: Bool    // drop too-late packets
         let passphrase: String?
         let width: Int
         let height: Int
         let fps: Int
         let bitrate: Int
+        let gopSize: Int       // keyframe interval in frames (default: fps = 1 second)
     }
 
     // MARK: - Initialization
 
     init() {
         encoder = H264Encoder()
-        print("🎥 SRTManager initialized")
+        tsMuxer = TSMuxer()
+        print("🎥 SRTManager initialized with MPEG-TS muxer")
     }
 
     // MARK: - Lifecycle
@@ -92,7 +98,8 @@ actor SRTManager {
                 width: config.width,
                 height: config.height,
                 fps: config.fps,
-                bitrate: config.bitrate
+                bitrate: config.bitrate,
+                gopSize: config.gopSize
             )
         } catch {
             print("❌ Failed to configure encoder: \(error)")
@@ -110,8 +117,13 @@ actor SRTManager {
         do {
             let socket = SRTSocket()
 
-            // Build the SRT URL for binding
-            let srtUrl = URL(string: "srt://0.0.0.0:\(config.port)")!
+            // Build the SRT URL for binding with all latency parameters
+            // SRT expects latency in MICROSECONDS (1ms = 1000us)
+            let latencyUs = config.latency * 1000
+            let rcvLatencyUs = config.rcvLatency * 1000
+            let peerLatencyUs = config.peerLatency * 1000
+            let tlpktdrop = config.tlPktDrop ? 1 : 0
+            let srtUrl = URL(string: "srt://0.0.0.0:\(config.port)?transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")!
 
             // Bind to the port
             try socket.bind(to: srtUrl)
@@ -133,6 +145,9 @@ actor SRTManager {
             throw SRTError.socketCreationFailed
         }
 
+        // Reset muxer state for new stream
+        tsMuxer.reset()
+
         // Initialize telemetry
         sentFrames = 0
         droppedFrames = 0
@@ -141,31 +156,86 @@ actor SRTManager {
         fpsStartTime = CFAbsoluteTimeGetCurrent()
         isRunning = true
 
+        // Log connection info
+        let latencyUs = config.latency * 1000
+        let rcvLatencyUs = config.rcvLatency * 1000
+        let peerLatencyUs = config.peerLatency * 1000
+        let tlpktdrop = config.tlPktDrop ? 1 : 0
         print("✅ SRT stream started successfully - waiting for OBS connection on port \(config.port)")
+        print("📺 Connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
     }
 
     /// Accept incoming SRT connections
     private func acceptConnectionLoop() async {
-        guard let socket = srtSocket else { return }
-
         while isRunning {
+            guard let socket = srtSocket else {
+                // Socket was closed, try to recreate it
+                if isRunning, let config = currentConfig {
+                    print("🔄 Attempting to recreate SRT listener...")
+                    await recreateListener(config: config)
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
+                continue
+            }
+
+            // Don't accept new connections if we already have a client
+            if connectedClient != nil {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                continue
+            }
+
             do {
                 // Accept blocks until a client connects
                 let client = try socket.accept()
                 print("🔗 SRT client connected!")
 
                 // Store the connected client
-                await MainActor.run {
-                    Task { await self.setConnectedClient(client) }
-                }
+                self.connectedClient = client
 
             } catch {
-                if isRunning {
-                    print("⚠️ Error accepting SRT connection: \(error)")
+                if isRunning && connectedClient == nil {
+                    let errorString = "\(error)"
+                    // Check if the socket became invalid (common after client disconnect)
+                    if errorString.contains("einvsock") || errorString.contains("invalid") {
+                        print("⚠️ SRT listener socket invalid, will recreate...")
+                        // Close the invalid socket
+                        srtSocket?.close()
+                        srtSocket = nil
+                        // Will be recreated on next loop iteration
+                    } else {
+                        print("⚠️ Error accepting SRT connection: \(error)")
+                    }
                     // Brief delay before retrying
-                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
                 }
             }
+        }
+    }
+
+    /// Recreate the SRT listener socket
+    private func recreateListener(config: Configuration) async {
+        // Close any existing socket
+        srtSocket?.close()
+        srtSocket = nil
+
+        do {
+            let socket = SRTSocket()
+            // SRT expects latency in MICROSECONDS (1ms = 1000us)
+            let latencyUs = config.latency * 1000
+            let rcvLatencyUs = config.rcvLatency * 1000
+            let peerLatencyUs = config.peerLatency * 1000
+            let tlpktdrop = config.tlPktDrop ? 1 : 0
+            let srtUrl = URL(string: "srt://0.0.0.0:\(config.port)?transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")!
+
+            try socket.bind(to: srtUrl)
+            print("✅ SRT socket re-bound to port \(config.port)")
+
+            try socket.listen(withBacklog: 1)
+            print("👂 SRT listening for connections (recreated)...")
+
+            self.srtSocket = socket
+        } catch {
+            print("❌ Failed to recreate SRT listener: \(error)")
         }
     }
 
@@ -246,52 +316,52 @@ actor SRTManager {
             return
         }
 
-        // Extract NAL units from CMSampleBuffer
-        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
-            print("⚠️ No data buffer in sample")
+        // Mux H.264 into MPEG-TS format (required for VLC/OBS compatibility)
+        let tsData = tsMuxer.mux(sampleBuffer: sampleBuffer)
+
+        guard !tsData.isEmpty else {
+            print("⚠️ TSMuxer returned empty data")
             droppedFrames += 1
             return
         }
 
-        var length: Int = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        let status = CMBlockBufferGetDataPointer(
-            dataBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: nil,
-            totalLengthOut: &length,
-            dataPointerOut: &dataPointer
-        )
 
-        guard status == noErr, let pointer = dataPointer else {
-            print("⚠️ Failed to get data pointer: \(status)")
-            droppedFrames += 1
-            return
-        }
+        // SRT live mode has max payload of 1316 bytes (7 TS packets * 188 = 1316)
+        let maxSRTPayload = 1316
+        let tsPacketSize = 188
+        let packetsPerSend = maxSRTPayload / tsPacketSize  // 7 packets
 
-        // Convert to Data for sending
-        let data = Data(bytes: pointer, count: length)
+        // Send MPEG-TS packets in chunks that fit SRT's max payload
+        var offset = 0
+        var sendError = false
+        var chunksSent = 0
 
-        // Send via SRT
-        do {
-            try client.write(data: data)
-            sentFrames += 1
-            sentBytes += Int64(length)
+        while offset < tsData.count && !sendError {
+            let remainingBytes = tsData.count - offset
+            let chunkSize = min(packetsPerSend * tsPacketSize, remainingBytes)
 
-            // Log keyframes
-            if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]],
-               let firstAttachment = attachments.first {
-                let isKeyframe = !(firstAttachment[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
-                if isKeyframe {
-                    print("🔑 Keyframe sent (\(length) bytes)")
-                }
+            // Ensure we send complete TS packets
+            let alignedChunkSize = (chunkSize / tsPacketSize) * tsPacketSize
+            guard alignedChunkSize > 0 else { break }
+
+            let chunk = tsData.subdata(in: offset..<(offset + alignedChunkSize))
+
+            do {
+                try client.write(data: chunk)
+                sentBytes += Int64(alignedChunkSize)
+                chunksSent += 1
+            } catch {
+                print("⚠️ SRT send failed at chunk \(chunksSent): \(error)")
+                sendError = true
+                droppedFrames += 1
+                connectedClient = nil
             }
-        } catch {
-            print("⚠️ SRT send failed: \(error)")
-            droppedFrames += 1
 
-            // Client may have disconnected
-            connectedClient = nil
+            offset += alignedChunkSize
+        }
+
+        if !sendError {
+            sentFrames += 1
         }
     }
 }

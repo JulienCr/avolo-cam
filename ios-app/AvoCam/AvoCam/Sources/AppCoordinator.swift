@@ -32,6 +32,7 @@ class AppCoordinator: ObservableObject {
     private let captureManager: CaptureManager
     private let ndiManager: NDIManager
     private let srtManager: SRTManager
+    private let flashManager: FlashManager
     private var networkServer: NetworkServer  // var to allow re-initialization with self
     private let bonjourService: BonjourService
     private let tallyPoller: NDITallyPoller
@@ -51,6 +52,7 @@ class AppCoordinator: ObservableObject {
         self.captureManager = CaptureManager()
         self.ndiManager = NDIManager(alias: configuration.cameraAlias)
         self.srtManager = SRTManager()
+        self.flashManager = FlashManager()
         self.tallyPoller = NDITallyPoller(ndiManager: ndiManager)
         self.bonjourService = BonjourService(
             alias: configuration.cameraAlias,
@@ -63,7 +65,8 @@ class AppCoordinator: ObservableObject {
         self.streamingCoordinator = StreamingCoordinator(
             captureManager: captureManager,
             ndiManager: ndiManager,
-            srtManager: srtManager
+            srtManager: srtManager,
+            flashManager: flashManager
         )
         self.telemetryAggregator = TelemetryAggregator(
             telemetryCollector: TelemetryCollector(),
@@ -334,10 +337,26 @@ class AppCoordinator: ObservableObject {
         try await streamingCoordinator.startStreaming(request: request)
         isStreaming = true
         updateCurrentSettings(from: request)
+
+        // If Flash mode, update Bonjour with UDP port and setup frame info callback
+        if request.streamingMode == .flash {
+            let flashPort = await flashManager.activeUdpPort
+            bonjourService.updateFlashPort(flashPort)
+
+            // Setup WebSocket callback for frame timing correlation
+            await flashManager.setFrameInfoCallback { [weak networkServer] frameInfo in
+                networkServer?.broadcastFrameInfo(frameInfo)
+            }
+        }
     }
 
     func stopStreaming() async {
         guard isStreaming else { return }
+
+        // If Flash mode was active, clear Bonjour Flash port
+        if currentSettings?.streamingMode == .flash {
+            bonjourService.updateFlashPort(0)
+        }
 
         await streamingCoordinator.stopStreaming()
         isStreaming = false
@@ -394,6 +413,14 @@ class AppCoordinator: ObservableObject {
             return nil
         }()
 
+        // Get Flash UDP port if in Flash mode
+        let flashUdpPort: Int?
+        if settings.streamingMode == .flash, isStreaming {
+            flashUdpPort = Int(await flashManager.activeUdpPort)
+        } else {
+            flashUdpPort = nil
+        }
+
         return StatusResponse(
             alias: configuration.cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
@@ -404,7 +431,8 @@ class AppCoordinator: ObservableObject {
             tallyPreview: tallyState?.preview,
             streamingMode: settings.streamingMode,
             srtConnectionUrl: srtConnectionUrl,
-            srtPort: settings.srtPort
+            srtPort: settings.srtPort,
+            flashUdpPort: flashUdpPort
         )
     }
 

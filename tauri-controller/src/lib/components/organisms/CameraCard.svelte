@@ -10,6 +10,7 @@
     formatBitrate,
   } from "$lib/utils/format";
   import * as api from "$lib/utils/api";
+  import { cameraStreamSettings } from "$lib/stores/settings";
 
   export let camera: Camera;
   export let selected = false;
@@ -28,6 +29,12 @@
   $: streamingMode = streamDetails?.streaming_mode || 'ndi';
   $: srtPort = streamDetails?.srt_port;
   $: srtConnectionUrl = streamDetails?.srt_connection_url;
+
+  // Configured SRT settings (from settings store, not from stream status)
+  $: cameraSettings = $cameraStreamSettings[camera.id];
+  $: configuredSrtPort = cameraSettings?.srt_port || 9000;
+  $: configuredStreamingMode = cameraSettings?.streaming_mode || 'ndi';
+  $: constructedSrtUrl = `srt://${camera.ip}:${configuredSrtPort}?mode=caller`;
 
   // Check if WiFi RSSI is real data (not the default -50 placeholder)
   $: hasRealWifiData =
@@ -149,12 +156,16 @@
     }
   }
 
-  // Copy to clipboard
-  async function copyToClipboard(text: string) {
+  // Copy to clipboard with visual feedback
+  let copiedSrt = false;
+  async function copyToClipboard(text: string, showFeedback = false) {
     try {
       await navigator.clipboard.writeText(text);
-      // Could add a toast notification here
       console.log('Copied to clipboard:', text);
+      if (showFeedback) {
+        copiedSrt = true;
+        setTimeout(() => copiedSrt = false, 2000);
+      }
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
       alert('Failed to copy to clipboard');
@@ -215,9 +226,30 @@
 
     <!-- Info -->
     <div class="flex items-center justify-between text-sm">
-      <span class="text-gray-600 dark:text-gray-400"
-        >{camera.ip}:{camera.port}</span
-      >
+      <div class="flex items-center gap-2">
+        <span class="text-gray-600 dark:text-gray-400"
+          >{camera.ip}:{camera.port}</span
+        >
+        <!-- SRT Copy Button - always visible when SRT mode is configured -->
+        {#if configuredStreamingMode === 'srt'}
+          <button
+            on:click={() => copyToClipboard(constructedSrtUrl, true)}
+            class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-800/40 transition-colors"
+            title="Copy SRT URL: {constructedSrtUrl}"
+          >
+            {#if copiedSrt}
+              <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            {:else}
+              <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            {/if}
+            SRT
+          </button>
+        {/if}
+      </div>
       <span
         class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium {isStreaming
           ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'

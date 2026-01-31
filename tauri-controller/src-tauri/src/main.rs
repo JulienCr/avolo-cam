@@ -236,6 +236,13 @@ async fn start_stream(
     streaming_mode: Option<String>,
     srt_port: Option<u32>,
     srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
 
@@ -243,6 +250,7 @@ async fn start_stream(
     let mode = streaming_mode.as_deref().and_then(|m| match m {
         "ndi" => Some(StreamingMode::Ndi),
         "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
         _ => None,
     });
 
@@ -254,6 +262,13 @@ async fn start_stream(
         streaming_mode: mode,
         srt_port,
         srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port,
+        flash_jitter_mode,
     };
     manager.start_stream(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -291,6 +306,13 @@ async fn update_stream_settings(
     streaming_mode: Option<String>,
     srt_port: Option<u32>,
     srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
 
@@ -298,6 +320,7 @@ async fn update_stream_settings(
     let mode = streaming_mode.as_deref().and_then(|m| match m {
         "ndi" => Some(StreamingMode::Ndi),
         "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
         _ => None,
     });
 
@@ -309,6 +332,13 @@ async fn update_stream_settings(
         streaming_mode: mode,
         srt_port,
         srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port,
+        flash_jitter_mode,
     };
     manager.update_stream_settings(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -347,6 +377,13 @@ async fn group_start_stream(
     streaming_mode: Option<String>,
     srt_port: Option<u32>,
     srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<Vec<GroupCommandResult>, String> {
     let mut manager = state.camera_manager.write().await;
 
@@ -354,6 +391,7 @@ async fn group_start_stream(
     let mode = streaming_mode.as_deref().and_then(|m| match m {
         "ndi" => Some(StreamingMode::Ndi),
         "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
         _ => None,
     });
 
@@ -365,6 +403,13 @@ async fn group_start_stream(
         streaming_mode: mode,
         srt_port,
         srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port,
+        flash_jitter_mode,
     };
     manager.group_start_stream(&camera_ids, request).await
         .map_err(|e| e.to_string())

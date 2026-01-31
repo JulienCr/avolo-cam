@@ -12,6 +12,7 @@ import Foundation
 enum StreamingMode: String, Codable, CaseIterable, Sendable {
     case ndi = "ndi"
     case srt = "srt"
+    case flash = "flash"
 }
 
 // MARK: - Status Response
@@ -27,6 +28,7 @@ struct StatusResponse: Codable {
     let streamingMode: StreamingMode
     let srtConnectionUrl: String?
     let srtPort: Int?
+    let flashUdpPort: Int?  // Active UDP port for Flash mode (announced via mDNS)
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -39,6 +41,7 @@ struct StatusResponse: Codable {
         case streamingMode = "streaming_mode"
         case srtConnectionUrl = "srt_connection_url"
         case srtPort = "srt_port"
+        case flashUdpPort = "flash_udp_port"
     }
 }
 
@@ -67,6 +70,8 @@ struct CurrentSettings: Codable {
     var streamingMode: StreamingMode
     var srtPort: Int?
     var srtLatency: Int?
+    var flashDestinationHost: String?
+    var flashDestinationPort: Int?
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -88,6 +93,8 @@ struct CurrentSettings: Codable {
         case streamingMode = "streaming_mode"
         case srtPort = "srt_port"
         case srtLatency = "srt_latency"
+        case flashDestinationHost = "flash_destination_host"
+        case flashDestinationPort = "flash_destination_port"
     }
 }
 
@@ -162,7 +169,16 @@ struct StreamStartRequest: Codable {
     let streamingMode: StreamingMode?
     let srtPort: Int?
     let srtLatency: Int?
+    let srtRcvLatency: Int?    // Receive latency in ms (nil = use srtLatency)
+    let srtPeerLatency: Int?   // Peer latency in ms (nil = use srtLatency)
+    let srtTlPktDrop: Bool?    // Drop too-late packets
     let srtPassphrase: String?
+    let srtGopSize: Int?       // GOP in frames
+
+    // Flash mode settings
+    let flashDestinationHost: String?  // Target host for UDP packets (required for flash)
+    let flashDestinationPort: Int?     // Target UDP port (default 5000)
+    let flashJitterMode: String?       // "ultra_low" or "stable" (hint for receiver)
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -172,7 +188,14 @@ struct StreamStartRequest: Codable {
         case streamingMode = "streaming_mode"
         case srtPort = "srt_port"
         case srtLatency = "srt_latency"
+        case srtRcvLatency = "srt_rcv_latency"
+        case srtPeerLatency = "srt_peer_latency"
+        case srtTlPktDrop = "srt_tlpktdrop"
         case srtPassphrase = "srt_passphrase"
+        case srtGopSize = "srt_gop_size"
+        case flashDestinationHost = "flash_destination_host"
+        case flashDestinationPort = "flash_destination_port"
+        case flashJitterMode = "flash_jitter_mode"
     }
 }
 
@@ -261,6 +284,22 @@ struct WebSocketTelemetryMessage: Codable {
 struct WebSocketCommandMessage: Codable {
     let op: String
     let camera: CameraSettingsRequest?
+}
+
+struct WebSocketFrameInfo: Codable {
+    let op: String  // "frame_info"
+    let frameIdx: Int64
+    let rtpTimestamp: UInt32  // RTP timestamp (90kHz clock) for correlating with RTP packets
+    let captureTs: Int64  // nanoseconds since boot
+    let encodeTs: Int64   // nanoseconds since boot
+
+    enum CodingKeys: String, CodingKey {
+        case op
+        case frameIdx = "frame_idx"
+        case rtpTimestamp = "rtp_ts"
+        case captureTs = "capture_ts_ns"
+        case encodeTs = "encode_ts_ns"
+    }
 }
 
 // MARK: - Video Settings

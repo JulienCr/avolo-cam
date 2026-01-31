@@ -55,6 +55,7 @@ actor H264Encoder {
     private var height: Int32 = 1080
     private var fps: Int32 = 30
     private var bitrate: Int32 = 10_000_000
+    private var gopSize: Int32 = 3  // Lower default for low-latency streaming
 
     typealias EncodedFrameCallback = @Sendable (CMSampleBuffer) -> Void
     private var onEncodedFrame: EncodedFrameCallback?
@@ -67,14 +68,16 @@ actor H264Encoder {
     ///   - height: Video height in pixels
     ///   - fps: Target frame rate
     ///   - bitrate: Target bitrate in bits per second
-    func configure(width: Int, height: Int, fps: Int, bitrate: Int) throws {
-        print("🎬 Configuring H264Encoder: \(width)x\(height) @ \(fps)fps, \(bitrate)bps")
+    ///   - gopSize: Keyframe interval in frames (default: 3 for low latency)
+    func configure(width: Int, height: Int, fps: Int, bitrate: Int, gopSize: Int = 3) throws {
+        print("🎬 Configuring H264Encoder: \(width)x\(height) @ \(fps)fps, \(bitrate)bps, GOP=\(gopSize)")
 
         // Store parameters
         self.width = Int32(width)
         self.height = Int32(height)
         self.fps = Int32(fps)
         self.bitrate = Int32(bitrate)
+        self.gopSize = Int32(gopSize)
 
         // Invalidate existing session if any
         if let session = compressionSession {
@@ -120,8 +123,11 @@ actor H264Encoder {
         try setProperty(session: session, key: kVTCompressionPropertyKey_RealTime, value: true as CFBoolean)
         try setProperty(session: session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         try setProperty(session: session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: false as CFBoolean)
-        try setProperty(session: session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: self.fps as CFNumber)
-        try setProperty(session: session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 1.0 as CFNumber)
+        // GOP (keyframe interval) - configurable for latency vs bandwidth trade-off
+        // Shorter GOP = more keyframes = faster decoder sync = lower latency (~100ms at GOP=3, 30fps)
+        // Trade-off: ~20-30% higher bitrate with shorter GOP
+        try setProperty(session: session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: self.gopSize as CFNumber)
+        try setProperty(session: session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: Double(self.gopSize) / Double(self.fps) as CFNumber)
         try setProperty(session: session, key: kVTCompressionPropertyKey_AverageBitRate, value: self.bitrate as CFNumber)
         try setProperty(session: session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: self.fps as CFNumber)
 

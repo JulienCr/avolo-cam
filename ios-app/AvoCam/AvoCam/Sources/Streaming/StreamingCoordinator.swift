@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-/// Actor that coordinates the streaming pipeline between capture and output (NDI or SRT)
+/// Actor that coordinates the streaming pipeline between capture and output (NDI, SRT, or Flash)
 actor StreamingCoordinator: StreamingService {
     // MARK: - Properties
 
@@ -18,14 +18,16 @@ actor StreamingCoordinator: StreamingService {
     private let captureManager: CaptureManager
     private let ndiManager: NDIManager
     private let srtManager: SRTManager
+    private let flashManager: FlashManager
     private var tallyPoller: NDITallyPoller?
 
     // MARK: - Initialization
 
-    init(captureManager: CaptureManager, ndiManager: NDIManager, srtManager: SRTManager) {
+    init(captureManager: CaptureManager, ndiManager: NDIManager, srtManager: SRTManager, flashManager: FlashManager) {
         self.captureManager = captureManager
         self.ndiManager = ndiManager
         self.srtManager = srtManager
+        self.flashManager = flashManager
     }
 
     func setTallyPoller(_ poller: NDITallyPoller) {
@@ -95,6 +97,47 @@ actor StreamingCoordinator: StreamingService {
                     await srtManager.send(pixelBuffer: pixelBuffer, timestamp: timestamp, duration: duration)
                 }
             }
+
+        case .flash:
+            guard let destHost = request.flashDestinationHost else {
+                throw AVOCamError.invalidConfiguration("Flash mode requires destination host")
+            }
+
+            let flashConfig = FlashManager.Configuration(
+                destinationHost: destHost,
+                destinationPort: UInt16(request.flashDestinationPort ?? 5000),
+                width: width,
+                height: height,
+                fps: request.framerate,
+                bitrate: request.bitrate,
+                gopSize: request.srtGopSize ?? request.framerate  // Reuse GOP setting
+            )
+
+            try await flashManager.start(config: flashConfig)
+
+            // Debug: frame counter for logging
+            let frameCounter = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+            frameCounter.initialize(to: 0)
+
+            // Start capture with frame callback that feeds Flash encoder
+            try await captureManager.startCapture { [flashManager] sampleBuffer in
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    print("⚠️ FLASH: No pixel buffer in sample")
+                    return
+                }
+                let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                let duration = CMSampleBufferGetDuration(sampleBuffer)
+
+                // Debug logging every 30 frames
+                frameCounter.pointee += 1
+                if frameCounter.pointee % 30 == 1 {
+                    print("📹 FLASH: Sending frame \(frameCounter.pointee) to encoder")
+                }
+
+                Task {
+                    await flashManager.send(pixelBuffer: pixelBuffer, timestamp: timestamp, duration: duration)
+                }
+            }
         }
 
         isStreaming = true
@@ -117,6 +160,10 @@ actor StreamingCoordinator: StreamingService {
         case .srt:
             await captureManager.stopCapture()
             await srtManager.stop()
+
+        case .flash:
+            await captureManager.stopCapture()
+            await flashManager.stop()
         }
 
         isStreaming = false
@@ -140,6 +187,8 @@ actor StreamingCoordinator: StreamingService {
             return ndiManager.getTelemetryStats()
         case .srt:
             return await srtManager.getStats()
+        case .flash:
+            return await flashManager.getStats()
         }
     }
 

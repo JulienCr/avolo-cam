@@ -11,7 +11,8 @@ export interface Telemetry {
 }
 
 export type NdiState = 'streaming' | 'idle' | 'unknown';
-export type StreamingMode = 'ndi' | 'srt';
+export type StreamingMode = 'ndi' | 'srt' | 'flash';
+export type FlashJitterMode = 'ultra_low' | 'stable';
 export type WhiteBalanceMode = 'auto' | 'manual';
 export type IsoMode = 'auto' | 'manual';
 export type ShutterMode = 'auto' | 'manual';
@@ -29,6 +30,9 @@ export interface CurrentSettings {
   srt_port?: number;
   srt_latency?: number;
   srt_connection_url?: string;
+  // Flash mode settings
+  flash_destination_host?: string;
+  flash_destination_port?: number;
   wb_mode?: WhiteBalanceMode;
   wb_kelvin?: number;
   wb_tint?: number;
