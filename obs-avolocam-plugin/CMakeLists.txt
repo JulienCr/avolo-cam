@@ -12,13 +12,13 @@ endif()
 
 # OBS SDK configuration
 # Use local headers from deps/ directory
-set(OBS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/obs-studio-30.2.3")
+set(OBS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/obs-studio-32.0.4")
 set(OBS_LIBOBS_DIR "${OBS_SOURCE_DIR}/libobs")
 
 # Check if OBS headers exist
 if(NOT EXISTS "${OBS_LIBOBS_DIR}/obs-module.h")
     message(FATAL_ERROR "OBS SDK headers not found. Please run:
-    cd deps && curl -sL https://github.com/obsproject/obs-studio/archive/refs/tags/30.2.3.tar.gz | tar -xz")
+    cd deps && curl -sL https://github.com/obsproject/obs-studio/archive/refs/tags/32.0.4.tar.gz | tar -xz")
 endif()
 
 # On macOS, we link against the installed OBS framework
@@ -66,9 +66,10 @@ if(WIN32)
     endif()
 
     if(OBS_DIR AND EXISTS "${OBS_DIR}")
-        # Find OBS library - try both bin/64bit and lib locations
+        # Find OBS library - try deps folder first (generated import lib), then OBS installation
         find_library(OBS_LIB obs
             PATHS
+                "${CMAKE_CURRENT_SOURCE_DIR}/deps"
                 "${OBS_DIR}/bin/64bit"
                 "${OBS_DIR}/lib"
             NO_DEFAULT_PATH
@@ -189,6 +190,13 @@ target_include_directories(obs-avolocam PRIVATE
     ${OBS_SOURCE_DIR}
 )
 
+# Windows: add pthread shim directory
+if(WIN32)
+    target_include_directories(obs-avolocam PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/deps/pthread-win32
+    )
+endif()
+
 # Link libraries
 if(APPLE AND OBS_LIBRARIES)
     target_link_libraries(obs-avolocam PRIVATE
@@ -223,7 +231,7 @@ if(WIN32)
     # Add Bonjour SDK include directory
     if(BONJOUR_FOUND)
         target_include_directories(obs-avolocam PRIVATE ${BONJOUR_INCLUDE_DIR})
-        link_directories(${BONJOUR_LIB_DIR})
+        target_link_directories(obs-avolocam PRIVATE ${BONJOUR_LIB_DIR})
     endif()
 
     # Link OBS library

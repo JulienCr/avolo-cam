@@ -54,6 +54,7 @@ private:
 
     // Media Foundation objects
     IMFTransform *decoder_ = nullptr;
+    IMFMediaType *output_type_ = nullptr;
     IMFDXGIDeviceManager *device_manager_ = nullptr;
     UINT device_manager_token_ = 0;
 

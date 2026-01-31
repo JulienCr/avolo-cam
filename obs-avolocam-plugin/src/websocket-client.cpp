@@ -152,7 +152,7 @@ bool WebSocketClient::do_connect()
     std::string path;
     if (!parse_url(url_, host, port, path)) {
         blog(LOG_ERROR, "[avolocam-ws] Invalid URL: %s", url_.c_str());
-        set_state(WSState::ERROR);
+        set_state(WSState::ERRORED);
         return false;
     }
 
@@ -170,7 +170,7 @@ bool WebSocketClient::do_connect()
     int res = getaddrinfo(host.c_str(), port_str, &hints, &result);
     if (res != 0 || !result) {
         blog(LOG_ERROR, "[avolocam-ws] Failed to resolve host: %s", host.c_str());
-        set_state(WSState::ERROR);
+        set_state(WSState::ERRORED);
         return false;
     }
 
@@ -184,7 +184,7 @@ bool WebSocketClient::do_connect()
 #endif
         blog(LOG_ERROR, "[avolocam-ws] Failed to create socket");
         freeaddrinfo(result);
-        set_state(WSState::ERROR);
+        set_state(WSState::ERRORED);
         return false;
     }
 
@@ -198,7 +198,7 @@ bool WebSocketClient::do_connect()
         socket_ = -1;
 #endif
         freeaddrinfo(result);
-        set_state(WSState::ERROR);
+        set_state(WSState::ERRORED);
         return false;
     }
 
@@ -616,7 +616,7 @@ void WebSocketClient::set_state(WSState new_state)
 void WebSocketClient::attempt_reconnect()
 {
     if (!auto_reconnect_ || reconnect_attempts_ >= (uint64_t)max_reconnect_attempts_) {
-        set_state(WSState::ERROR);
+        set_state(WSState::ERRORED);
         return;
     }
 
@@ -716,7 +716,7 @@ const char *ws_state_name(WSState state)
     case WSState::CONNECTING: return "CONNECTING";
     case WSState::CONNECTED: return "CONNECTED";
     case WSState::RECONNECTING: return "RECONNECTING";
-    case WSState::ERROR: return "ERROR";
+    case WSState::ERRORED: return "ERROR";
     default: return "UNKNOWN";
     }
 }

@@ -1,0 +1,32 @@
+# OBS AvoCam Plugin - Windows Build & Install
+#
+# Usage (from Developer Command Prompt):
+#   nmake /f Makefile.win          - Build the plugin
+#   nmake /f Makefile.win install  - Build and install (admin required)
+#   nmake /f Makefile.win clean    - Clean build artifacts
+
+BUILD_DIR = build-win
+CONFIG = Release
+OBS_PLUGIN_DIR = C:\Program Files\obs-studio\obs-plugins\64bit
+DLL = $(BUILD_DIR)\$(CONFIG)\obs-avolocam.dll
+
+all: build
+
+build:
+	@echo [BUILD] Compiling...
+	@cmake --build $(BUILD_DIR) --config $(CONFIG)
+	@echo [BUILD] Done: $(DLL)
+
+install: build
+	@echo [INSTALL] Copying to $(OBS_PLUGIN_DIR)...
+	@copy /Y "$(DLL)" "$(OBS_PLUGIN_DIR)\" >nul
+	@echo [INSTALL] Done. Restart OBS.
+
+clean:
+	@echo [CLEAN] Removing build artifacts...
+	@if exist "$(BUILD_DIR)\$(CONFIG)" rmdir /s /q "$(BUILD_DIR)\$(CONFIG)"
+	@echo [CLEAN] Done.
+
+configure:
+	@if not exist "$(BUILD_DIR)" mkdir "$(BUILD_DIR)"
+	@cd "$(BUILD_DIR)" && cmake .. -G "Visual Studio 17 2022" -A x64

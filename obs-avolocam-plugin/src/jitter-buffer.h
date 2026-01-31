@@ -65,6 +65,13 @@ public:
     uint64_t packets_received() const { return packets_received_; }
     uint64_t packets_dropped() const { return packets_dropped_; }
 
+    /**
+     * Set low-latency mode (outputs packets immediately with threshold of 1)
+     * @param enabled true for immediate output, false for 2-packet threshold
+     */
+    void set_low_latency_mode(bool enabled) { low_latency_mode_ = enabled; }
+    bool low_latency_mode() const { return low_latency_mode_; }
+
 private:
     struct BufferedPacket {
         std::vector<uint8_t> data;
@@ -76,6 +83,7 @@ private:
     std::deque<BufferedPacket> buffer_;
     uint32_t max_delay_ms_;
     uint64_t first_packet_time_ns_ = 0;
+    bool low_latency_mode_ = true;  // Default to low latency on Windows
 
     // Statistics
     uint64_t packets_received_ = 0;

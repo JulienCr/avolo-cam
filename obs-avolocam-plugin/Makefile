@@ -2,9 +2,11 @@
 #
 # Usage:
 #   make          - Build the plugin
-#   make install  - Build and install to OBS.app
+#   make install  - Build and install (macOS: OBS.app, Windows: use install.bat)
 #   make clean    - Clean build artifacts
 #   make rebuild  - Clean and rebuild
+#
+# Windows: Use build.bat and install.bat instead, or nmake with Makefile.win
 
 BUILD_DIR := build
 PLUGIN_NAME := obs-avolocam.plugin

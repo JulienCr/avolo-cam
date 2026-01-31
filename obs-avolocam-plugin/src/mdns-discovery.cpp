@@ -411,21 +411,30 @@ struct MdnsDiscovery::Impl {
 
         event_thread_ = std::thread([this]() {
             SOCKET fd = (SOCKET)DNSServiceRefSockFD(browse_ref_);
+
+            // Create event ONCE outside the loop for efficiency
+            WSAEVENT read_event = WSACreateEvent();
+            WSAEventSelect(fd, read_event, FD_READ);
+
+            WSAEVENT events[2];
+            events[0] = read_event;
+            events[1] = stop_event_;
+
             while (running_.load()) {
-                WSAEVENT events[2];
-                events[0] = WSACreateEvent();
-                events[1] = stop_event_;
-
-                WSAEventSelect(fd, events[0], FD_READ);
-
-                DWORD result = WSAWaitForMultipleEvents(2, events, FALSE, 100, FALSE);
-
-                WSACloseEvent(events[0]);
+                // Use 20ms timeout for faster response (was 100ms)
+                DWORD result = WSAWaitForMultipleEvents(2, events, FALSE, 20, FALSE);
 
                 if (result == WSA_WAIT_EVENT_0) {
                     DNSServiceProcessResult(browse_ref_);
+                    WSAResetEvent(read_event);  // Reset for reuse
+                } else if (result == WSA_WAIT_EVENT_0 + 1) {
+                    // Stop event signaled
+                    break;
                 }
             }
+
+            // Clean up event after loop exits
+            WSACloseEvent(read_event);
         });
 
         blog(LOG_INFO, "[avolocam] mDNS discovery started (Windows)");
@@ -489,27 +498,211 @@ struct MdnsDiscovery::Impl {
 
     void resolve_service_win(const std::string &name, uint32_t interface_index,
                               const std::string &domain) {
-        // Similar to macOS implementation
-        // Simplified for brevity - full implementation would mirror macOS
-        (void)interface_index;
-        (void)domain;
+        DNSServiceRef resolve_ref = nullptr;
 
-        // For now, create a placeholder
-        DiscoveredCamera camera;
-        camera.name = name;
-        camera.http_port = 8888;
-        camera.flash_udp_port = 5000;
-        camera.resolved = false;
-        camera.last_seen = os_gettime_ns();
+        // Store context for callback
+        struct ResolveContext {
+            Impl *impl;
+            std::string name;
+            uint32_t interface_index;
+        };
 
+        auto *ctx = new ResolveContext{this, name, interface_index};
+
+        DNSServiceErrorType err = DNSServiceResolve(
+            &resolve_ref,
+            0,
+            interface_index,
+            name.c_str(),
+            SERVICE_TYPE,
+            domain.c_str(),
+            resolve_callback_win,
+            ctx);
+
+        if (err != kDNSServiceErr_NoError) {
+            blog(LOG_ERROR, "[avolocam] DNSServiceResolve failed: %d", err);
+            delete ctx;
+            return;
+        }
+
+        // Store resolve ref for cleanup
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            cameras_[name] = camera;
+            resolve_refs_[name] = resolve_ref;
         }
 
-        if (callback_) {
-            callback_(DiscoveryEvent::Added, camera);
+        // Process resolve in separate thread with proper Windows event handling
+        std::thread([resolve_ref, ctx, this]() {
+            SOCKET fd = (SOCKET)DNSServiceRefSockFD(resolve_ref);
+            WSAEVENT read_event = WSACreateEvent();
+            WSAEventSelect(fd, read_event, FD_READ);
+
+            // Wait up to 5 seconds for resolve
+            DWORD result = WaitForSingleObject(read_event, 5000);
+
+            if (result == WAIT_OBJECT_0) {
+                DNSServiceProcessResult(resolve_ref);
+            } else {
+                blog(LOG_WARNING, "[avolocam] Resolve timeout for: %s", ctx->name.c_str());
+            }
+
+            WSACloseEvent(read_event);
+
+            // Clean up resolve ref
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = resolve_refs_.find(ctx->name);
+                if (it != resolve_refs_.end() && it->second == resolve_ref) {
+                    resolve_refs_.erase(it);
+                }
+            }
+            DNSServiceRefDeallocate(resolve_ref);
+            delete ctx;
+        }).detach();
+    }
+
+    static void DNSSD_API resolve_callback_win(
+        DNSServiceRef sdRef,
+        DNSServiceFlags flags,
+        uint32_t interfaceIndex,
+        DNSServiceErrorType errorCode,
+        const char *fullname,
+        const char *hosttarget,
+        uint16_t port,
+        uint16_t txtLen,
+        const unsigned char *txtRecord,
+        void *context)
+    {
+        (void)sdRef;
+        (void)flags;
+        (void)fullname;
+
+        struct ResolveContext {
+            Impl *impl;
+            std::string name;
+            uint32_t interface_index;
+        };
+        auto *ctx = static_cast<ResolveContext*>(context);
+
+        if (errorCode != kDNSServiceErr_NoError) {
+            blog(LOG_WARNING, "[avolocam] Resolve callback error: %d", errorCode);
+            return;
         }
+
+        // Parse TXT records
+        std::map<std::string, std::string> txt;
+        parse_txt_records_win(txtRecord, txtLen, txt);
+
+        // Resolve hostname to IP address
+        ctx->impl->resolve_host_win(ctx->name, hosttarget, ntohs(port), txt, interfaceIndex);
+    }
+
+    static void parse_txt_records_win(const unsigned char *txt, uint16_t len,
+                                       std::map<std::string, std::string> &out) {
+        uint16_t pos = 0;
+        while (pos < len) {
+            uint8_t record_len = txt[pos++];
+            if (pos + record_len > len) break;
+
+            std::string record((const char *)&txt[pos], record_len);
+            pos += record_len;
+
+            size_t eq = record.find('=');
+            if (eq != std::string::npos) {
+                out[record.substr(0, eq)] = record.substr(eq + 1);
+            }
+        }
+    }
+
+    void resolve_host_win(const std::string &name, const std::string &hostname,
+                          uint16_t port, const std::map<std::string, std::string> &txt,
+                          uint32_t interface_index) {
+        DNSServiceRef getaddr_ref = nullptr;
+
+        // Store context for callback
+        struct GetAddrContextWin {
+            Impl *impl;
+            std::string name;
+            uint16_t port;
+            std::map<std::string, std::string> txt;
+        };
+
+        auto *ctx = new GetAddrContextWin{this, name, port, txt};
+
+        DNSServiceErrorType err = DNSServiceGetAddrInfo(
+            &getaddr_ref,
+            0,
+            interface_index,
+            kDNSServiceProtocol_IPv4,
+            hostname.c_str(),
+            getaddr_callback_win,
+            ctx);
+
+        if (err != kDNSServiceErr_NoError) {
+            blog(LOG_ERROR, "[avolocam] DNSServiceGetAddrInfo failed: %d", err);
+            delete ctx;
+            return;
+        }
+
+        // Process in thread with proper Windows event handling
+        std::thread([getaddr_ref, ctx]() {
+            SOCKET fd = (SOCKET)DNSServiceRefSockFD(getaddr_ref);
+            WSAEVENT read_event = WSACreateEvent();
+            WSAEventSelect(fd, read_event, FD_READ);
+
+            // Wait up to 5 seconds for address resolution
+            DWORD result = WaitForSingleObject(read_event, 5000);
+
+            if (result == WAIT_OBJECT_0) {
+                DNSServiceProcessResult(getaddr_ref);
+            } else {
+                blog(LOG_WARNING, "[avolocam] GetAddrInfo timeout for: %s", ctx->name.c_str());
+            }
+
+            WSACloseEvent(read_event);
+            DNSServiceRefDeallocate(getaddr_ref);
+            delete ctx;
+        }).detach();
+    }
+
+    static void DNSSD_API getaddr_callback_win(
+        DNSServiceRef sdRef,
+        DNSServiceFlags flags,
+        uint32_t interfaceIndex,
+        DNSServiceErrorType errorCode,
+        const char *hostname,
+        const struct sockaddr *address,
+        uint32_t ttl,
+        void *context)
+    {
+        (void)sdRef;
+        (void)flags;
+        (void)interfaceIndex;
+        (void)hostname;
+        (void)ttl;
+
+        struct GetAddrContextWin {
+            Impl *impl;
+            std::string name;
+            uint16_t port;
+            std::map<std::string, std::string> txt;
+        };
+        auto *ctx = static_cast<GetAddrContextWin*>(context);
+
+        if (errorCode != kDNSServiceErr_NoError) {
+            blog(LOG_WARNING, "[avolocam] GetAddrInfo callback error: %d", errorCode);
+            return;
+        }
+
+        if (address->sa_family != AF_INET) {
+            return;
+        }
+
+        const struct sockaddr_in *addr_in = (const struct sockaddr_in *)address;
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr_in->sin_addr, ip_str, sizeof(ip_str));
+
+        ctx->impl->add_camera(ctx->name, ip_str, ctx->port, ctx->txt);
     }
 #endif
 

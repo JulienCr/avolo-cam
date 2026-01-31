@@ -401,14 +401,17 @@ struct SourceData {
         DecodedFrame frame;
         bool decode_ok = decoder->decode(au.data.data(), au.data.size(), frame);
 
-        if (!decode_ok) {
-            blog(LOG_WARNING, "[avolocam] Decode failed");
-            sync_state->on_decode_error();
-            return;
-        }
-
-        // Skip empty frames (SPS/PPS only AUs)
+        // Skip empty frames - decoder needs more input (normal during startup)
         if (!frame.y_plane) {
+            // Only log if decode actually failed (not just needs more input)
+            if (!decode_ok) {
+                static int decode_fail_count = 0;
+                decode_fail_count++;
+                // Only log every 30 failures to reduce spam
+                if (decode_fail_count % 30 == 1) {
+                    blog(LOG_DEBUG, "[avolocam] Decoder needs more input (count: %d)", decode_fail_count);
+                }
+            }
             return;
         }
 

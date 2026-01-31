@@ -11,7 +11,9 @@
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
+#include <media-io/video-io.h>
 #include <util/platform.h>
+#include <cstring>
 
 #include <windows.h>
 #include <d3d11.h>
@@ -22,19 +24,19 @@ namespace avolocam {
 // Check if OBS is using D3D11 backend
 static bool obs_is_d3d11_backend()
 {
-    const char *renderer = obs_get_video_renderer();
-    if (!renderer) return false;
+    obs_enter_graphics();
+    int device_type = gs_get_device_type();
+    obs_leave_graphics();
 
     // OBS on Windows uses D3D11 by default
-    return strstr(renderer, "d3d11") != nullptr ||
-           strstr(renderer, "Direct3D") != nullptr;
+    return device_type == GS_DEVICE_DIRECT3D_11;
 }
 
 // Get OBS D3D11 device (if available)
 static ID3D11Device *get_obs_d3d11_device()
 {
     obs_enter_graphics();
-    gs_device_t *device = gs_get_device_obj();
+    gs_device_t *device = static_cast<gs_device_t*>(gs_get_device_obj());
     obs_leave_graphics();
 
     if (!device) return nullptr;
@@ -208,8 +210,16 @@ OutputResult TextureOutput::output_via_cpu(const DecodedFrame &frame)
     obs_frame.linesize[1] = frame.uv_stride;
 
     // Color space: Rec.709 full range (matching iOS encoder)
-    obs_frame.color_matrix = VIDEO_CS_709;
-    obs_frame.color_range = VIDEO_RANGE_FULL;
+    // Get the proper color matrix for Rec.709 full range
+    float color_matrix[16];
+    float color_range_min[3];
+    float color_range_max[3];
+    video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_FULL,
+                                color_matrix, color_range_min, color_range_max);
+    memcpy(obs_frame.color_matrix, color_matrix, sizeof(color_matrix));
+    memcpy(obs_frame.color_range_min, color_range_min, sizeof(color_range_min));
+    memcpy(obs_frame.color_range_max, color_range_max, sizeof(color_range_max));
+    obs_frame.full_range = true;
 
     // Output the frame
     obs_source_output_video(source_, &obs_frame);

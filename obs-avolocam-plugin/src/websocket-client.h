@@ -44,7 +44,7 @@ enum class WSState {
     CONNECTING,
     CONNECTED,
     RECONNECTING,
-    ERROR
+    ERRORED  // Note: 'ERROR' conflicts with Windows macro
 };
 
 /**

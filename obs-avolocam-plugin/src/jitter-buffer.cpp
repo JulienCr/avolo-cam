@@ -84,27 +84,21 @@ bool JitterBuffer::get_next_packet(std::vector<uint8_t> &out_data, uint64_t &out
     // In practice, this should use os_gettime_ns() or similar
     // For now, always return if we have packets (caller handles timing)
 
-    // Ultra-low latency mode: return immediately
-    // Stable mode: hold for a bit
-    // For simplicity, return the oldest packet if buffer has enough
-    uint64_t buffer_delay_ns = static_cast<uint64_t>(max_delay_ms_) * 1000000;
+    // Determine threshold based on latency mode:
+    // - Low latency mode (Windows default): threshold of 1 for immediate output
+    // - Stable mode: threshold of 2 to smooth jitter
+    size_t threshold = low_latency_mode_ ? 1 : 2;
 
-    if (buffer_.size() >= 2) {
-        // Have multiple packets buffered, can output
+    // Also use immediate output if max_delay is ultra-low (<=8ms)
+    if (max_delay_ms_ <= 8) {
+        threshold = 1;
+    }
+
+    if (buffer_.size() >= threshold) {
         out_data = std::move(buffer_.front().data);
         out_recv_time = buffer_.front().recv_time_ns;
         buffer_.pop_front();
         return true;
-    } else if (buffer_.size() == 1) {
-        // Only one packet - in ultra-low mode, output immediately
-        if (max_delay_ms_ <= 8) {
-            out_data = std::move(buffer_.front().data);
-            out_recv_time = buffer_.front().recv_time_ns;
-            buffer_.pop_front();
-            return true;
-        }
-        // In stable mode, wait for more packets
-        return false;
     }
 
     return false;

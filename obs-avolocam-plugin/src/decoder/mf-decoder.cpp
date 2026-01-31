@@ -8,6 +8,7 @@
 
 #include <obs-module.h>
 #include <codecapi.h>
+#include <strmif.h>
 #include <algorithm>
 
 #pragma comment(lib, "mf.lib")
@@ -16,6 +17,7 @@
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "strmiids.lib")
 
 namespace avolocam {
 
@@ -211,6 +213,39 @@ bool MFDecoder::create_decoder()
         return false;
     }
 
+    // Enable low-latency mode via MFT attributes (required for real-time streaming)
+    // This prevents the decoder from buffering 16+ frames before output
+    if (config_.low_latency) {
+        IMFAttributes *attrs = nullptr;
+        hr = decoder_->GetAttributes(&attrs);
+        if (SUCCEEDED(hr) && attrs) {
+            // MF_LOW_LATENCY has same GUID as CODECAPI_AVLowLatencyMode
+            hr = attrs->SetUINT32(MF_LOW_LATENCY, TRUE);
+            if (SUCCEEDED(hr)) {
+                blog(LOG_INFO, "[avolocam] MF_LOW_LATENCY enabled via attributes");
+            } else {
+                blog(LOG_WARNING, "[avolocam] Failed to set MF_LOW_LATENCY: 0x%08X", hr);
+            }
+            attrs->Release();
+        } else {
+            blog(LOG_WARNING, "[avolocam] GetAttributes failed: 0x%08X, trying ICodecAPI", hr);
+            // Fallback to ICodecAPI for older decoders
+            ICodecAPI *codec_api = nullptr;
+            hr = decoder_->QueryInterface(__uuidof(ICodecAPI), (void **)&codec_api);
+            if (SUCCEEDED(hr) && codec_api) {
+                VARIANT var;
+                VariantInit(&var);
+                var.vt = VT_UI4;  // H.264 decoder uses VT_UI4, not VT_BOOL
+                var.ulVal = 1;
+                hr = codec_api->SetValue(&CODECAPI_AVLowLatencyMode, &var);
+                if (SUCCEEDED(hr)) {
+                    blog(LOG_INFO, "[avolocam] Low-latency mode enabled via ICodecAPI");
+                }
+                codec_api->Release();
+            }
+        }
+    }
+
     // Set D3D11 device manager if hardware decoding
     if (hardware_enabled_ && device_manager_) {
         hr = decoder_->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
@@ -257,6 +292,10 @@ void MFDecoder::destroy_decoder()
         }
         decoder_->Release();
         decoder_ = nullptr;
+    }
+    if (output_type_) {
+        output_type_->Release();
+        output_type_ = nullptr;
     }
     input_started_ = false;
     drain_mode_ = false;
@@ -306,6 +345,12 @@ bool MFDecoder::configure_input_type()
 
 bool MFDecoder::configure_output_type()
 {
+    // Release any previously stored output type
+    if (output_type_) {
+        output_type_->Release();
+        output_type_ = nullptr;
+    }
+
     // Get available output types
     for (DWORD i = 0; ; i++) {
         IMFMediaType *media_type = nullptr;
@@ -317,10 +362,12 @@ bool MFDecoder::configure_output_type()
         hr = media_type->GetGUID(MF_MT_SUBTYPE, &subtype);
         if (SUCCEEDED(hr) && subtype == MFVideoFormat_NV12) {
             hr = decoder_->SetOutputType(0, media_type, 0);
-            media_type->Release();
             if (SUCCEEDED(hr)) {
+                // Store the output type for stride queries
+                output_type_ = media_type;
                 return true;
             }
+            media_type->Release();
         } else {
             media_type->Release();
         }
@@ -509,6 +556,13 @@ bool MFDecoder::process_output(DecodedFrame &out)
         return false;
     }
 
+    // Get actual frame dimensions from output type (may differ from config)
+    UINT32 actual_width = width_;
+    UINT32 actual_height = height_;
+    if (output_type_) {
+        MFGetAttributeSize(output_type_, MF_MT_FRAME_SIZE, &actual_width, &actual_height);
+    }
+
     // Try to get 2D buffer interface
     IMF2DBuffer *buffer_2d = nullptr;
     hr = media_buffer->QueryInterface(__uuidof(IMF2DBuffer), (void **)&buffer_2d);
@@ -519,20 +573,31 @@ bool MFDecoder::process_output(DecodedFrame &out)
         LONG pitch = 0;
         hr = buffer_2d->Lock2D(&data, &pitch);
         if (SUCCEEDED(hr)) {
-            // Allocate output buffer
-            size_t y_size = (size_t)pitch * height_;
-            size_t uv_size = (size_t)pitch * height_ / 2;
+            // Use actual dimensions, not config dimensions
+            // NV12: Y plane is pitch * height, UV plane is pitch * height/2
+            size_t y_size = (size_t)pitch * actual_height;
+            size_t uv_size = (size_t)pitch * actual_height / 2;
             output_buffer_.resize(y_size + uv_size);
 
-            // Copy Y plane
-            memcpy(output_buffer_.data(), data, y_size);
-            // Copy UV plane
-            memcpy(output_buffer_.data() + y_size, data + y_size, uv_size);
+            // Copy Y plane row by row (handles padding correctly)
+            BYTE *dst_y = output_buffer_.data();
+            BYTE *src_y = data;
+            for (UINT32 row = 0; row < actual_height; row++) {
+                memcpy(dst_y + row * pitch, src_y + row * pitch, actual_width);
+            }
+
+            // Copy UV plane row by row
+            // UV plane starts at pitch * actual_height in NV12 layout
+            BYTE *dst_uv = output_buffer_.data() + y_size;
+            BYTE *src_uv = data + (size_t)pitch * actual_height;
+            for (UINT32 row = 0; row < actual_height / 2; row++) {
+                memcpy(dst_uv + row * pitch, src_uv + row * pitch, actual_width);
+            }
 
             buffer_2d->Unlock2D();
 
-            out.width = width_;
-            out.height = height_;
+            out.width = actual_width;
+            out.height = actual_height;
             out.y_plane = output_buffer_.data();
             out.uv_plane = output_buffer_.data() + y_size;
             out.y_stride = (uint32_t)pitch;
@@ -548,17 +613,25 @@ bool MFDecoder::process_output(DecodedFrame &out)
 
         hr = media_buffer->Lock(&data, &max_length, &current_length);
         if (SUCCEEDED(hr)) {
-            // Assume NV12 layout with default stride
-            LONG stride = width_;
-            size_t y_size = (size_t)stride * height_;
-            size_t uv_size = (size_t)stride * height_ / 2;
+            // Query the actual stride from Media Foundation
+            LONG stride = 0;
+            UINT32 default_stride = 0;
+            if (output_type_ && SUCCEEDED(output_type_->GetUINT32(MF_MT_DEFAULT_STRIDE, &default_stride))) {
+                stride = (LONG)default_stride;
+            } else {
+                // Fallback with 16-byte alignment typical for GPU
+                stride = (actual_width + 15) & ~15;
+            }
+
+            size_t y_size = (size_t)stride * actual_height;
+            size_t uv_size = (size_t)stride * actual_height / 2;
 
             if (current_length >= y_size + uv_size) {
                 output_buffer_.resize(y_size + uv_size);
                 memcpy(output_buffer_.data(), data, y_size + uv_size);
 
-                out.width = width_;
-                out.height = height_;
+                out.width = actual_width;
+                out.height = actual_height;
                 out.y_plane = output_buffer_.data();
                 out.uv_plane = output_buffer_.data() + y_size;
                 out.y_stride = (uint32_t)stride;
