@@ -89,9 +89,22 @@ struct SourceData {
     std::atomic<uint64_t> frames_dropped{0};
     std::atomic<double> current_latency_ms{0.0};
 
+    // Per-instance debug counters (avoid static to support multi-camera)
+    int packet_count{0};
+    int total_nals{0};
+    int au_count{0};
+    int output_count{0};
+
+    // Tally state tracking
+    std::atomic<bool> tally_program{false};
+    std::atomic<bool> tally_preview{false};
+
     // Camera telemetry from WebSocket
     CameraTelemetry camera_telemetry;
     std::mutex telemetry_mutex;
+
+    // Auto-port switching: track the last received flash port from WebSocket
+    std::atomic<uint16_t> ws_reported_flash_port{0};
 
     // Mutex for decoder output
     std::mutex frame_mutex;
@@ -113,6 +126,7 @@ struct SourceData {
 
         // Initialize components
         receiver = std::make_unique<UdpReceiver>();
+        receiver->set_expected_source(camera_ip);  // Filter packets to only accept from this camera
         jitter_buffer = std::make_unique<JitterBuffer>(
             jitter_mode == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
@@ -143,8 +157,15 @@ struct SourceData {
         });
 
         ws_client->set_telemetry_callback([this](const CameraTelemetry &telemetry) {
-            std::lock_guard<std::mutex> lock(telemetry_mutex);
-            camera_telemetry = telemetry;
+            {
+                std::lock_guard<std::mutex> lock(telemetry_mutex);
+                camera_telemetry = telemetry;
+            }
+
+            // Store flash port for auto-switching
+            if (telemetry.flash_udp_port > 0) {
+                ws_reported_flash_port.store(telemetry.flash_udp_port);
+            }
         });
 
         // Set up IDR request callback for sync state machine
@@ -200,11 +221,42 @@ struct SourceData {
 
         std::vector<uint8_t> packet_buffer(2048);
 
+        // Tally polling: check every ~100ms
+        constexpr uint64_t TALLY_POLL_INTERVAL_NS = 100 * 1000 * 1000;  // 100ms in nanoseconds
+        uint64_t last_tally_check = os_gettime_ns();
+
+        // Track current bound port for auto-switching
+        uint16_t current_bound_port = camera_port;
+
         while (running.load()) {
+            // Check for auto-port switching (from WebSocket telemetry)
+            uint16_t ws_port = ws_reported_flash_port.load();
+            if (ws_port > 0 && ws_port != current_bound_port) {
+                blog(LOG_INFO, "[avolocam] Auto-switching UDP port from %d to %d (from WebSocket)",
+                     current_bound_port, ws_port);
+
+                // Re-bind to new port
+                if (receiver->bind(ws_port)) {
+                    current_bound_port = ws_port;
+                    camera_port = ws_port;  // Update config for future reference
+                    blog(LOG_INFO, "[avolocam] Successfully rebound to port %d", ws_port);
+                } else {
+                    blog(LOG_WARNING, "[avolocam] Failed to rebind to port %d, staying on %d",
+                         ws_port, current_bound_port);
+                }
+            }
+
             // Receive UDP packet with timeout
             int received = receiver->receive(packet_buffer.data(),
                                              packet_buffer.size(),
                                              100);  // 100ms timeout
+
+            // Check tally state periodically
+            uint64_t now = os_gettime_ns();
+            if (now - last_tally_check >= TALLY_POLL_INTERVAL_NS) {
+                send_tally_state();
+                last_tally_check = now;
+            }
 
             if (received <= 0) continue;
 
@@ -224,9 +276,6 @@ struct SourceData {
     void process_jitter_buffer() {
         std::vector<uint8_t> packet;
         uint64_t recv_time;
-
-        static int packet_count = 0;
-        static int total_nals = 0;
 
         while (jitter_buffer->get_next_packet(packet, recv_time)) {
             packet_count++;
@@ -274,7 +323,6 @@ struct SourceData {
     }
 
     void decode_frame(const AccessUnit& au, uint64_t recv_time) {
-        static int au_count = 0;
         au_count++;
 
         if (!decoder) {
@@ -371,7 +419,6 @@ struct SourceData {
     }
 
     void output_frame(const DecodedFrame& frame) {
-        static int output_count = 0;
         output_count++;
 
         // Always output frames to OBS, even when hidden
@@ -424,6 +471,43 @@ struct SourceData {
     // Get current latency for overlay display
     double get_display_latency() const {
         return current_latency_ms.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * Send tally state to iOS device via WebSocket
+     *
+     * Checks if source is in Program (showing on output) or Preview.
+     * Only sends when state changes to avoid spamming.
+     */
+    void send_tally_state() {
+        if (!ws_client || !ws_client->is_connected()) return;
+        if (!source) return;
+
+        // obs_source_showing() returns true if the source is visible on the final output (Program)
+        // obs_source_active() returns true if the source is active (either Program OR Preview)
+        bool is_program = obs_source_showing(source);
+        bool is_preview = obs_source_active(source) && !is_program;
+
+        // Only send if state changed
+        if (is_program == tally_program.load() && is_preview == tally_preview.load())
+            return;
+
+        tally_program.store(is_program);
+        tally_preview.store(is_preview);
+
+        char json[128];
+        snprintf(json, sizeof(json),
+                 R"({"op":"tally","program":%s,"preview":%s})",
+                 is_program ? "true" : "false",
+                 is_preview ? "true" : "false");
+
+        ws_client->send_command(json);
+
+        if (debug_mode) {
+            blog(LOG_INFO, "[avolocam] Tally state sent: program=%s, preview=%s",
+                 is_program ? "true" : "false",
+                 is_preview ? "true" : "false");
+        }
     }
 
     // Extract SPS and PPS from Annex B formatted data
@@ -529,20 +613,12 @@ static void avolocam_update(void *data, obs_data_t *settings)
     std::string new_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
     uint16_t new_port = (uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT);
 
-    // If a camera was selected from dropdown, parse the IP:port from it
+    // If a camera was selected from dropdown, use it as the IP
+    // Note: Port is NOT from dropdown - it must be set manually to match Tauri assignment
     if (!camera_select.empty()) {
-        // Format is "ip:port"
-        size_t colon_pos = camera_select.find(':');
-        if (colon_pos != std::string::npos) {
-            new_ip = camera_select.substr(0, colon_pos);
-            try {
-                new_port = static_cast<uint16_t>(std::stoi(camera_select.substr(colon_pos + 1)));
-            } catch (...) {
-                new_port = 5000;
-            }
-            blog(LOG_INFO, "[avolocam] Selected camera from dropdown: %s:%d",
-                 new_ip.c_str(), new_port);
-        }
+        new_ip = camera_select;
+        blog(LOG_INFO, "[avolocam] Selected camera from dropdown: %s (port from manual field: %d)",
+             new_ip.c_str(), new_port);
     }
 
     int new_jitter = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
@@ -602,18 +678,22 @@ static void avolocam_hide(void *data)
     blog(LOG_INFO, "[avolocam] Source hidden");
 }
 
-// Callback to show/hide manual entry fields based on camera selection
+// Callback to auto-fill IP when camera is selected from dropdown
+// Port is ALWAYS visible since it must be set manually per Tauri assignment
 static bool camera_select_changed(obs_properties_t *props, obs_property_t *,
                                    obs_data_t *settings)
 {
     const char *selected = obs_data_get_string(settings, PROP_CAMERA_SELECT);
-    bool is_manual = (selected == nullptr || selected[0] == '\0');
 
-    obs_property_t *ip_prop = obs_properties_get(props, PROP_MANUAL_IP);
-    obs_property_t *port_prop = obs_properties_get(props, PROP_MANUAL_PORT);
+    // Auto-fill the IP field if a camera was selected
+    if (selected && selected[0] != '\0') {
+        obs_data_set_string(settings, PROP_MANUAL_IP, selected);
+    }
 
-    if (ip_prop) obs_property_set_visible(ip_prop, is_manual);
-    if (port_prop) obs_property_set_visible(port_prop, is_manual);
+    // IP and Port fields are ALWAYS visible
+    // - IP is auto-filled from dropdown but can be edited
+    // - Port must always be set manually to match Tauri Controller assignment
+    (void)props;  // Fields always visible, no need to modify
 
     return true;  // Refresh properties UI
 }
@@ -629,30 +709,33 @@ static obs_properties_t *avolocam_get_properties(void *)
     obs_property_list_add_string(camera_list, "(Manual Entry)", "");
 
     // Add discovered cameras from global discovery
+    // Note: Only store IP, NOT port - port is assigned by Tauri Controller per-camera
     {
         std::lock_guard<std::mutex> lock(g_discovery_mutex);
         if (g_discovery) {
             for (const auto& cam : g_discovery->get_cameras()) {
                 std::string label = cam.alias.empty() ? cam.name : cam.alias;
                 label += " (" + cam.ip + ")";
-                std::string value = cam.ip + ":" + std::to_string(cam.flash_udp_port);
-                obs_property_list_add_string(camera_list, label.c_str(), value.c_str());
+                // Store only IP - user must set port manually to match Tauri assignment
+                obs_property_list_add_string(camera_list, label.c_str(), cam.ip.c_str());
             }
         }
     }
 
-    // Set callback to show/hide manual fields
+    // Set callback to auto-fill IP when camera is selected
     obs_property_set_modified_callback(camera_list, camera_select_changed);
 
-    // Manual IP entry (hidden by default if camera is selected)
+    // Camera IP - auto-filled from dropdown but editable
     obs_property_t *ip_prop = obs_properties_add_text(props, PROP_MANUAL_IP, "Camera IP",
                             OBS_TEXT_DEFAULT);
-    obs_property_set_visible(ip_prop, true);  // Will be updated by callback
+    obs_property_set_visible(ip_prop, true);
 
-    // Port (hidden by default if camera is selected)
-    obs_property_t *port_prop = obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port",
+    // UDP Port - ALWAYS visible, must match Tauri Controller assignment (5000 + camera_index)
+    obs_property_t *port_prop = obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port (from Tauri)",
                            1024, 65535, 1);
-    obs_property_set_visible(port_prop, true);  // Will be updated by callback
+    obs_property_set_visible(port_prop, true);
+    obs_property_set_long_description(port_prop,
+        "Must match the port assigned by Tauri Controller (5000 for first camera, 5001 for second, etc.)");
 
     // Authentication token
     obs_properties_add_text(props, PROP_AUTH_TOKEN, "Auth Token",

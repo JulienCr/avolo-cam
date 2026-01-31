@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string>
 
 namespace avolocam {
 
@@ -46,6 +47,13 @@ public:
      * Check if socket is valid
      */
     bool is_valid() const;
+
+    /**
+     * Set expected source IP for filtering
+     * Only packets from this IP will be accepted.
+     * @param ip The expected source IP address (empty string disables filtering)
+     */
+    void set_expected_source(const std::string& ip);
 
 private:
     struct Impl;

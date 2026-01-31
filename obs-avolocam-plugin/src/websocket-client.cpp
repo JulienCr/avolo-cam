@@ -588,6 +588,14 @@ bool WebSocketClient::parse_telemetry(const std::string &json, CameraTelemetry &
     json_get_uint64(json, "dropped_frames", telemetry.dropped_frames);
     json_get_string(json, "charging_state", telemetry.charging_state);
 
+    // Parse Flash UDP port for auto-discovery
+    double port;
+    if (json_get_number(json, "flash_udp_port", port)) {
+        telemetry.flash_udp_port = (uint16_t)port;
+    } else {
+        telemetry.flash_udp_port = 0;
+    }
+
     return true;
 }
 

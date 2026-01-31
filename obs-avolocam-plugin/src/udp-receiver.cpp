@@ -32,6 +32,11 @@ struct UdpReceiver::Impl {
     socket_t socket = INVALID_SOCKET_VAL;
     uint16_t bound_port = 0;
 
+    // Source IP filtering
+    std::string expected_source_ip;
+    struct in_addr expected_source_addr;
+    bool filter_by_source = false;
+
 #ifdef _WIN32
     static bool winsock_initialized;
     static int winsock_refcount;
@@ -157,6 +162,14 @@ int UdpReceiver::receive(uint8_t *buffer, size_t max_size, int timeout_ms) {
                             reinterpret_cast<struct sockaddr*>(&from_addr),
                             &from_len);
 
+    // Validate source IP if filtering is enabled
+    if (received > 0 && impl_->filter_by_source) {
+        if (from_addr.sin_addr.s_addr != impl_->expected_source_addr.s_addr) {
+            // Packet from unexpected source - ignore it
+            return 0;  // Treat as timeout
+        }
+    }
+
     return received;
 }
 
@@ -170,6 +183,14 @@ void UdpReceiver::close() {
 
 bool UdpReceiver::is_valid() const {
     return impl_->socket != INVALID_SOCKET_VAL;
+}
+
+void UdpReceiver::set_expected_source(const std::string& ip) {
+    impl_->expected_source_ip = ip;
+    impl_->filter_by_source = !ip.empty();
+    if (impl_->filter_by_source) {
+        inet_pton(AF_INET, ip.c_str(), &impl_->expected_source_addr);
+    }
 }
 
 } // namespace avolocam

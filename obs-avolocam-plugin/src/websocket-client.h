@@ -33,6 +33,7 @@ struct CameraTelemetry {
     double queue_ms;         // Encoder queue depth in milliseconds
     uint64_t dropped_frames; // Total dropped frame count
     std::string charging_state; // "charging", "full", or "unplugged"
+    uint16_t flash_udp_port; // Active Flash UDP port (0 = not streaming Flash)
 };
 
 /**

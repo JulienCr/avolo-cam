@@ -42,6 +42,8 @@ VideoToolboxDecoder::~VideoToolboxDecoder()
 bool VideoToolboxDecoder::initialize(const uint8_t *sps, size_t sps_size,
                                       const uint8_t *pps, size_t pps_size)
 {
+    std::lock_guard<std::mutex> lock(init_mutex_);
+
     if (!sps || sps_size == 0 || !pps || pps_size == 0) {
         blog(LOG_ERROR, "[avolocam] Invalid SPS/PPS data");
         return false;
@@ -80,7 +82,7 @@ bool VideoToolboxDecoder::initialize(const uint8_t *sps, size_t sps_size,
         return false;
     }
 
-    initialized_ = true;
+    initialized_.store(true);
     blog(LOG_INFO, "[avolocam] VideoToolbox decoder initialized: %ux%u, hardware=%d",
          width_, height_, hardware_enabled_);
     return true;
@@ -237,7 +239,7 @@ void VideoToolboxDecoder::on_frame_decoded(CVPixelBufferRef pixel_buffer, CMTime
 
 bool VideoToolboxDecoder::decode(const uint8_t *data, size_t size, DecodedFrame &out)
 {
-    if (!initialized_ || !session_ || !data || size == 0) {
+    if (!initialized_.load() || !session_ || !data || size == 0) {
         return false;
     }
 
@@ -540,7 +542,7 @@ const char *VideoToolboxDecoder::get_name() const
 
 bool VideoToolboxDecoder::is_initialized() const
 {
-    return initialized_;
+    return initialized_.load();
 }
 
 // Factory method implementation for macOS

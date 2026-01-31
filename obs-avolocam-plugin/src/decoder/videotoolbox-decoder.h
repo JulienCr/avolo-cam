@@ -14,6 +14,7 @@
 #include <VideoToolbox/VideoToolbox.h>
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
+#include <atomic>
 #include <mutex>
 #include <deque>
 #include <vector>
@@ -72,8 +73,11 @@ private:
     CVPixelBufferRef current_locked_buffer_ = nullptr;
 
     // State
-    bool initialized_ = false;
+    std::atomic<bool> initialized_{false};
     bool hardware_enabled_ = false;
+
+    // Mutex for initialization thread safety
+    std::mutex init_mutex_;
 
     // Create format description from SPS/PPS
     bool create_format_description();
