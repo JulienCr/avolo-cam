@@ -52,6 +52,69 @@ if(WIN32)
     set(MF_LIBRARIES mf mfplat mfuuid mfreadwrite d3d11 dxgi)
     # Bonjour SDK for mDNS discovery (requires Bonjour SDK installed)
     # dnssd.lib is provided by Bonjour SDK for Windows
+
+    # OBS SDK for Windows - user must set OBS_DIR or use standard location
+    if(NOT DEFINED OBS_DIR)
+        # Check common installation locations
+        if(EXISTS "C:/Program Files/obs-studio")
+            set(OBS_DIR "C:/Program Files/obs-studio" CACHE PATH "OBS installation directory")
+        elseif(EXISTS "$ENV{ProgramFiles}/obs-studio")
+            set(OBS_DIR "$ENV{ProgramFiles}/obs-studio" CACHE PATH "OBS installation directory")
+        else()
+            set(OBS_DIR "" CACHE PATH "OBS installation directory")
+        endif()
+    endif()
+
+    if(OBS_DIR AND EXISTS "${OBS_DIR}")
+        # Find OBS library - try both bin/64bit and lib locations
+        find_library(OBS_LIB obs
+            PATHS
+                "${OBS_DIR}/bin/64bit"
+                "${OBS_DIR}/lib"
+            NO_DEFAULT_PATH
+        )
+
+        # OBS include directory - OBS SDK headers in include/
+        set(OBS_WIN_INCLUDE_DIR "${OBS_DIR}/include")
+        if(EXISTS "${OBS_WIN_INCLUDE_DIR}")
+            message(STATUS "Found OBS Windows include directory: ${OBS_WIN_INCLUDE_DIR}")
+        endif()
+
+        if(OBS_LIB)
+            message(STATUS "Found OBS library: ${OBS_LIB}")
+            set(OBS_WINDOWS_FOUND TRUE)
+        else()
+            message(WARNING "OBS library not found in ${OBS_DIR}. Plugin may not link correctly.")
+            set(OBS_WINDOWS_FOUND FALSE)
+        endif()
+    else()
+        message(WARNING "OBS_DIR not set or doesn't exist. Set OBS_DIR to your OBS installation.")
+        set(OBS_WINDOWS_FOUND FALSE)
+    endif()
+
+    # Bonjour SDK path
+    if(NOT DEFINED BONJOUR_SDK_DIR)
+        if(EXISTS "C:/Program Files/Bonjour SDK")
+            set(BONJOUR_SDK_DIR "C:/Program Files/Bonjour SDK" CACHE PATH "Bonjour SDK directory")
+        else()
+            set(BONJOUR_SDK_DIR "" CACHE PATH "Bonjour SDK directory")
+        endif()
+    endif()
+
+    if(BONJOUR_SDK_DIR AND EXISTS "${BONJOUR_SDK_DIR}")
+        set(BONJOUR_INCLUDE_DIR "${BONJOUR_SDK_DIR}/Include")
+        set(BONJOUR_LIB_DIR "${BONJOUR_SDK_DIR}/Lib/x64")
+        if(EXISTS "${BONJOUR_INCLUDE_DIR}" AND EXISTS "${BONJOUR_LIB_DIR}")
+            message(STATUS "Found Bonjour SDK at ${BONJOUR_SDK_DIR}")
+            set(BONJOUR_FOUND TRUE)
+        else()
+            message(WARNING "Bonjour SDK structure not found. mDNS discovery may not work.")
+            set(BONJOUR_FOUND FALSE)
+        endif()
+    else()
+        message(WARNING "Bonjour SDK not found. mDNS discovery will be disabled.")
+        set(BONJOUR_FOUND FALSE)
+    endif()
 endif()
 
 # Source files
@@ -152,11 +215,35 @@ if(APPLE)
 endif()
 
 if(WIN32)
+    # Add OBS Windows include directory
+    if(OBS_WINDOWS_FOUND AND EXISTS "${OBS_WIN_INCLUDE_DIR}")
+        target_include_directories(obs-avolocam PRIVATE ${OBS_WIN_INCLUDE_DIR})
+    endif()
+
+    # Add Bonjour SDK include directory
+    if(BONJOUR_FOUND)
+        target_include_directories(obs-avolocam PRIVATE ${BONJOUR_INCLUDE_DIR})
+        link_directories(${BONJOUR_LIB_DIR})
+    endif()
+
+    # Link OBS library
+    if(OBS_WINDOWS_FOUND AND OBS_LIB)
+        target_link_libraries(obs-avolocam PRIVATE ${OBS_LIB})
+    endif()
+
+    # Link Media Foundation and other Windows libraries
     target_link_libraries(obs-avolocam PRIVATE
         ${MF_LIBRARIES}
         ws2_32      # Winsock for UDP
-        dnssd       # Bonjour SDK for mDNS discovery
     )
+
+    # Link Bonjour SDK if found
+    if(BONJOUR_FOUND)
+        target_link_libraries(obs-avolocam PRIVATE dnssd)
+    else()
+        # Define to disable mDNS at compile time
+        target_compile_definitions(obs-avolocam PRIVATE NO_MDNS_DISCOVERY)
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)

@@ -22,12 +22,16 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <dns_sd.h>
 #pragma comment(lib, "dnssd.lib")
 #pragma comment(lib, "ws2_32.lib")
+#elif defined(_WIN32)
+// Windows without Bonjour SDK - mDNS discovery disabled
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #endif
 
 namespace avolocam {
@@ -61,7 +65,7 @@ struct MdnsDiscovery::Impl {
     std::map<std::string, DNSServiceRef> resolve_refs_;
     std::thread run_loop_thread_;
     CFRunLoopRef run_loop_ = nullptr;
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
     DNSServiceRef browse_ref_ = nullptr;
     std::map<std::string, DNSServiceRef> resolve_refs_;
     std::thread event_thread_;
@@ -81,10 +85,11 @@ struct MdnsDiscovery::Impl {
 
 #ifdef __APPLE__
         return start_macos();
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
         return start_windows();
 #else
-        blog(LOG_WARNING, "[avolocam] mDNS discovery not implemented for this platform");
+        blog(LOG_WARNING, "[avolocam] mDNS discovery not available (Bonjour SDK not installed or platform not supported)");
+        blog(LOG_INFO, "[avolocam] Use manual camera entry via IP address instead");
         return false;
 #endif
     }
@@ -96,7 +101,7 @@ struct MdnsDiscovery::Impl {
 
 #ifdef __APPLE__
         stop_macos();
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
         stop_windows();
 #endif
 
@@ -376,7 +381,7 @@ struct MdnsDiscovery::Impl {
         }
     }
 
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
     // Windows implementation using Bonjour SDK
 
     bool start_windows() {
