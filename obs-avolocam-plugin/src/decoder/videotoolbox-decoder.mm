@@ -106,8 +106,12 @@ bool VideoToolboxDecoder::create_format_description()
         return false;
     }
 
-    // Verify dimensions from format description
+    // Get actual dimensions from format description (fixes resolution mismatch)
+    // This bypasses the incomplete SPS parser - the format description has correct dimensions
     CMVideoDimensions dims = CMVideoFormatDescriptionGetDimensions(format_desc_);
+    width_ = dims.width;
+    height_ = dims.height;
+
     blog(LOG_INFO, "[avolocam] Format description created: %dx%d",
          dims.width, dims.height);
 
