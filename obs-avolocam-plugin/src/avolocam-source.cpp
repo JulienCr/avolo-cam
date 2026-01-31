@@ -47,6 +47,10 @@
 
 namespace avolocam {
 
+// Global mDNS discovery instance (shared across all sources)
+static std::unique_ptr<MdnsDiscovery> g_discovery;
+static std::mutex g_discovery_mutex;
+
 /**
  * Source instance data
  */
@@ -77,6 +81,7 @@ struct SourceData {
     // Threading
     std::thread receive_thread;
     std::atomic<bool> running{false};
+    std::atomic<bool> visible{true};  // Visibility state for show/hide callbacks
 
     // Telemetry
     std::atomic<uint64_t> frames_received{0};
@@ -230,8 +235,8 @@ struct SourceData {
             auto nal_units = depacketizer->process(packet.data(), packet.size());
             total_nals += nal_units.size();
 
-            // Log periodically
-            if (packet_count % 500 == 0) {
+            // Log periodically (only in debug mode)
+            if (debug_mode && packet_count % 500 == 0) {
                 blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d", packet_count, total_nals);
             }
 
@@ -369,6 +374,9 @@ struct SourceData {
         static int output_count = 0;
         output_count++;
 
+        // Always output frames to OBS, even when hidden
+        // OBS handles visibility internally - this ensures frame-accurate switching
+
         if (!source) {
             blog(LOG_ERROR, "[avolocam] output_frame: source is null!");
             return;
@@ -404,10 +412,10 @@ struct SourceData {
         // Output the frame
         obs_source_output_video(source, &obs_frame);
 
-        // Log first frame and periodically
+        // Log first frame unconditionally, periodic logs only in debug mode
         if (output_count == 1) {
             blog(LOG_INFO, "[avolocam] First frame output: %ux%u", obs_frame.width, obs_frame.height);
-        } else if (output_count % 300 == 0) {
+        } else if (debug_mode && output_count % 300 == 0) {
             blog(LOG_INFO, "[avolocam] Output frame #%d: %ux%u",
                  output_count, obs_frame.width, obs_frame.height);
         }
@@ -516,8 +524,27 @@ static void avolocam_update(void *data, obs_data_t *settings)
 {
     auto *src = static_cast<SourceData *>(data);
 
+    // Check if a camera was selected from the dropdown
+    std::string camera_select = obs_data_get_string(settings, PROP_CAMERA_SELECT);
     std::string new_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
     uint16_t new_port = (uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT);
+
+    // If a camera was selected from dropdown, parse the IP:port from it
+    if (!camera_select.empty()) {
+        // Format is "ip:port"
+        size_t colon_pos = camera_select.find(':');
+        if (colon_pos != std::string::npos) {
+            new_ip = camera_select.substr(0, colon_pos);
+            try {
+                new_port = static_cast<uint16_t>(std::stoi(camera_select.substr(colon_pos + 1)));
+            } catch (...) {
+                new_port = 5000;
+            }
+            blog(LOG_INFO, "[avolocam] Selected camera from dropdown: %s:%d",
+                 new_ip.c_str(), new_port);
+        }
+    }
+
     int new_jitter = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
     std::string new_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
     bool new_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
@@ -556,8 +583,39 @@ static void avolocam_activate(void *data)
 static void avolocam_deactivate(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    blog(LOG_INFO, "[avolocam] Source deactivated");
-    src->stop();
+    blog(LOG_INFO, "[avolocam] Source deactivated (keeping decoder running for fast switching)");
+    // Don't stop the decoder here - keep it running for instant scene switching
+    // The decoder will be stopped when the source is destroyed
+}
+
+static void avolocam_show(void *data)
+{
+    auto *src = static_cast<SourceData *>(data);
+    src->visible.store(true);
+    blog(LOG_INFO, "[avolocam] Source shown");
+}
+
+static void avolocam_hide(void *data)
+{
+    auto *src = static_cast<SourceData *>(data);
+    src->visible.store(false);
+    blog(LOG_INFO, "[avolocam] Source hidden");
+}
+
+// Callback to show/hide manual entry fields based on camera selection
+static bool camera_select_changed(obs_properties_t *props, obs_property_t *,
+                                   obs_data_t *settings)
+{
+    const char *selected = obs_data_get_string(settings, PROP_CAMERA_SELECT);
+    bool is_manual = (selected == nullptr || selected[0] == '\0');
+
+    obs_property_t *ip_prop = obs_properties_get(props, PROP_MANUAL_IP);
+    obs_property_t *port_prop = obs_properties_get(props, PROP_MANUAL_PORT);
+
+    if (ip_prop) obs_property_set_visible(ip_prop, is_manual);
+    if (port_prop) obs_property_set_visible(port_prop, is_manual);
+
+    return true;  // Refresh properties UI
 }
 
 static obs_properties_t *avolocam_get_properties(void *)
@@ -570,13 +628,31 @@ static obs_properties_t *avolocam_get_properties(void *)
         OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(camera_list, "(Manual Entry)", "");
 
-    // Manual IP entry
-    obs_properties_add_text(props, PROP_MANUAL_IP, "Camera IP",
-                            OBS_TEXT_DEFAULT);
+    // Add discovered cameras from global discovery
+    {
+        std::lock_guard<std::mutex> lock(g_discovery_mutex);
+        if (g_discovery) {
+            for (const auto& cam : g_discovery->get_cameras()) {
+                std::string label = cam.alias.empty() ? cam.name : cam.alias;
+                label += " (" + cam.ip + ")";
+                std::string value = cam.ip + ":" + std::to_string(cam.flash_udp_port);
+                obs_property_list_add_string(camera_list, label.c_str(), value.c_str());
+            }
+        }
+    }
 
-    // Port
-    obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port",
+    // Set callback to show/hide manual fields
+    obs_property_set_modified_callback(camera_list, camera_select_changed);
+
+    // Manual IP entry (hidden by default if camera is selected)
+    obs_property_t *ip_prop = obs_properties_add_text(props, PROP_MANUAL_IP, "Camera IP",
+                            OBS_TEXT_DEFAULT);
+    obs_property_set_visible(ip_prop, true);  // Will be updated by callback
+
+    // Port (hidden by default if camera is selected)
+    obs_property_t *port_prop = obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port",
                            1024, 65535, 1);
+    obs_property_set_visible(port_prop, true);  // Will be updated by callback
 
     // Authentication token
     obs_properties_add_text(props, PROP_AUTH_TOKEN, "Auth Token",
@@ -664,6 +740,22 @@ static uint32_t avolocam_get_height(void *data)
 
 void avolocam_source_register(void)
 {
+    // Start global mDNS discovery
+    {
+        std::lock_guard<std::mutex> lock(avolocam::g_discovery_mutex);
+        avolocam::g_discovery = std::make_unique<avolocam::MdnsDiscovery>();
+        if (avolocam::g_discovery->start([](avolocam::DiscoveryEvent event, const avolocam::DiscoveredCamera& cam) {
+            const char* event_str = (event == avolocam::DiscoveryEvent::Added) ? "discovered" :
+                                    (event == avolocam::DiscoveryEvent::Updated) ? "updated" : "removed";
+            blog(LOG_INFO, "[avolocam] Camera %s: %s (%s:%d)",
+                 event_str, cam.alias.c_str(), cam.ip.c_str(), cam.flash_udp_port);
+        })) {
+            blog(LOG_INFO, "[avolocam] mDNS discovery started");
+        } else {
+            blog(LOG_WARNING, "[avolocam] Failed to start mDNS discovery");
+        }
+    }
+
     struct obs_source_info info = {};
 
     info.id = "avolocam_source";
@@ -675,6 +767,8 @@ void avolocam_source_register(void)
     info.update = avolocam::avolocam_update;
     info.activate = avolocam::avolocam_activate;
     info.deactivate = avolocam::avolocam_deactivate;
+    info.show = avolocam::avolocam_show;
+    info.hide = avolocam::avolocam_hide;
     info.get_properties = avolocam::avolocam_get_properties;
     info.get_defaults = avolocam::avolocam_get_defaults;
     // Note: get_width, get_height, and video_render are NOT needed for async video sources
