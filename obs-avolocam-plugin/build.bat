@@ -15,7 +15,7 @@ echo [2/3] Installing to OBS plugins directory...
 echo Destination: %OBS_PLUGIN_DIR%
 
 :: Check if running as admin
-net session >nul 2>&1
+net session >NUL 2>&1
 if errorlevel 1 (
     echo.
     echo ERROR: Admin rights required to copy to Program Files

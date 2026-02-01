@@ -24,7 +24,7 @@ echo Building OBS AvoCam Plugin v%VERSION%
 echo ==========================================
 
 REM Find Visual Studio
-where cl >nul 2>&1
+where cl >NUL 2>&1
 if %errorlevel% neq 0 (
     echo Looking for Visual Studio...
 
@@ -86,7 +86,7 @@ echo Build successful!
 echo DLL location: %BUILD_DIR%\Release\obs-avolocam.dll
 
 REM Check for Inno Setup
-where iscc >nul 2>&1
+where iscc >NUL 2>&1
 if %errorlevel% neq 0 (
     REM Try common installation paths
     if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
@@ -126,12 +126,12 @@ echo.
 echo Creating ZIP archive...
 cd /d "%BUILD_DIR%"
 
-mkdir "obs-avolocam\bin\64bit" 2>nul
+mkdir "obs-avolocam\bin\64bit" 2>NUL
 copy /y "Release\obs-avolocam.dll" "obs-avolocam\bin\64bit\"
 
 REM Copy data files if they exist
 if exist "%PROJECT_ROOT%\data" (
-    mkdir "obs-avolocam\data" 2>nul
+    mkdir "obs-avolocam\data" 2>NUL
     xcopy /e /y "%PROJECT_ROOT%\data\*" "obs-avolocam\data\"
 )
 

@@ -19,7 +19,7 @@ build:
 
 install: build
 	@echo [INSTALL] Copying to $(OBS_PLUGIN_DIR)...
-	@copy /Y "$(DLL)" "$(OBS_PLUGIN_DIR)\" >nul
+	@copy /Y "$(DLL)" "$(OBS_PLUGIN_DIR)\" >NUL 2>NUL
 	@echo [INSTALL] Done. Restart OBS.
 
 clean:

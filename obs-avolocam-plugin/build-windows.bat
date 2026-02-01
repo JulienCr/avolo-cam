@@ -62,7 +62,7 @@ echo ===========================================================================
 echo.
 
 REM Check for Visual Studio
-where cl >nul 2>nul
+where cl >NUL 2>NUL
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Visual Studio C++ compiler not found.
     echo Please run this script from "Developer Command Prompt for VS" or
@@ -73,7 +73,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM Check for CMake
-where cmake >nul 2>nul
+where cmake >NUL 2>NUL
 if %ERRORLEVEL% neq 0 (
     echo ERROR: CMake not found. Please install CMake 3.16 or later.
     echo Download from: https://cmake.org/download/
@@ -86,9 +86,9 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 REM Determine Visual Studio generator
 REM Try VS 2022 first, then 2019
 set VS_GENERATOR=
-for /f "tokens=*" %%i in ('cmake --help 2^>nul ^| findstr /C:"Visual Studio 17 2022"') do set VS_GENERATOR=Visual Studio 17 2022
+for /f "tokens=*" %%i in ('cmake --help 2^>NUL ^| findstr /C:"Visual Studio 17 2022"') do set VS_GENERATOR=Visual Studio 17 2022
 if "%VS_GENERATOR%"=="" (
-    for /f "tokens=*" %%i in ('cmake --help 2^>nul ^| findstr /C:"Visual Studio 16 2019"') do set VS_GENERATOR=Visual Studio 16 2019
+    for /f "tokens=*" %%i in ('cmake --help 2^>NUL ^| findstr /C:"Visual Studio 16 2019"') do set VS_GENERATOR=Visual Studio 16 2019
 )
 if "%VS_GENERATOR%"=="" (
     echo ERROR: No supported Visual Studio generator found.
