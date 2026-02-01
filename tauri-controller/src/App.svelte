@@ -53,6 +53,7 @@
     getStreamSettings,
     loadStreamSettingsForEditing,
     saveStreamSettingsFromEditing,
+    initFlashDefaults,
   } from '$lib/stores/settings';
 
   import {
@@ -79,6 +80,8 @@
     // Load MIDI settings and restore connections
     await loadMidiConnectionStatus();
     await loadMidiNotesConfig();
+    // Initialize Flash mode defaults (detect local IP)
+    await initFlashDefaults();
     startAutoRefresh(2000);
     // Auto-discover and add cameras on startup after a short delay
     // to allow mDNS discovery to complete
@@ -480,10 +483,12 @@
 {/if}
 
 {#if $streamSettingsCameraId}
+  {@const currentCamera = $cameras.find(c => c.id === $streamSettingsCameraId)}
   <StreamSettingsDialog
     open={showStreamSettingsDialog}
     bind:settings={$currentStreamSettings}
     onApply={handleApplyStreamSettings}
+    flashPort={currentCamera?.flash_port}
   />
 {/if}
 

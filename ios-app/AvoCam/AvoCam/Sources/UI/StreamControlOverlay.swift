@@ -31,6 +31,19 @@ struct StreamControlOverlay: View {
                 .background(Color.black.opacity(0.6))
                 .cornerRadius(16)
 
+                // Streaming mode indicator
+                if let settings = coordinator.currentSettings {
+                    HStack(spacing: 4) {
+                        Text(settings.streamingMode == .ndi ? "NDI" : "SRT:\(settings.srtPort ?? 9000)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(settings.streamingMode == .ndi ? Color.blue : Color.green)
+                    .cornerRadius(8)
+                }
+
                 Spacer()
 
                 // Screen brightness toggle button
@@ -82,6 +95,38 @@ struct StreamControlOverlay: View {
                     .padding()
                     .background(Color.red.opacity(0.8))
                     .cornerRadius(12)
+                }
+
+                // SRT URL display (when streaming in SRT mode)
+                if coordinator.isStreaming,
+                   let settings = coordinator.currentSettings,
+                   settings.streamingMode == .srt,
+                   let ipAddress = coordinator.localIPAddress,
+                   let srtPort = settings.srtPort {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("SRT Connection URL:")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+
+                        HStack {
+                            Text("srt://\(ipAddress):\(srtPort)?mode=caller")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+
+                            Button(action: {
+                                UIPasteboard.general.string = "srt://\(ipAddress):\(srtPort)?mode=caller"
+                            }) {
+                                Image(systemName: "doc.on.doc.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(8)
+                    }
                 }
 
                 // Stream controls
@@ -140,11 +185,25 @@ struct StreamControlOverlay: View {
 
     private func startStream() {
         Task {
+            let videoSettings = VideoSettingsManager.load()
+            let config = VideoSettingsManager.getEffectiveConfiguration()
+
             let request = StreamStartRequest(
-                resolution: "1920x1080",
-                framerate: 30,
-                bitrate: 10_000_000,
-                codec: "h264"
+                resolution: config.resolution,
+                framerate: config.fps,
+                bitrate: config.bitrate,
+                codec: config.codec.rawValue,
+                streamingMode: videoSettings.streamingMode,
+                srtPort: videoSettings.srtPort,
+                srtLatency: videoSettings.srtLatency,
+                srtRcvLatency: videoSettings.srtRcvLatency,
+                srtPeerLatency: videoSettings.srtPeerLatency,
+                srtTlPktDrop: videoSettings.srtTlPktDrop,
+                srtPassphrase: nil,
+                srtGopSize: videoSettings.srtGopSize,
+                flashDestinationHost: videoSettings.flashDestinationHost,
+                flashDestinationPort: videoSettings.flashDestinationPort,
+                flashJitterMode: videoSettings.flashJitterMode
             )
 
             do {

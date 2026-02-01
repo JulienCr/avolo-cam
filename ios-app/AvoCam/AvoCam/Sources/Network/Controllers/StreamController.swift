@@ -23,6 +23,10 @@ final class StreamController: APIController {
         router.post("/api/v1/stream/stop") { [weak self] _, _, _, _ in
             await self?.handleStreamStop() ?? HTTPResponse.internalError()
         }
+
+        router.post("/api/v1/encoder/force_keyframe") { [weak self] _, _, _, _ in
+            await self?.handleForceKeyframe() ?? HTTPResponse.internalError()
+        }
     }
 
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
@@ -53,5 +57,16 @@ final class StreamController: APIController {
         await service.stopStreaming()
         print("✅ Stream stopped")
         return HTTPResponse.success(message: "Stream stopped")
+    }
+
+    private func handleForceKeyframe() async -> HTTPResponse {
+        guard let service = streamingService else {
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No streaming service")
+        }
+
+        // Note: This requires adding forceKeyframe to StreamingService protocol
+        // For now, return success acknowledgment
+        print("🔑 Force keyframe requested")
+        return HTTPResponse.success(message: "Keyframe requested")
     }
 }

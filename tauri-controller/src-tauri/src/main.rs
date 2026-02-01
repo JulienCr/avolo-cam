@@ -233,13 +233,53 @@ async fn start_stream(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
+        _ => None,
+    });
+
+    // Auto-assign flash_destination_port if not explicitly provided and mode is Flash
+    let effective_flash_port = if flash_destination_port.is_some() {
+        // Use explicitly provided port (backward compatible)
+        flash_destination_port
+    } else if mode == Some(StreamingMode::Flash) {
+        // Auto-assign port from camera index
+        manager.get_flash_port_for_camera(&camera_id).map(u32::from)
+    } else {
+        None
+    };
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port: effective_flash_port,
+        flash_jitter_mode,
     };
     manager.start_stream(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -274,13 +314,42 @@ async fn update_stream_settings(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<(), String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
+        _ => None,
+    });
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port,
+        flash_jitter_mode,
     };
     manager.update_stream_settings(&camera_id, request).await
         .map_err(|e| e.to_string())
@@ -316,13 +385,42 @@ async fn group_start_stream(
     framerate: u32,
     bitrate: u32,
     codec: String,
+    streaming_mode: Option<String>,
+    srt_port: Option<u32>,
+    srt_latency: Option<u32>,
+    srt_rcv_latency: Option<u32>,
+    srt_peer_latency: Option<u32>,
+    srt_tlpktdrop: Option<bool>,
+    srt_gop_size: Option<u32>,
+    flash_destination_host: Option<String>,
+    flash_destination_port: Option<u32>,
+    flash_jitter_mode: Option<String>,
 ) -> Result<Vec<GroupCommandResult>, String> {
     let mut manager = state.camera_manager.write().await;
+
+    // Parse streaming_mode string to enum
+    let mode = streaming_mode.as_deref().and_then(|m| match m {
+        "ndi" => Some(StreamingMode::Ndi),
+        "srt" => Some(StreamingMode::Srt),
+        "flash" => Some(StreamingMode::Flash),
+        _ => None,
+    });
+
     let request = StreamStartRequest {
         resolution,
         framerate,
         bitrate,
         codec,
+        streaming_mode: mode,
+        srt_port,
+        srt_latency,
+        srt_rcv_latency,
+        srt_peer_latency,
+        srt_tlpktdrop,
+        srt_gop_size,
+        flash_destination_host,
+        flash_destination_port,
+        flash_jitter_mode,
     };
     manager.group_start_stream(&camera_ids, request).await
         .map_err(|e| e.to_string())
@@ -675,6 +773,15 @@ async fn send_test_notification(app: AppHandle, title: String, body: String) -> 
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+// MARK: - Network Utilities
+
+#[tauri::command]
+async fn get_local_ip() -> Result<String, String> {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|e| e.to_string())
+}
+
 // MARK: - Main
 
 fn main() {
@@ -824,6 +931,7 @@ fn main() {
             update_midi_notes_config,
             start_midi_learn_mode,
             cancel_midi_learn_mode,
+            get_local_ip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

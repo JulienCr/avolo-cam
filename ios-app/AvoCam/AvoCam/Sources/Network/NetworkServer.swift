@@ -49,6 +49,9 @@ class NetworkServer {
     private var router: HTTPRouter!
     private var authMiddleware: AuthMiddleware!
 
+    /// Callback for tally updates from OBS (program, preview)
+    var onTallyUpdate: ((Bool, Bool) async -> Void)?
+
     // MARK: - Initialization
 
     init(port: Int, bearerToken: String, requestHandler: NetworkRequestHandler?) {
@@ -181,7 +184,7 @@ class NetworkServer {
         print("🔌 WebSocket client disconnected (total: \(count))")
     }
 
-    func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState) {
+    func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState, flashUdpPort: Int? = nil) {
         let clients = wsClients.withLock { Array($0) }
 
         // Encode telemetry to JSON
@@ -195,7 +198,8 @@ class NetworkServer {
             cpuUsage: telemetry.cpuUsage,
             ndiState: ndiState,
             droppedFrames: telemetry.droppedFrames ?? 0,
-            chargingState: telemetry.chargingState ?? .unplugged
+            chargingState: telemetry.chargingState ?? .unplugged,
+            flashUdpPort: flashUdpPort
         )
 
         guard let jsonData = try? JSONEncoder().encode(message),
@@ -207,6 +211,30 @@ class NetworkServer {
         for client in clients {
             client.send(text: jsonString)
         }
+    }
+
+    /// Broadcast frame timing info to all WebSocket clients (for Flash mode latency correlation)
+    /// - Parameter frameInfo: Frame timing and RTP timestamp information
+    func broadcastFrameInfo(_ frameInfo: WebSocketFrameInfo) {
+        let clients = wsClients.withLock { Array($0) }
+
+        guard let jsonData = try? JSONEncoder().encode(frameInfo),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return
+        }
+
+        // Send to all connected clients
+        for client in clients {
+            client.send(text: jsonString)
+        }
+    }
+
+    // MARK: - Tally Handling
+
+    /// Handle tally update from OBS via WebSocket
+    func handleTallyUpdate(program: Bool, preview: Bool) async {
+        print("📥 Tally update: program=\(program), preview=\(preview)")
+        await onTallyUpdate?(program, preview)
     }
 
     // MARK: - Router Setup
@@ -798,20 +826,40 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     private func handleWebSocketMessage(text: String) {
-        // Decode WebSocket command
-        guard let data = text.data(using: .utf8),
-              let message = try? JSONDecoder().decode(WebSocketCommandMessage.self, from: data) else {
-            print("⚠️ Invalid WebSocket message")
+        guard let data = text.data(using: .utf8) else {
+            print("⚠️ Invalid WebSocket message encoding")
             return
         }
 
-        // Handle camera control commands
-        if message.op == "set", let cameraSettings = message.camera {
-            Task {
-                // Forward to request handler
-                // Note: This would require async support in the handler
-                print("📥 WS camera command: \(cameraSettings)")
+        // Try to decode as a generic message to get the "op" field
+        struct OpMessage: Codable { let op: String }
+        guard let opMsg = try? JSONDecoder().decode(OpMessage.self, from: data) else {
+            print("⚠️ Invalid WebSocket message: missing 'op' field")
+            return
+        }
+
+        switch opMsg.op {
+        case "tally":
+            // Handle tally update from OBS
+            if let tallyMsg = try? JSONDecoder().decode(WebSocketTallyMessage.self, from: data) {
+                Task { [weak self] in
+                    await self?.server.handleTallyUpdate(program: tallyMsg.program, preview: tallyMsg.preview)
+                }
             }
+
+        case "set":
+            // Handle camera control commands
+            if let message = try? JSONDecoder().decode(WebSocketCommandMessage.self, from: data),
+               let cameraSettings = message.camera {
+                Task {
+                    // Forward to request handler
+                    // Note: This would require async support in the handler
+                    print("📥 WS camera command: \(cameraSettings)")
+                }
+            }
+
+        default:
+            print("⚠️ Unknown WebSocket op: \(opMsg.op)")
         }
     }
 

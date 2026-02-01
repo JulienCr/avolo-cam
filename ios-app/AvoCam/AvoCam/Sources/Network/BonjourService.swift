@@ -14,6 +14,7 @@ class BonjourService: NSObject {
     private let port: Int
     private let bearerToken: String
     private var netService: NetService?
+    private var flashUdpPort: UInt16 = 0  // Dynamic Flash UDP port
 
     // MARK: - Initialization
 
@@ -58,12 +59,23 @@ class BonjourService: NSObject {
     // MARK: - TXT Record
 
     private func createTXTRecord() -> Data? {
-        let txtDict: [String: Data] = [
+        var txtDict: [String: Data] = [
             "alias": alias.data(using: .utf8) ?? Data(),
             "version": "1.0".data(using: .utf8) ?? Data(),
             "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
-            "token": bearerToken.data(using: .utf8) ?? Data()
+            "token": bearerToken.data(using: .utf8) ?? Data(),
+            "ws_port": "\(port)".data(using: .utf8) ?? Data(),
+            "width": "1920".data(using: .utf8) ?? Data(),
+            "height": "1080".data(using: .utf8) ?? Data(),
+            "fps": "25".data(using: .utf8) ?? Data(),
+            "codec": "h264".data(using: .utf8) ?? Data(),
+            "profile": "high".data(using: .utf8) ?? Data()
         ]
+
+        // Add Flash UDP port if active (non-zero)
+        if flashUdpPort > 0 {
+            txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
+        }
 
         return NetService.data(fromTXTRecord: txtDict)
     }
@@ -77,6 +89,50 @@ class BonjourService: NSObject {
         }
 
         service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
+    }
+
+    /// Update stream info dynamically when stream configuration changes
+    func updateStreamInfo(width: Int, height: Int, fps: Int, spsHash: String? = nil) {
+        var updates: [String: String] = [
+            "width": "\(width)",
+            "height": "\(height)",
+            "fps": "\(fps)"
+        ]
+        if let hash = spsHash {
+            updates["sps_hash"] = hash
+        }
+        updateTXTRecord(updates)
+    }
+
+    /// Update Flash UDP port in mDNS announcement
+    /// - Parameter port: UDP port used for Flash streaming (0 to clear)
+    func updateFlashPort(_ port: UInt16) {
+        flashUdpPort = port
+
+        guard let service = netService else { return }
+
+        // Rebuild full TXT record with new Flash port
+        var txtDict: [String: Data] = [
+            "alias": alias.data(using: .utf8) ?? Data(),
+            "version": "1.0".data(using: .utf8) ?? Data(),
+            "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
+            "token": bearerToken.data(using: .utf8) ?? Data(),
+            "ws_port": "\(self.port)".data(using: .utf8) ?? Data(),
+            "width": "1920".data(using: .utf8) ?? Data(),
+            "height": "1080".data(using: .utf8) ?? Data(),
+            "fps": "25".data(using: .utf8) ?? Data(),
+            "codec": "h264".data(using: .utf8) ?? Data(),
+            "profile": "high".data(using: .utf8) ?? Data()
+        ]
+
+        // Add Flash UDP port if active (non-zero)
+        if port > 0 {
+            txtDict["flash_udp_port"] = "\(port)".data(using: .utf8) ?? Data()
+        }
+
+        service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
+
+        print("📢 Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
     }
 }
 

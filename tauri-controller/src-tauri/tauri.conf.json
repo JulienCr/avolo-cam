@@ -34,7 +34,7 @@
         "fullscreen": false,
         "decorations": true,
         "center": true,
-        "minWidth": 800,
+        "minWidth": 900,
         "minHeight": 600,
         "devtools": true
       }

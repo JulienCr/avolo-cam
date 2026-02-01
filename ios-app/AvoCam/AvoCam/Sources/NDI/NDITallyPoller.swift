@@ -25,6 +25,11 @@ class NDITallyPoller {
     private var lastProgram: Bool = false
     private var lastPreview: Bool = false
 
+    // External tally priority tracking
+    // When external tally (WebSocket) is received, NDI polling is suppressed for a timeout period
+    private var lastExternalTallyTime: UInt64 = 0
+    private let externalTallyTimeout: UInt64 = 5_000_000_000  // 5 seconds in nanoseconds
+
     // Task control
     private var pollingTask: Task<Void, Never>?
 
@@ -76,6 +81,14 @@ class NDITallyPoller {
 
     /// Poll tally state and update torch/UI accordingly
     private func pollTallyState() async {
+        // Skip NDI polling if external tally was received recently
+        // This prevents NDI polling from overriding WebSocket tally in Flash mode
+        let now = DispatchTime.now().uptimeNanoseconds
+        if now - lastExternalTallyTime < externalTallyTimeout {
+            // External tally is active, skip NDI polling
+            return
+        }
+
         // Get current tally state from NDI
         let tally = ndiManager.getTallyState()
 
@@ -114,6 +127,31 @@ class NDITallyPoller {
     /// Get current tally state (for telemetry/status endpoints)
     func getCurrentState() -> (program: Bool, preview: Bool) {
         return currentTallyState
+    }
+
+    // MARK: - External Tally Control
+
+    /// Set tally state from external source (e.g., OBS WebSocket)
+    /// This allows OBS to control the torch directly without NDI polling
+    /// - Parameter program: Whether the camera is in Program (live) mode
+    func setExternalTally(program: Bool) async {
+        // Record the time of external tally to suppress NDI polling
+        lastExternalTallyTime = DispatchTime.now().uptimeNanoseconds
+
+        // Update published state for UI
+        currentTallyState = (program: program, preview: currentTallyState.preview)
+
+        // Only update torch if state changed
+        if program != lastProgram {
+            lastProgram = program
+            await torchController.set(programOn: program)
+
+            if program {
+                logger.info("🔴 External tally ON → Torch ON (NDI polling suppressed for 5s)")
+            } else {
+                logger.info("⚫️ External tally OFF → Torch OFF (NDI polling suppressed for 5s)")
+            }
+        }
     }
 
     // MARK: - Torch Configuration

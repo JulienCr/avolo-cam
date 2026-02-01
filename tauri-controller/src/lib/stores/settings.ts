@@ -1,7 +1,22 @@
 import { writable, get } from 'svelte/store';
+import { invoke } from '@tauri-apps/api/core';
 import type { StreamSettings, CameraSettings } from '../types/settings';
 import { DEFAULT_STREAM_SETTINGS, DEFAULT_CAMERA_SETTINGS } from '../types/settings';
 import type { LensType } from '../types/camera';
+
+// Auto-detected local IP for Flash mode
+export const detectedLocalIP = writable<string | null>(null);
+
+// Initialize Flash defaults by detecting local IP
+export async function initFlashDefaults(): Promise<void> {
+  try {
+    const ip = await invoke<string>('get_local_ip');
+    detectedLocalIP.set(ip);
+    console.log('Detected local IP for Flash mode:', ip);
+  } catch (e) {
+    console.warn('Could not detect local IP:', e);
+  }
+}
 
 // Per-camera stream settings (cameraId -> StreamSettings)
 export const cameraStreamSettings = writable<Record<string, StreamSettings>>({});

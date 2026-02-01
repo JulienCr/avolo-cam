@@ -53,6 +53,18 @@ struct VideoSettings: Codable {
     var customFps: Int?
     var customCodec: VideoCodec?
     var customBitrate: Int?
+    var streamingMode: StreamingMode = .ndi
+    var srtPort: Int = 9000
+    var srtLatency: Int = 120      // General latency in ms
+    var srtRcvLatency: Int? = nil  // Receive latency in ms (nil = use srtLatency)
+    var srtPeerLatency: Int? = nil // Peer latency in ms (nil = use srtLatency)
+    var srtTlPktDrop: Bool = true  // Drop too-late packets (essential for live)
+    var srtGopSize: Int = 30       // GOP in frames - default 1 second (= fps) for stable streaming
+
+    // Flash mode settings
+    var flashDestinationHost: String? = nil  // Target host for UDP/RTP packets
+    var flashDestinationPort: Int = 5000     // Target UDP port
+    var flashJitterMode: String = "ultra_low" // "ultra_low" or "stable"
 
     // Computed property to get effective settings
     func effectiveSettings(presets: [VideoPreset]) -> StreamConfiguration? {
@@ -93,12 +105,23 @@ struct StreamConfiguration {
     let codec: VideoCodec
     let bitrate: Int
 
-    func toStreamStartRequest() -> StreamStartRequest {
+    func toStreamStartRequest(videoSettings: VideoSettings) -> StreamStartRequest {
         return StreamStartRequest(
             resolution: resolution,
             framerate: fps,
             bitrate: bitrate,
-            codec: codec.rawValue
+            codec: codec.rawValue,
+            streamingMode: videoSettings.streamingMode,
+            srtPort: videoSettings.srtPort,
+            srtLatency: videoSettings.srtLatency,
+            srtRcvLatency: videoSettings.srtRcvLatency,
+            srtPeerLatency: videoSettings.srtPeerLatency,
+            srtTlPktDrop: videoSettings.srtTlPktDrop,
+            srtPassphrase: nil,
+            srtGopSize: videoSettings.srtGopSize,
+            flashDestinationHost: videoSettings.flashDestinationHost,
+            flashDestinationPort: videoSettings.flashDestinationPort,
+            flashJitterMode: videoSettings.flashJitterMode
         )
     }
 }

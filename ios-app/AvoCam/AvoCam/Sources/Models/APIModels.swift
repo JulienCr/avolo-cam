@@ -7,6 +7,14 @@
 
 import Foundation
 
+// MARK: - Streaming Mode
+
+enum StreamingMode: String, Codable, CaseIterable, Sendable {
+    case ndi = "ndi"
+    case srt = "srt"
+    case flash = "flash"
+}
+
 // MARK: - Status Response
 
 struct StatusResponse: Codable {
@@ -17,6 +25,10 @@ struct StatusResponse: Codable {
     let capabilities: [Capability]
     let tallyProgram: Bool?
     let tallyPreview: Bool?
+    let streamingMode: StreamingMode
+    let srtConnectionUrl: String?
+    let srtPort: Int?
+    let flashUdpPort: Int?  // Active UDP port for Flash mode (announced via mDNS)
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -26,6 +38,10 @@ struct StatusResponse: Codable {
         case capabilities
         case tallyProgram = "tally_program"
         case tallyPreview = "tally_preview"
+        case streamingMode = "streaming_mode"
+        case srtConnectionUrl = "srt_connection_url"
+        case srtPort = "srt_port"
+        case flashUdpPort = "flash_udp_port"
     }
 }
 
@@ -51,6 +67,11 @@ struct CurrentSettings: Codable {
     var zoomFactor: Double
     var cameraPosition: String  // "back" or "front"
     var lens: String            // "wide", "ultra_wide", "telephoto"
+    var streamingMode: StreamingMode
+    var srtPort: Int?
+    var srtLatency: Int?
+    var flashDestinationHost: String?
+    var flashDestinationPort: Int?
 
     enum CodingKeys: String, CodingKey {
         case resolution
@@ -69,6 +90,11 @@ struct CurrentSettings: Codable {
         case zoomFactor = "zoom_factor"
         case cameraPosition = "camera_position"
         case lens
+        case streamingMode = "streaming_mode"
+        case srtPort = "srt_port"
+        case srtLatency = "srt_latency"
+        case flashDestinationHost = "flash_destination_host"
+        case flashDestinationPort = "flash_destination_port"
     }
 }
 
@@ -140,6 +166,37 @@ struct StreamStartRequest: Codable {
     let framerate: Int
     let bitrate: Int
     let codec: String
+    let streamingMode: StreamingMode?
+    let srtPort: Int?
+    let srtLatency: Int?
+    let srtRcvLatency: Int?    // Receive latency in ms (nil = use srtLatency)
+    let srtPeerLatency: Int?   // Peer latency in ms (nil = use srtLatency)
+    let srtTlPktDrop: Bool?    // Drop too-late packets
+    let srtPassphrase: String?
+    let srtGopSize: Int?       // GOP in frames
+
+    // Flash mode settings
+    let flashDestinationHost: String?  // Target host for UDP packets (required for flash)
+    let flashDestinationPort: Int?     // Target UDP port (default 5000)
+    let flashJitterMode: String?       // "ultra_low" or "stable" (hint for receiver)
+
+    enum CodingKeys: String, CodingKey {
+        case resolution
+        case framerate
+        case bitrate
+        case codec
+        case streamingMode = "streaming_mode"
+        case srtPort = "srt_port"
+        case srtLatency = "srt_latency"
+        case srtRcvLatency = "srt_rcv_latency"
+        case srtPeerLatency = "srt_peer_latency"
+        case srtTlPktDrop = "srt_tlpktdrop"
+        case srtPassphrase = "srt_passphrase"
+        case srtGopSize = "srt_gop_size"
+        case flashDestinationHost = "flash_destination_host"
+        case flashDestinationPort = "flash_destination_port"
+        case flashJitterMode = "flash_jitter_mode"
+    }
 }
 
 // MARK: - Camera Control
@@ -209,6 +266,7 @@ struct WebSocketTelemetryMessage: Codable {
     let ndiState: NDIState
     let droppedFrames: Int
     let chargingState: ChargingState
+    let flashUdpPort: Int?  // Active Flash UDP port for OBS auto-discovery
 
     enum CodingKeys: String, CodingKey {
         case fps
@@ -221,12 +279,37 @@ struct WebSocketTelemetryMessage: Codable {
         case ndiState = "ndi_state"
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
+        case flashUdpPort = "flash_udp_port"
     }
 }
 
 struct WebSocketCommandMessage: Codable {
     let op: String
     let camera: CameraSettingsRequest?
+}
+
+/// Tally message received from OBS plugin via WebSocket
+/// OBS sends: {"op":"tally","program":true,"preview":false}
+struct WebSocketTallyMessage: Codable {
+    let op: String  // "tally"
+    let program: Bool
+    let preview: Bool
+}
+
+struct WebSocketFrameInfo: Codable {
+    let op: String  // "frame_info"
+    let frameIdx: Int64
+    let rtpTimestamp: UInt32  // RTP timestamp (90kHz clock) for correlating with RTP packets
+    let captureTs: Int64  // nanoseconds since boot
+    let encodeTs: Int64   // nanoseconds since boot
+
+    enum CodingKeys: String, CodingKey {
+        case op
+        case frameIdx = "frame_idx"
+        case rtpTimestamp = "rtp_ts"
+        case captureTs = "capture_ts_ns"
+        case encodeTs = "encode_ts_ns"
+    }
 }
 
 // MARK: - Video Settings

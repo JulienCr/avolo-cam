@@ -11,6 +11,8 @@ export interface Telemetry {
 }
 
 export type NdiState = 'streaming' | 'idle' | 'unknown';
+export type StreamingMode = 'ndi' | 'srt' | 'flash';
+export type FlashJitterMode = 'ultra_low' | 'stable';
 export type WhiteBalanceMode = 'auto' | 'manual';
 export type IsoMode = 'auto' | 'manual';
 export type ShutterMode = 'auto' | 'manual';
@@ -24,6 +26,13 @@ export interface CurrentSettings {
   fps?: number;
   bitrate?: number;
   codec?: string;
+  streaming_mode?: StreamingMode;
+  srt_port?: number;
+  srt_latency?: number;
+  srt_connection_url?: string;
+  // Flash mode settings
+  flash_destination_host?: string;
+  flash_destination_port?: number;
   wb_mode?: WhiteBalanceMode;
   wb_kelvin?: number;
   wb_tint?: number;
@@ -52,6 +61,7 @@ export interface Camera {
   port: number;
   status: CameraStatus | null;
   midi_channel?: number; // MIDI channel 1-8 or undefined
+  flash_port?: number; // Auto-assigned Flash UDP port (5000 + camera_index)
 }
 
 export interface DiscoveredCamera {

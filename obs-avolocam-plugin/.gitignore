@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+*.so
+*.dylib
+*.dll
+
+# Compiled plugin bundle
+obs-avolocam.plugin/
+
+# Dependencies (downloaded separately)
+deps/
+
+# IDE
+.vscode/
+*.xcworkspace
+*.xcuserdata
+
+# macOS
+.DS_Store

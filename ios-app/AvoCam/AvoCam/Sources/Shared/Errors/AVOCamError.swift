@@ -29,7 +29,7 @@ enum AVOCamError: LocalizedError {
     case networkError(String)
 
     // MARK: - Configuration Errors
-    case invalidConfiguration
+    case invalidConfiguration(String)
 
     // MARK: - Generic Error
     case genericError(String)
@@ -71,8 +71,8 @@ enum AVOCamError: LocalizedError {
             return "Network error: \(message)"
 
         // Configuration
-        case .invalidConfiguration:
-            return "Invalid configuration provided"
+        case .invalidConfiguration(let message):
+            return "Invalid configuration: \(message)"
 
         // Generic
         case .genericError(let message):
