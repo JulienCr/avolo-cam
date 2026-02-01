@@ -84,6 +84,7 @@ logs/
 
 # Build outputs
 build/
+build-*/
 out/
 *.app
 *.dmg
