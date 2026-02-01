@@ -44,6 +44,8 @@ public:
     bool is_hardware() const override;
     const char *get_name() const override;
     bool is_initialized() const override;
+    const DecodeTimingStats &get_timing_stats() const override;
+    void reset_timing_stats() override;
 
 private:
     DecoderConfig config_;
@@ -75,6 +77,9 @@ private:
     // State
     std::atomic<bool> initialized_{false};
     bool hardware_enabled_ = false;
+
+    // Timing stats (for API compatibility)
+    mutable DecodeTimingStats timing_stats_;
 
     // Mutex for initialization thread safety
     std::mutex init_mutex_;

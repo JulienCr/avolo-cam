@@ -60,7 +60,7 @@ export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   framerate: 30,
   bitrate: 10000000, // 10 Mbps
   codec: 'h264',
-  streaming_mode: 'ndi',
+  streaming_mode: 'flash',
   // SRT defaults
   srt_port: 9000,
   srt_latency: 120,

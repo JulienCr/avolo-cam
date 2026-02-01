@@ -545,6 +545,16 @@ bool VideoToolboxDecoder::is_initialized() const
     return initialized_.load();
 }
 
+const DecodeTimingStats &VideoToolboxDecoder::get_timing_stats() const
+{
+    return timing_stats_;
+}
+
+void VideoToolboxDecoder::reset_timing_stats()
+{
+    timing_stats_ = DecodeTimingStats{};
+}
+
 // Factory method implementation for macOS
 std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
 {

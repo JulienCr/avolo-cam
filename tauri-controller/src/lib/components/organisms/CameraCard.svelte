@@ -28,6 +28,7 @@
   $: hasDroppedFrames = droppedFrames > 0;
   $: streamingMode = streamDetails?.streaming_mode || 'ndi';
   $: srtPort = streamDetails?.srt_port;
+  $: flashPort = streamDetails?.flash_destination_port || camera.flash_port;
   $: srtConnectionUrl = streamDetails?.srt_connection_url;
 
   // Configured SRT settings (from settings store, not from stream status)
@@ -339,7 +340,7 @@
                 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
                 : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'}"
             >
-              {streamingMode === 'ndi' ? 'NDI' : `SRT:${srtPort || 'N/A'}`}
+              {streamingMode === 'ndi' ? 'NDI' : streamingMode === 'flash' ? `FLASH:${flashPort || 'N/A'}` : `SRT:${srtPort || 'N/A'}`}
             </span>
           </div>
         </div>
