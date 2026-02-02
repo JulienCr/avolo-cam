@@ -31,7 +31,8 @@
       "Bash(pnpm run tauri:build:*)",
       "Bash(git reset:*)",
       "Bash(pnpm run check:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(git push)"
     ],
     "deny": [],
     "ask": []
