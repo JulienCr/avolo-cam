@@ -50,6 +50,12 @@ public:
     bool get_next_packet(std::vector<uint8_t> &out_data, uint64_t &out_recv_time);
 
     /**
+     * Clear all buffered packets and reset timing state.
+     * Call after UDP port rebind to avoid stale packets from the old stream.
+     */
+    void clear();
+
+    /**
      * Get number of packets currently buffered
      */
     size_t size() const;

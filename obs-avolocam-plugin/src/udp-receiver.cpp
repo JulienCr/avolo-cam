@@ -92,10 +92,11 @@ bool UdpReceiver::bind(uint16_t port) {
         return false;
     }
 
-    // Allow address reuse
-    int reuse = 1;
-    setsockopt(impl_->socket, SOL_SOCKET, SO_REUSEADDR,
-               reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    // NOTE: SO_REUSEADDR intentionally NOT set.
+    // On Windows, SO_REUSEADDR for UDP allows multiple sockets to bind the same
+    // port, causing packet duplication across sources and potential decoder crashes.
+    // Without it, bind() fails with EADDRINUSE if the port is already taken,
+    // giving an explicit error instead of silent corruption.
 
     // Increase receive buffer size for high bitrate streams
     int rcvbuf = 4 * 1024 * 1024;  // 4MB

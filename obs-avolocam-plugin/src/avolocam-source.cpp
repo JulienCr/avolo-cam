@@ -26,6 +26,7 @@
 #include <thread>
 #include <mutex>
 #include <deque>
+#include <set>
 #include <condition_variable>
 #include <string>
 #include <cstdio>
@@ -63,6 +64,13 @@ namespace avolocam {
 // Global mDNS discovery instance (shared across all sources)
 static std::unique_ptr<MdnsDiscovery> g_discovery;
 static std::mutex g_discovery_mutex;
+
+// Global port registry: prevents multiple sources from binding the same UDP port
+static std::set<uint16_t> g_bound_ports;
+static std::mutex g_ports_mutex;
+
+// Auto-incrementing default port for new sources
+static std::atomic<uint16_t> g_next_default_port{5000};
 
 /**
  * Source instance data
@@ -127,7 +135,7 @@ struct SourceData {
 
     // ========== Async Decode Pipeline (Phase 3) ==========
     // Bounded queue for access units waiting to be decoded
-    static const size_t MAX_DECODE_QUEUE_SIZE = 2;  // Small queue for low latency
+    static const size_t MAX_DECODE_QUEUE_SIZE = 4;  // Allow headroom for multi-camera GPU contention
     std::deque<AccessUnit> decode_queue_;
     std::mutex decode_queue_mutex_;
     std::condition_variable decode_queue_cv_;
@@ -167,6 +175,16 @@ struct SourceData {
         if (camera_ip.empty()) {
             blog(LOG_WARNING, "[avolocam] No camera IP configured");
             return;
+        }
+
+        // Check port availability before starting
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            if (g_bound_ports.count(camera_port)) {
+                blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
+                     "Each source must use a unique UDP port.", camera_port);
+                return;
+            }
         }
 
         blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
@@ -263,6 +281,12 @@ struct SourceData {
         blog(LOG_INFO, "[avolocam] Stopping receiver");
         running.store(false);
 
+        // Unregister port from global registry
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_bound_ports.erase(camera_port);
+        }
+
         // Wake up decode thread if waiting
         {
             std::lock_guard<std::mutex> lock(decode_queue_mutex_);
@@ -302,8 +326,15 @@ struct SourceData {
     void receive_loop() {
         // Bind to UDP port
         if (!receiver->bind(camera_port)) {
-            blog(LOG_ERROR, "[avolocam] Failed to bind to port %d", camera_port);
+            blog(LOG_ERROR, "[avolocam] Failed to bind to port %d - port may already be in use",
+                 camera_port);
             return;
+        }
+
+        // Register port in global registry
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_bound_ports.insert(camera_port);
         }
 
         blog(LOG_INFO, "[avolocam] Listening on UDP port %d", camera_port);
@@ -326,9 +357,30 @@ struct SourceData {
 
                 // Re-bind to new port
                 if (receiver->bind(ws_port)) {
+                    // Update port registry: remove old, add new
+                    {
+                        std::lock_guard<std::mutex> lock(g_ports_mutex);
+                        g_bound_ports.erase(current_bound_port);
+                        g_bound_ports.insert(ws_port);
+                    }
+
+                    // Flush the entire pipeline to avoid stale data from old stream
+                    if (jitter_buffer) jitter_buffer->clear();
+                    if (assembler) assembler->reset();
+
+                    // Clear the decode queue
+                    {
+                        std::lock_guard<std::mutex> lock(decode_queue_mutex_);
+                        decode_queue_.clear();
+                    }
+
+                    // Force resync: transition to OUT_OF_SYNC and request IDR
+                    if (sync_state) sync_state->on_packet_loss(100);
+
                     current_bound_port = ws_port;
                     camera_port = ws_port;  // Update config for future reference
-                    blog(LOG_INFO, "[avolocam] Successfully rebound to port %d", ws_port);
+                    blog(LOG_INFO, "[avolocam] Successfully rebound to port %d (pipeline flushed, IDR requested)",
+                         ws_port);
                 } else {
                     blog(LOG_WARNING, "[avolocam] Failed to rebind to port %d, staying on %d",
                          ws_port, current_bound_port);
@@ -357,6 +409,12 @@ struct SourceData {
 
             // Process available packets from jitter buffer
             process_jitter_buffer();
+        }
+
+        // Unregister port from global registry when receive loop exits
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_bound_ports.erase(current_bound_port);
         }
 
         receiver->close();
@@ -743,10 +801,13 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     data->decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
     if (data->camera_port == 0) {
-        data->camera_port = 5000;
+        // Auto-assign the next available port
+        data->camera_port = g_next_default_port.fetch_add(1);
+        blog(LOG_INFO, "[avolocam] Auto-assigned UDP port %d", data->camera_port);
     }
 
-    blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d)", data->decoder_type);
+    blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
+         data->decoder_type, data->camera_port);
     return data;
 }
 
@@ -780,7 +841,10 @@ static void avolocam_update(void *data, obs_data_t *settings)
     bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
     int new_decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
-    if (new_port == 0) new_port = 5000;
+    if (new_port == 0) {
+        new_port = g_next_default_port.fetch_add(1);
+        blog(LOG_INFO, "[avolocam] Auto-assigned UDP port %d on update", new_port);
+    }
 
     // Check if we need to restart
     bool needs_restart = (new_ip != src->camera_ip ||

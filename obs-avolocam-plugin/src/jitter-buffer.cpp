@@ -14,6 +14,12 @@ JitterBuffer::JitterBuffer(uint32_t max_delay_ms)
 
 JitterBuffer::~JitterBuffer() = default;
 
+void JitterBuffer::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    buffer_.clear();
+    first_packet_time_ns_ = 0;
+}
+
 uint16_t JitterBuffer::get_sequence(const uint8_t *data, size_t size) {
     // RTP sequence number is at bytes 2-3 (big endian)
     if (size < 4) return 0;
