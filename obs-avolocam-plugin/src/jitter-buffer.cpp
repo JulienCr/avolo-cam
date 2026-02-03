@@ -18,6 +18,8 @@ void JitterBuffer::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     buffer_.clear();
     first_packet_time_ns_ = 0;
+    packets_received_ = 0;
+    packets_dropped_ = 0;
 }
 
 uint16_t JitterBuffer::get_sequence(const uint8_t *data, size_t size) {

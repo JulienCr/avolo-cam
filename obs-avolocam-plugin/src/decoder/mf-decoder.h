@@ -103,10 +103,6 @@ private:
     bool use_async_staging_ = false;  // Disabled: causes frame drops, needs fix
     bool using_shared_device_ = false;  // True if using the global shared D3D11 device
 
-    // Async staging diagnostics (per-instance, NOT static)
-    int async_frame_count_ = 0;
-    uint64_t total_async_time_ = 0;
-
     // Timing instrumentation
     mutable DecodeTimingStats timing_stats_;
 

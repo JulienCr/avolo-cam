@@ -71,24 +71,25 @@ MFDecoder::~MFDecoder()
     destroy_decoder();
     release_staging_textures();
 
-    if (device_manager_) {
-        device_manager_->Release();
-        device_manager_ = nullptr;
-    }
-
-    if (d3d_context_) {
-        d3d_context_->Release();
-        d3d_context_ = nullptr;
-    }
-
-    if (d3d_device_) {
-        d3d_device_->Release();
-        d3d_device_ = nullptr;
-    }
-
-    // Release shared device reference
     if (using_shared_device_) {
+        // All COM releases must be under the mutex to prevent a concurrent
+        // create_d3d11_device() from AddRef'ing objects we're about to destroy.
         std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
+
+        // Release instance COM references (AddRef'd copies of shared device)
+        if (device_manager_) {
+            device_manager_->Release();
+            device_manager_ = nullptr;
+        }
+        if (d3d_context_) {
+            d3d_context_->Release();
+            d3d_context_ = nullptr;
+        }
+        if (d3d_device_) {
+            d3d_device_->Release();
+            d3d_device_ = nullptr;
+        }
+
         g_shared_d3d_refcount--;
         blog(LOG_INFO, "[avolocam] Released shared D3D11 device reference (refcount=%d)",
              g_shared_d3d_refcount);
@@ -108,6 +109,20 @@ MFDecoder::~MFDecoder()
             }
             g_shared_d3d_refcount = 0;
             blog(LOG_INFO, "[avolocam] Shared D3D11 device destroyed (last reference)");
+        }
+    } else {
+        // Non-shared device: release normally without lock
+        if (device_manager_) {
+            device_manager_->Release();
+            device_manager_ = nullptr;
+        }
+        if (d3d_context_) {
+            d3d_context_->Release();
+            d3d_context_ = nullptr;
+        }
+        if (d3d_device_) {
+            d3d_device_->Release();
+            d3d_device_ = nullptr;
         }
     }
 
@@ -237,6 +252,10 @@ bool MFDecoder::create_d3d11_device()
     hr = MFCreateDXGIDeviceManager(&device_manager_token_, &device_manager_);
     if (FAILED(hr)) {
         blog(LOG_WARNING, "[avolocam] MFCreateDXGIDeviceManager failed: 0x%08X", hr);
+        d3d_context_->Release();
+        d3d_context_ = nullptr;
+        d3d_device_->Release();
+        d3d_device_ = nullptr;
         return false;
     }
 
@@ -245,6 +264,10 @@ bool MFDecoder::create_d3d11_device()
         blog(LOG_WARNING, "[avolocam] ResetDevice failed: 0x%08X", hr);
         device_manager_->Release();
         device_manager_ = nullptr;
+        d3d_context_->Release();
+        d3d_context_ = nullptr;
+        d3d_device_->Release();
+        d3d_device_ = nullptr;
         return false;
     }
 

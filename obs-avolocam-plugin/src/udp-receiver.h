@@ -49,6 +49,12 @@ public:
     bool is_valid() const;
 
     /**
+     * Get actual receive buffer size (set by OS after setsockopt).
+     * Useful for diagnosing packet drops when the OS caps the buffer.
+     */
+    int get_actual_rcvbuf() const;
+
+    /**
      * Set expected source IP for filtering
      * Only packets from this IP will be accepted.
      * @param ip The expected source IP address (empty string disables filtering)

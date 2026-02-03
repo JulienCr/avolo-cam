@@ -31,6 +31,7 @@ namespace avolocam {
 struct UdpReceiver::Impl {
     socket_t socket = INVALID_SOCKET_VAL;
     uint16_t bound_port = 0;
+    int actual_rcvbuf = 0;
 
     // Source IP filtering
     std::string expected_source_ip;
@@ -102,6 +103,13 @@ bool UdpReceiver::bind(uint16_t port) {
     int rcvbuf = 4 * 1024 * 1024;  // 4MB
     setsockopt(impl_->socket, SOL_SOCKET, SO_RCVBUF,
                reinterpret_cast<const char*>(&rcvbuf), sizeof(rcvbuf));
+
+    // Store actual receive buffer size for diagnostics
+    int actual_rcvbuf = 0;
+    socklen_t optlen = sizeof(actual_rcvbuf);
+    getsockopt(impl_->socket, SOL_SOCKET, SO_RCVBUF,
+               reinterpret_cast<char*>(&actual_rcvbuf), &optlen);
+    impl_->actual_rcvbuf = actual_rcvbuf;
 
     // Bind to port
     struct sockaddr_in addr = {};
@@ -184,6 +192,10 @@ void UdpReceiver::close() {
 
 bool UdpReceiver::is_valid() const {
     return impl_->socket != INVALID_SOCKET_VAL;
+}
+
+int UdpReceiver::get_actual_rcvbuf() const {
+    return impl_->actual_rcvbuf;
 }
 
 void UdpReceiver::set_expected_source(const std::string& ip) {
