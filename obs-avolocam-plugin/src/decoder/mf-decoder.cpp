@@ -297,8 +297,13 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
     }
 
     initialized_ = true;
-    blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d",
-         width_, height_, hardware_enabled_);
+    {
+        std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
+        blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d, "
+             "active_hw_sessions=%d",
+             width_, height_, hardware_enabled_,
+             hardware_enabled_ ? g_shared_d3d_refcount : 0);
+    }
     return true;
 }
 
@@ -327,6 +332,13 @@ bool MFDecoder::create_decoder()
         &num_activates);
 
     if (FAILED(hr) || num_activates == 0) {
+        if (hardware_enabled_) {
+            // Hardware decoder not found — fall back to software
+            blog(LOG_WARNING, "[avolocam] No hardware H.264 decoder found (0x%08X), "
+                 "falling back to software decoder", hr);
+            hardware_enabled_ = false;
+            return create_decoder();  // Retry without MFT_ENUM_FLAG_HARDWARE
+        }
         blog(LOG_ERROR, "[avolocam] No H.264 decoder found: 0x%08X", hr);
         return false;
     }
@@ -341,6 +353,13 @@ bool MFDecoder::create_decoder()
     CoTaskMemFree(activates);
 
     if (FAILED(hr)) {
+        if (hardware_enabled_) {
+            // ActivateObject failed — GPU hardware session limit likely reached
+            blog(LOG_WARNING, "[avolocam] Hardware decoder ActivateObject failed (0x%08X). "
+                 "GPU session limit may be reached. Falling back to software decoder.", hr);
+            hardware_enabled_ = false;
+            return create_decoder();  // Retry with software
+        }
         blog(LOG_ERROR, "[avolocam] ActivateObject failed: 0x%08X", hr);
         return false;
     }

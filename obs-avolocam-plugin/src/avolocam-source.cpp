@@ -45,6 +45,7 @@
 #define PROP_PREFER_ZERO_COPY "prefer_zero_copy"
 #define PROP_DEBUG_MODE       "debug_mode"
 #define PROP_DECODER_TYPE     "decoder_type"
+#define PROP_PORT_WARNING     "port_warning"
 
 // Jitter buffer modes
 #define JITTER_ULTRA_LOW  0  // 0-8ms buffer
@@ -135,7 +136,8 @@ struct SourceData {
 
     // ========== Async Decode Pipeline (Phase 3) ==========
     // Bounded queue for access units waiting to be decoded
-    static const size_t MAX_DECODE_QUEUE_SIZE = 4;  // Allow headroom for multi-camera GPU contention
+    // Dynamic: 4 for hardware decode, 6 for software (more buffering needed)
+    size_t max_decode_queue_size_ = 4;
     std::deque<AccessUnit> decode_queue_;
     std::mutex decode_queue_mutex_;
     std::condition_variable decode_queue_cv_;
@@ -477,7 +479,7 @@ struct SourceData {
         std::lock_guard<std::mutex> lock(decode_queue_mutex_);
 
         // Drop oldest if queue is full (prioritize freshest data)
-        if (decode_queue_.size() >= MAX_DECODE_QUEUE_SIZE) {
+        if (decode_queue_.size() >= max_decode_queue_size_) {
             decode_queue_.pop_front();
             decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
         }
@@ -557,7 +559,19 @@ struct SourceData {
                         // GPU output DISABLED for now - using CPU path
                         // TODO: Re-enable GPU path after fixing performance issues
                         use_gpu_decode_ = false;
-                        blog(LOG_INFO, "[avolocam] Decoder initialized, using CPU output path");
+
+                        // Set decode queue size based on decoder type:
+                        // Hardware decoders are fast → small queue (4)
+                        // Software fallback is slower → larger queue (6) to absorb stalls
+                        if (decoder->is_hardware()) {
+                            max_decode_queue_size_ = 4;
+                            blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
+                                 "decode queue size = 4");
+                        } else {
+                            max_decode_queue_size_ = 6;
+                            blog(LOG_INFO, "[avolocam] Decoder initialized (software fallback), "
+                                 "decode queue size = 6");
+                        }
                     }
                 }
             }
@@ -918,6 +932,24 @@ static bool camera_select_changed(obs_properties_t *props, obs_property_t *,
     return true;  // Refresh properties UI
 }
 
+// Callback to check port collision when user changes port value
+static bool port_changed_callback(obs_properties_t *props, obs_property_t *,
+                                   obs_data_t *settings)
+{
+    uint16_t port = (uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT);
+    obs_property_t *warning = obs_properties_get(props, PROP_PORT_WARNING);
+    if (!warning) return false;
+
+    bool collision = false;
+    if (port > 0) {
+        std::lock_guard<std::mutex> lock(g_ports_mutex);
+        collision = g_bound_ports.count(port) > 0;
+    }
+
+    obs_property_set_visible(warning, collision);
+    return true;  // Refresh properties UI
+}
+
 static obs_properties_t *avolocam_get_properties(void *)
 {
     obs_properties_t *props = obs_properties_create();
@@ -956,6 +988,13 @@ static obs_properties_t *avolocam_get_properties(void *)
     obs_property_set_visible(port_prop, true);
     obs_property_set_long_description(port_prop,
         "Must match the port assigned by Tauri Controller (5000 for first camera, 5001 for second, etc.)");
+    obs_property_set_modified_callback(port_prop, port_changed_callback);
+
+    // Port collision warning (hidden by default, shown by port_changed_callback)
+    obs_property_t *port_warn = obs_properties_add_text(props, PROP_PORT_WARNING,
+        "WARNING: This port is already in use by another AvoCam source!",
+        OBS_TEXT_INFO);
+    obs_property_set_visible(port_warn, false);
 
     // Authentication token
     obs_properties_add_text(props, PROP_AUTH_TOKEN, "Auth Token",
