@@ -35,6 +35,17 @@ namespace {
 
 namespace avolocam {
 
+// Shared D3D11 device across all MFDecoder instances to avoid hitting
+// GPU hardware session limits (typically 4-8 on NVIDIA, fewer on Intel).
+// Each MFDecoder creating its own D3D11Device + MFT instance risks exceeding
+// the limit and crashing the GPU driver.
+static ID3D11Device *g_shared_d3d_device = nullptr;
+static ID3D11DeviceContext *g_shared_d3d_context = nullptr;
+static IMFDXGIDeviceManager *g_shared_device_manager = nullptr;
+static UINT g_shared_device_manager_token = 0;
+static int g_shared_d3d_refcount = 0;
+static std::mutex g_shared_d3d_mutex;
+
 // GUIDs for H.264 decoder
 static const GUID MFVideoFormat_H264 = {0x34363248, 0x0000, 0x0010,
     {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
@@ -60,19 +71,59 @@ MFDecoder::~MFDecoder()
     destroy_decoder();
     release_staging_textures();
 
-    if (device_manager_) {
-        device_manager_->Release();
-        device_manager_ = nullptr;
-    }
+    if (using_shared_device_) {
+        // All COM releases must be under the mutex to prevent a concurrent
+        // create_d3d11_device() from AddRef'ing objects we're about to destroy.
+        std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
 
-    if (d3d_context_) {
-        d3d_context_->Release();
-        d3d_context_ = nullptr;
-    }
+        // Release instance COM references (AddRef'd copies of shared device)
+        if (device_manager_) {
+            device_manager_->Release();
+            device_manager_ = nullptr;
+        }
+        if (d3d_context_) {
+            d3d_context_->Release();
+            d3d_context_ = nullptr;
+        }
+        if (d3d_device_) {
+            d3d_device_->Release();
+            d3d_device_ = nullptr;
+        }
 
-    if (d3d_device_) {
-        d3d_device_->Release();
-        d3d_device_ = nullptr;
+        g_shared_d3d_refcount--;
+        blog(LOG_INFO, "[avolocam] Released shared D3D11 device reference (refcount=%d)",
+             g_shared_d3d_refcount);
+
+        if (g_shared_d3d_refcount <= 0) {
+            if (g_shared_device_manager) {
+                g_shared_device_manager->Release();
+                g_shared_device_manager = nullptr;
+            }
+            if (g_shared_d3d_context) {
+                g_shared_d3d_context->Release();
+                g_shared_d3d_context = nullptr;
+            }
+            if (g_shared_d3d_device) {
+                g_shared_d3d_device->Release();
+                g_shared_d3d_device = nullptr;
+            }
+            g_shared_d3d_refcount = 0;
+            blog(LOG_INFO, "[avolocam] Shared D3D11 device destroyed (last reference)");
+        }
+    } else {
+        // Non-shared device: release normally without lock
+        if (device_manager_) {
+            device_manager_->Release();
+            device_manager_ = nullptr;
+        }
+        if (d3d_context_) {
+            d3d_context_->Release();
+            d3d_context_ = nullptr;
+        }
+        if (d3d_device_) {
+            d3d_device_->Release();
+            d3d_device_ = nullptr;
+        }
     }
 
     if (mf_initialized_) {
@@ -139,6 +190,26 @@ bool MFDecoder::create_d3d11_device()
         return true;
     }
 
+    std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
+
+    // Reuse existing shared device if available
+    if (g_shared_d3d_device && g_shared_d3d_context && g_shared_device_manager) {
+        d3d_device_ = g_shared_d3d_device;
+        d3d_device_->AddRef();
+        d3d_context_ = g_shared_d3d_context;
+        d3d_context_->AddRef();
+        device_manager_ = g_shared_device_manager;
+        device_manager_->AddRef();
+        device_manager_token_ = g_shared_device_manager_token;
+        g_shared_d3d_refcount++;
+        using_shared_device_ = true;
+
+        blog(LOG_INFO, "[avolocam] Reusing shared D3D11 device (refcount=%d)",
+             g_shared_d3d_refcount);
+        return true;
+    }
+
+    // Create new D3D11 device (first instance)
     D3D_FEATURE_LEVEL feature_levels[] = {
         D3D_FEATURE_LEVEL_11_1,
         D3D_FEATURE_LEVEL_11_0,
@@ -181,6 +252,10 @@ bool MFDecoder::create_d3d11_device()
     hr = MFCreateDXGIDeviceManager(&device_manager_token_, &device_manager_);
     if (FAILED(hr)) {
         blog(LOG_WARNING, "[avolocam] MFCreateDXGIDeviceManager failed: 0x%08X", hr);
+        d3d_context_->Release();
+        d3d_context_ = nullptr;
+        d3d_device_->Release();
+        d3d_device_ = nullptr;
         return false;
     }
 
@@ -189,10 +264,25 @@ bool MFDecoder::create_d3d11_device()
         blog(LOG_WARNING, "[avolocam] ResetDevice failed: 0x%08X", hr);
         device_manager_->Release();
         device_manager_ = nullptr;
+        d3d_context_->Release();
+        d3d_context_ = nullptr;
+        d3d_device_->Release();
+        d3d_device_ = nullptr;
         return false;
     }
 
-    blog(LOG_INFO, "[avolocam] D3D11 device created for hardware decoding");
+    // Store as shared device for other instances
+    g_shared_d3d_device = d3d_device_;
+    g_shared_d3d_device->AddRef();
+    g_shared_d3d_context = d3d_context_;
+    g_shared_d3d_context->AddRef();
+    g_shared_device_manager = device_manager_;
+    g_shared_device_manager->AddRef();
+    g_shared_device_manager_token = device_manager_token_;
+    g_shared_d3d_refcount = 1;
+    using_shared_device_ = true;
+
+    blog(LOG_INFO, "[avolocam] Created shared D3D11 device for hardware decoding (refcount=1)");
     return true;
 }
 
@@ -230,8 +320,13 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
     }
 
     initialized_ = true;
-    blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d",
-         width_, height_, hardware_enabled_);
+    {
+        std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
+        blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d, "
+             "active_hw_sessions=%d",
+             width_, height_, hardware_enabled_,
+             hardware_enabled_ ? g_shared_d3d_refcount : 0);
+    }
     return true;
 }
 
@@ -260,6 +355,13 @@ bool MFDecoder::create_decoder()
         &num_activates);
 
     if (FAILED(hr) || num_activates == 0) {
+        if (hardware_enabled_) {
+            // Hardware decoder not found — fall back to software
+            blog(LOG_WARNING, "[avolocam] No hardware H.264 decoder found (0x%08X), "
+                 "falling back to software decoder", hr);
+            hardware_enabled_ = false;
+            return create_decoder();  // Retry without MFT_ENUM_FLAG_HARDWARE
+        }
         blog(LOG_ERROR, "[avolocam] No H.264 decoder found: 0x%08X", hr);
         return false;
     }
@@ -274,6 +376,13 @@ bool MFDecoder::create_decoder()
     CoTaskMemFree(activates);
 
     if (FAILED(hr)) {
+        if (hardware_enabled_) {
+            // ActivateObject failed — GPU hardware session limit likely reached
+            blog(LOG_WARNING, "[avolocam] Hardware decoder ActivateObject failed (0x%08X). "
+                 "GPU session limit may be reached. Falling back to software decoder.", hr);
+            hardware_enabled_ = false;
+            return create_decoder();  // Retry with software
+        }
         blog(LOG_ERROR, "[avolocam] ActivateObject failed: 0x%08X", hr);
         return false;
     }
@@ -748,9 +857,6 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
 {
     // Async double-buffered staging: read previous frame while GPU decodes current
     // This avoids waiting for GPU decode to complete
-
-    static int async_frame_count = 0;
-    static uint64_t total_async_time = 0;
 
     uint64_t start_total = get_time_ns();
 

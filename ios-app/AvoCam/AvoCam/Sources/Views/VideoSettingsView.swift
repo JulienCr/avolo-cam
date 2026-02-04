@@ -41,10 +41,47 @@ struct VideoSettingsView: View {
 
                 Section(header: Text("STREAMING MODE")) {
                     Picker("Mode", selection: $viewModel.streamingMode) {
-                        Text("NDI (Low Latency)").tag(StreamingMode.ndi)
-                        Text("SRT (Low CPU)").tag(StreamingMode.srt)
+                        Text("NDI").tag(StreamingMode.ndi)
+                        Text("SRT").tag(StreamingMode.srt)
+                        Text("Flash").tag(StreamingMode.flash)
                     }
                     .pickerStyle(.segmented)
+
+                    switch viewModel.streamingMode {
+                    case .ndi:
+                        Text("Low-latency NDI|HX streaming for OBS")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    case .srt:
+                        Text("SRT listener mode — low CPU, reliable transport")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    case .flash:
+                        Text("Ultra-low-latency RTP/UDP push to a single receiver")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if viewModel.streamingMode == .flash {
+                        TextField("Destination Host", text: $viewModel.flashDestinationHost)
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+
+                        Stepper("Port: \(viewModel.flashDestinationPort)",
+                                value: $viewModel.flashDestinationPort,
+                                in: 1024...65535)
+
+                        Picker("Jitter Mode", selection: $viewModel.flashJitterMode) {
+                            Text("Ultra-Low Latency").tag("ultra_low")
+                            Text("Stable").tag("stable")
+                        }
+
+                        Stepper("GOP: \(viewModel.srtGopSize) frames (\(viewModel.gopDurationMs)ms)",
+                                value: $viewModel.srtGopSize,
+                                in: 1...120,
+                                step: 1)
+                    }
 
                     if viewModel.streamingMode == .srt {
                         HStack {
@@ -202,6 +239,11 @@ class VideoSettingsViewModel: ObservableObject {
     @Published var srtGopSize: Int
     @Published var useSeparateLatencies: Bool
 
+    // Flash mode
+    @Published var flashDestinationHost: String
+    @Published var flashDestinationPort: Int
+    @Published var flashJitterMode: String
+
     var gopDurationMs: Int {
         guard customFps > 0 else { return 0 }
         return (srtGopSize * 1000) / customFps
@@ -227,7 +269,7 @@ class VideoSettingsViewModel: ObservableObject {
         // Initialize custom settings
         self.useCustomSettings = loadedSettings.customResolution != nil
         self.customResolution = loadedSettings.customResolution ?? "1920x1080"
-        self.customFps = loadedSettings.customFps ?? 30
+        self.customFps = loadedSettings.customFps ?? 25
         self.customCodec = loadedSettings.customCodec ?? .h264
         self.customBitrate = loadedSettings.customBitrate ?? 10_000_000
 
@@ -240,6 +282,11 @@ class VideoSettingsViewModel: ObservableObject {
         self.srtTlPktDrop = loadedSettings.srtTlPktDrop
         self.srtGopSize = loadedSettings.srtGopSize
         self.useSeparateLatencies = loadedSettings.srtRcvLatency != nil || loadedSettings.srtPeerLatency != nil
+
+        // Initialize Flash mode settings
+        self.flashDestinationHost = loadedSettings.flashDestinationHost ?? ""
+        self.flashDestinationPort = loadedSettings.flashDestinationPort
+        self.flashJitterMode = loadedSettings.flashJitterMode
     }
 
     func selectPreset(_ preset: VideoPreset) {
@@ -268,6 +315,11 @@ class VideoSettingsViewModel: ObservableObject {
         settings.srtPeerLatency = useSeparateLatencies ? srtPeerLatency : nil
         settings.srtTlPktDrop = srtTlPktDrop
         settings.srtGopSize = srtGopSize
+
+        // Save Flash mode settings
+        settings.flashDestinationHost = flashDestinationHost.isEmpty ? nil : flashDestinationHost
+        settings.flashDestinationPort = flashDestinationPort
+        settings.flashJitterMode = flashJitterMode
 
         VideoSettingsManager.save(settings)
         print("✅ Video settings saved (mode: \(streamingMode.rawValue), latency: \(srtLatency)ms, GOP: \(srtGopSize), tlpktdrop: \(srtTlPktDrop))")

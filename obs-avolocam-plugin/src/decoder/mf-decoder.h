@@ -101,6 +101,7 @@ private:
     bool drain_mode_ = false;
     bool gpu_output_enabled_ = false;
     bool use_async_staging_ = false;  // Disabled: causes frame drops, needs fix
+    bool using_shared_device_ = false;  // True if using the global shared D3D11 device
 
     // Timing instrumentation
     mutable DecodeTimingStats timing_stats_;

@@ -53,7 +53,7 @@ actor H264Encoder {
     private var compressionSession: VTCompressionSession?
     private var width: Int32 = 1920
     private var height: Int32 = 1080
-    private var fps: Int32 = 30
+    private var fps: Int32 = 25
     private var bitrate: Int32 = 10_000_000
     private var gopSize: Int32 = 3  // Lower default for low-latency streaming
 

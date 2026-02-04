@@ -607,7 +607,7 @@ struct WebUI {
             document.getElementById('btn-start').addEventListener('click', async () => {
                 await apiCall('/api/v1/stream/start', 'POST', {
                     resolution: '1920x1080',
-                    framerate: 30,
+                    framerate: 25,
                     bitrate: 10000000,
                     codec: 'h264'
                 });

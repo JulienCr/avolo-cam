@@ -74,7 +74,7 @@ class NDIManager {
 
     // MARK: - NDI Control
 
-    func start(width: Int = 1920, height: Int = 1080, fps: Int = 30) throws {
+    func start(width: Int = 1920, height: Int = 1080, fps: Int = 25) throws {
         guard !isActive else {
             print("⚠️ NDI sender already active")
             return

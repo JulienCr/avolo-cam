@@ -271,7 +271,7 @@ class AppCoordinator: ObservableObject {
         do {
             try await captureManager.configure(
                 resolution: "1920x1080",
-                framerate: 30
+                framerate: 25
             )
 
             if let session = captureManager.getSession() {
@@ -540,7 +540,7 @@ class AppCoordinator: ObservableObject {
         let videoSettings = VideoSettingsManager.load()
         return CurrentSettings(
             resolution: "1920x1080",
-            fps: 30,
+            fps: 25,
             bitrate: 10000000,
             codec: "h264",
             wbMode: .auto,

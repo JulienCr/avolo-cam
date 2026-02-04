@@ -517,7 +517,7 @@ actor CaptureManager: NSObject {
         // Reconfigure session if camera position changed or lens switch
         if needsReconfigure {
             let resolution = currentResolution ?? "1920x1080"  // Default to 1080p
-            let framerate = currentFramerate ?? 30  // Default to 30fps
+            let framerate = currentFramerate ?? 25  // Default to 25fps
 
             print("🔄 Reconfiguring capture session with \(resolution) @ \(framerate)fps")
             try await configure(resolution: resolution, framerate: framerate)
@@ -746,7 +746,7 @@ actor CaptureManager: NSObject {
             // Manual ISO, auto shutter - use custom with calculated shutter
             if device.isExposureModeSupported(.custom) {
                 // Calculate shutter speed based on framerate (180° shutter angle)
-                let framerate = currentFramerate ?? 30
+                let framerate = currentFramerate ?? 25
                 let autoShutter = CMTime(value: 1, timescale: CMTimeScale(framerate * 2))
                 device.setExposureModeCustom(
                     duration: autoShutter, iso: targetISO, completionHandler: nil)
