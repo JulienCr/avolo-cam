@@ -79,6 +79,7 @@ struct DecodedFrame {
     void *gpu_texture = nullptr;    // ID3D11Texture2D* when using GPU path
     uint32_t gpu_subresource = 0;   // Subresource index for texture arrays
     bool has_gpu_texture = false;   // True if gpu_texture is valid
+    void *shared_handle = nullptr;  // DXGI shared handle for cross-device sharing (RGBA)
 };
 
 /**

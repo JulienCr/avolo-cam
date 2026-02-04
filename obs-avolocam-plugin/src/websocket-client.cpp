@@ -389,6 +389,10 @@ void WebSocketClient::receive_loop()
         if (!is_connected()) {
             if (auto_reconnect_ && running_.load()) {
                 attempt_reconnect();
+                // If max reconnect attempts reached, stop trying
+                if (state_.load() == WSState::ERRORED) {
+                    break;
+                }
             }
             continue;
         }
@@ -401,6 +405,8 @@ void WebSocketClient::receive_loop()
             continue;
         }
 
+        // Connection is stable — reset reconnect counter
+        reconnect_attempts_ = 0;
         messages_received_++;
 
         switch (opcode) {
@@ -658,9 +664,13 @@ void WebSocketClient::attempt_reconnect()
     }
 
     // Use do_connect_socket() instead of do_connect() to avoid spawning another thread
-    // The existing receive_loop() thread will continue running
-    if (running_.load() && do_connect_socket()) {
-        reconnect_attempts_ = 0;
+    // The existing receive_loop() thread will continue running.
+    // NOTE: reconnect_attempts_ is NOT reset here. It's only reset in
+    // receive_loop() after a successful message read, proving the connection
+    // is actually stable. This prevents infinite reconnect loops where TCP
+    // connects succeed but WS reads immediately fail.
+    if (running_.load()) {
+        do_connect_socket();
     }
 }
 

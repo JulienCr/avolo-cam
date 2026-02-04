@@ -15,6 +15,7 @@
 #include "mdns-discovery.h"
 #include "timestamp-mapper.h"
 #include "texture-output.h"
+#include "gpu-converter.h"
 #include "websocket-client.h"
 
 #include <obs-module.h>
@@ -185,12 +186,32 @@ struct SourceData {
     // GPU output enabled flag
     bool use_gpu_decode_ = false;
 
+    // Flash mode: ultra-low latency path (derived from jitter_mode == ULTRA_LOW)
+    bool flash_mode_ = false;
+
+    // GPUConverter for NV12→RGBA on decoder device (Phase 2 zero-copy)
+#ifdef _WIN32
+    std::unique_ptr<GPUConverter> gpu_converter_;
+#endif
+    bool gpu_converter_initialized_ = false;
+
     // GPU texture for sync video output (video_render callback)
     gs_texture_t *current_gpu_texture_ = nullptr;
     uint32_t gpu_texture_width_ = 0;
     uint32_t gpu_texture_height_ = 0;
     std::mutex gpu_texture_mutex_;
     bool has_new_gpu_frame_ = false;
+
+    // GPU zero-copy rendering state (CUSTOM_DRAW path)
+    std::atomic<void*> latest_shared_handle_{nullptr};
+    void *cached_shared_handle_ = nullptr;
+    gs_texture_t *obs_shared_texture_ = nullptr;
+    bool use_gpu_render_ = false;
+
+    // CPU fallback texture for CUSTOM_DRAW mode
+    gs_texture_t *cpu_fallback_texture_ = nullptr;
+    uint32_t cpu_fallback_width_ = 0;
+    uint32_t cpu_fallback_height_ = 0;
 
     SourceData() = default;
     ~SourceData() {
@@ -216,6 +237,9 @@ struct SourceData {
 
         blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
              camera_ip.c_str(), camera_port);
+
+        // Derive flash mode from jitter setting
+        flash_mode_ = (jitter_mode == JITTER_ULTRA_LOW);
 
         // Initialize components
         receiver = std::make_unique<UdpReceiver>();
@@ -248,6 +272,12 @@ struct SourceData {
         // Note: GPU output will be enabled after decoder initialization in decode_frame_async
         // because supports_gpu_output() requires the D3D device to be created first
         use_gpu_decode_ = prefer_zero_copy;  // Store preference, will verify after init
+
+        // Flash mode: minimal decode queue for lowest latency
+        if (flash_mode_) {
+            max_decode_queue_size_ = 1;
+            blog(LOG_INFO, "[avolocam] Flash mode: decode queue = 1, jitter bypass ON");
+        }
 
         // Initialize WebSocket client
         ws_client = std::make_unique<WebSocketClient>();
@@ -337,6 +367,13 @@ struct SourceData {
         blog(LOG_INFO, "[avolocam] Stopping receiver");
         running.store(false);
 
+        // Disconnect WebSocket FIRST to stop its reconnect loop.
+        // This must happen before joining source threads to avoid
+        // the WS thread spinning uselessly during join waits.
+        if (ws_client) {
+            ws_client->disconnect();
+        }
+
         // Note: port unregistration happens in receive_loop() exit, AFTER the
         // socket is actually closed, to avoid a TOCTOU window where another
         // source sees the port as free while the socket is still bound.
@@ -355,9 +392,25 @@ struct SourceData {
             receive_thread.join();
         }
 
-        // Disconnect WebSocket
-        if (ws_client) {
-            ws_client->disconnect();
+        // Release GPU rendering resources
+#ifdef _WIN32
+        gpu_converter_.reset();
+#endif
+        gpu_converter_initialized_ = false;
+        use_gpu_render_ = false;
+        latest_shared_handle_.store(nullptr);
+        cached_shared_handle_ = nullptr;
+        if (obs_shared_texture_) {
+            obs_enter_graphics();
+            gs_texture_destroy(obs_shared_texture_);
+            obs_leave_graphics();
+            obs_shared_texture_ = nullptr;
+        }
+        if (cpu_fallback_texture_) {
+            obs_enter_graphics();
+            gs_texture_destroy(cpu_fallback_texture_);
+            obs_leave_graphics();
+            cpu_fallback_texture_ = nullptr;
         }
 
         receiver.reset();
@@ -466,9 +519,11 @@ struct SourceData {
             skip_port_switch:
 
             // Receive UDP packet with timeout
+            // Flash mode: 5ms timeout for fast wakeup; Stable: 100ms
+            int recv_timeout = flash_mode_ ? 5 : 100;
             int received = receiver->receive(packet_buffer.data(),
                                              packet_buffer.size(),
-                                             100);  // 100ms timeout
+                                             recv_timeout);
 
             // Check tally state periodically
             uint64_t now = os_gettime_ns();
@@ -481,12 +536,25 @@ struct SourceData {
 
             frames_received.fetch_add(1, std::memory_order_relaxed);
 
-            // Add to jitter buffer
-            jitter_buffer->add_packet(packet_buffer.data(), received,
-                                      os_gettime_ns());
+            if (flash_mode_) {
+                // Flash mode: bypass jitter buffer, feed directly to depacketizer
+                process_packet_direct(packet_buffer.data(), received);
 
-            // Process available packets from jitter buffer
-            process_jitter_buffer();
+                // Drain all remaining packets in the socket (non-blocking)
+                while (running.load()) {
+                    int extra = receiver->receive(packet_buffer.data(),
+                                                  packet_buffer.size(),
+                                                  0);  // non-blocking
+                    if (extra <= 0) break;
+                    frames_received.fetch_add(1, std::memory_order_relaxed);
+                    process_packet_direct(packet_buffer.data(), extra);
+                }
+            } else {
+                // Stable mode: use jitter buffer for reordering
+                jitter_buffer->add_packet(packet_buffer.data(), received,
+                                          os_gettime_ns());
+                process_jitter_buffer();
+            }
         }
 
         // Unregister port from global registry when receive loop exits
@@ -496,6 +564,47 @@ struct SourceData {
         }
 
         receiver->close();
+    }
+
+    /**
+     * Process a raw UDP packet directly (bypassing jitter buffer)
+     * Used in flash mode for minimum latency on stable LAN
+     */
+    void process_packet_direct(const uint8_t *data, int size) {
+        if (size < 12) return;  // Minimum RTP header size
+
+        packet_count++;
+
+        auto nal_units = depacketizer->process(data, size);
+        total_nals += nal_units.size();
+
+        if (debug_mode && packet_count % 500 == 0) {
+            blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d (flash mode)", packet_count, total_nals);
+        }
+
+        for (auto& nal : nal_units) {
+            uint8_t nal_type = static_cast<uint8_t>(nal.type);
+
+            if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
+                blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
+                     nal_type, nal.data.size(), nal.marker);
+            }
+
+            if (!sync_state->can_decode(nal.type, nal.is_idr)) {
+                frames_dropped.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+
+            auto access_unit = assembler->add_nal(
+                std::move(nal.data),
+                nal.rtp_timestamp,
+                nal.marker
+            );
+
+            if (access_unit) {
+                push_to_decode_queue(std::move(*access_unit));
+            }
+        }
     }
 
     void process_jitter_buffer() {
@@ -554,13 +663,23 @@ struct SourceData {
     void push_to_decode_queue(AccessUnit&& au) {
         std::lock_guard<std::mutex> lock(decode_queue_mutex_);
 
-        // Drop oldest if queue is full (prioritize freshest data)
-        if (decode_queue_.size() >= max_decode_queue_size_) {
-            decode_queue_.pop_front();
-            decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
+        if (flash_mode_ && max_decode_queue_size_ == 1) {
+            // Flash mode with queue=1: replace the existing element in-place
+            // to avoid the overhead of pop_front + push_back
+            if (!decode_queue_.empty()) {
+                decode_queue_.front() = std::move(au);
+                decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                decode_queue_.push_back(std::move(au));
+            }
+        } else {
+            // Standard mode: drop oldest if queue is full
+            if (decode_queue_.size() >= max_decode_queue_size_) {
+                decode_queue_.pop_front();
+                decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
+            }
+            decode_queue_.push_back(std::move(au));
         }
-
-        decode_queue_.push_back(std::move(au));
         decode_queue_cv_.notify_one();
     }
 
@@ -579,8 +698,12 @@ struct SourceData {
             {
                 std::unique_lock<std::mutex> lock(decode_queue_mutex_);
                 if (decode_queue_.empty()) {
-                    // Wait with timeout to check running flag periodically
-                    decode_queue_cv_.wait_for(lock, std::chrono::milliseconds(50));
+                    // Flash mode: 1ms wait with predicate for fastest wakeup
+                    // Stable mode: 50ms wait (less CPU usage)
+                    auto wait_ms = flash_mode_ ? 1 : 50;
+                    decode_queue_cv_.wait_for(lock,
+                        std::chrono::milliseconds(wait_ms),
+                        [this]() { return !decode_queue_.empty() || !running.load(); });
                 }
 
                 if (!decode_queue_.empty()) {
@@ -633,14 +756,29 @@ struct SourceData {
                 extract_parameter_sets(au.data, sps, pps);
                 if (!sps.empty() && !pps.empty()) {
                     if (decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
-                        // GPU output DISABLED for now - using CPU path
-                        // TODO: Re-enable GPU path after fixing performance issues
-                        use_gpu_decode_ = false;
+                        // Enable GPU output if decoder supports it AND
+                        // exposes its D3D device (needed for GPUConverter NV12→RGBA).
+                        // MF decoder has GPU textures but doesn't expose device → CPU path.
+                        // FFmpeg D3D11VA exposes device → full GPU zero-copy path.
+                        if (prefer_zero_copy && decoder->supports_gpu_output()
+                            && decoder->get_d3d_device()) {
+                            decoder->set_gpu_output(true);
+                            use_gpu_decode_ = true;
+                            blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
+                        } else {
+                            use_gpu_decode_ = false;
+                        }
 
-                        // Set decode queue size based on decoder type:
+                        // Set decode queue size based on mode and decoder type:
+                        // Flash mode: always 1 (minimum latency)
                         // Hardware decoders are fast → small queue (4)
                         // Software fallback is slower → larger queue (6) to absorb stalls
-                        if (decoder->is_hardware()) {
+                        if (flash_mode_) {
+                            max_decode_queue_size_ = 1;
+                            blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
+                                 "flash mode: decode queue size = 1",
+                                 decoder->is_hardware() ? "hardware" : "software");
+                        } else if (decoder->is_hardware()) {
                             max_decode_queue_size_ = 4;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
                                  "decode queue size = 4");
@@ -667,35 +805,63 @@ struct SourceData {
 
         frames_decoded.fetch_add(1, std::memory_order_relaxed);
 
-        // GPU path - TEMPORARILY DISABLED for debugging
-        // TODO: Re-enable after fixing performance issues
-        if (false && frame.has_gpu_texture && use_gpu_decode_ && texture_output) {
-            auto result = texture_output->prepare_gpu_frame(frame);
-            if (result.success) {
-                output_count++;
-                if (output_count == 1) {
-                    blog(LOG_INFO, "[avolocam] First GPU frame prepared: %ux%u", frame.width, frame.height);
+        // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
+#ifdef _WIN32
+        if (frame.has_gpu_texture && frame.shared_handle && use_gpu_decode_) {
+            // Initialize GPUConverter once with decoder's D3D11 device
+            if (!gpu_converter_initialized_ && decoder) {
+                void *dev = decoder->get_d3d_device();
+                void *ctx = decoder->get_d3d_context();
+                if (dev && ctx) {
+                    gpu_converter_ = std::make_unique<GPUConverter>();
+                    if (gpu_converter_->initialize(
+                            static_cast<ID3D11Device*>(dev),
+                            static_cast<ID3D11DeviceContext*>(ctx))) {
+                        gpu_converter_initialized_ = true;
+                        blog(LOG_INFO, "[avolocam] GPUConverter initialized for CUSTOM_DRAW path");
+                    } else {
+                        gpu_converter_.reset();
+                        blog(LOG_WARNING, "[avolocam] GPUConverter init failed, using CPU path");
+                    }
                 }
+            }
 
-                // Store the prepared texture for video_render
-                {
-                    std::lock_guard<std::mutex> lock(gpu_texture_mutex_);
-                    // The texture_output holds the current frame, we just flag it
+            // Convert NV12 shared texture → RGBA shared texture via GPUConverter
+            if (gpu_converter_initialized_ && gpu_converter_) {
+                GPUDecodedFrame gpu_input;
+                gpu_input.texture = static_cast<ID3D11Texture2D*>(frame.gpu_texture);
+                gpu_input.subresource = 0;
+                gpu_input.width = frame.width;
+                gpu_input.height = frame.height;
+                gpu_input.pts = 0;
+
+                ConvertedFrame converted;
+                if (gpu_converter_->convert(gpu_input, converted)) {
+                    // Flush decoder device to ensure GPU commands are submitted
+                    auto *ctx = static_cast<ID3D11DeviceContext*>(decoder->get_d3d_context());
+                    if (ctx) ctx->Flush();
+
+                    // Atomic store: OBS render thread picks this up
+                    latest_shared_handle_.store(converted.shared_handle);
                     gpu_texture_width_ = frame.width;
                     gpu_texture_height_ = frame.height;
-                    has_new_gpu_frame_ = true;
-                }
+                    use_gpu_render_ = true;
 
-#ifdef _WIN32
-                // Release the MF sample reference
-                if (frame.platform_handle) {
-                    static_cast<IMFSample*>(frame.platform_handle)->Release();
+                    output_count++;
+                    if (output_count == 1) {
+                        blog(LOG_INFO, "[avolocam] First GPU frame (CUSTOM_DRAW): %ux%u, handle=%p",
+                             frame.width, frame.height, converted.shared_handle);
+                    }
+
+                    // Release the converted frame back to pool (handle stays valid)
+                    gpu_converter_->release_frame(converted);
+                    return;
                 }
-#endif
-                return;
+                blog(LOG_WARNING, "[avolocam] GPU conversion failed, falling back to CPU");
             }
-            blog(LOG_WARNING, "[avolocam] GPU frame prepare failed, falling back to CPU");
+            // Fall through to CPU path
         }
+#endif
 
         // CPU path - existing code
         if (!frame.y_plane) {
@@ -1132,76 +1298,82 @@ static void avolocam_get_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, PROP_DECODER_TYPE, DECODER_TYPE_AUTO);
 }
 
-// Video render callback for GPU texture rendering and latency overlay
-static void avolocam_video_render(void *data, gs_effect_t *effect)
+// video_tick: open/update shared texture for CUSTOM_DRAW (called on render thread)
+static void avolocam_video_tick(void *data, float seconds)
 {
+    UNUSED_PARAMETER(seconds);
     auto *src = static_cast<SourceData *>(data);
 
-    // Try GPU path first - render GPU texture if available
-    if (src->use_gpu_decode_ && src->texture_output) {
-        std::lock_guard<std::mutex> lock(src->gpu_texture_mutex_);
-        if (src->has_new_gpu_frame_) {
-            gs_texture_t *tex = src->texture_output->get_current_texture();
-            if (tex) {
-                // Get the default effect if none provided
-                gs_effect_t *draw_effect = effect;
-                if (!draw_effect) {
-                    draw_effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-                }
+    if (src->use_gpu_render_) {
+        // GPU PATH: open the shared RGBA texture on OBS device (cached)
+        void *h = src->latest_shared_handle_.load(std::memory_order_acquire);
+        if (h && h != src->cached_shared_handle_) {
+            obs_enter_graphics();
+            if (src->obs_shared_texture_) {
+                gs_texture_destroy(src->obs_shared_texture_);
+                src->obs_shared_texture_ = nullptr;
+            }
+            src->obs_shared_texture_ = gs_texture_open_shared(
+                static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h)));
+            obs_leave_graphics();
 
-                if (draw_effect) {
-                    gs_technique_t *tech = gs_effect_get_technique(draw_effect, "Draw");
-                    if (tech) {
-                        gs_technique_begin(tech);
-                        gs_technique_begin_pass(tech, 0);
-
-                        // Set the texture parameter
-                        gs_eparam_t *param = gs_effect_get_param_by_name(draw_effect, "image");
-                        if (param) {
-                            gs_effect_set_texture(param, tex);
-                        }
-
-                        // Draw the texture
-                        gs_draw_sprite(tex, 0, src->gpu_texture_width_, src->gpu_texture_height_);
-
-                        gs_technique_end_pass(tech);
-                        gs_technique_end(tech);
-                    }
-                }
-                // GPU frame rendered - return here as async video is disabled for GPU path
-                // Note: src->has_new_gpu_frame_ stays true until next frame prepared
+            if (src->obs_shared_texture_) {
+                src->cached_shared_handle_ = h;
+            } else {
+                blog(LOG_WARNING, "[avolocam] gs_texture_open_shared failed for handle %p", h);
             }
         }
+    } else {
+        // CPU FALLBACK: upload NV12 frame data into a BGRX texture
+        SourceData::LatestFrame *frame = src->latest_frame_.load(std::memory_order_acquire);
+        if (frame && frame->valid) {
+            // Use obs_source_output_video for CPU path (already done in decode thread)
+            // Nothing extra needed here for CPU; output_latest_frame() already calls
+            // obs_source_output_video which works with ASYNC_VIDEO flag.
+            // For CUSTOM_DRAW CPU fallback, we'd need to upload to a texture.
+            // For now, this path is handled by the async video output in decode_frame_async.
+        }
     }
+}
 
-    // Latency overlay (if enabled)
-    if (!src->show_latency) return;
+// video_render: draw the GPU or CPU texture (called on render thread)
+static void avolocam_video_render(void *data, gs_effect_t *effect)
+{
+    UNUSED_PARAMETER(effect);
+    auto *src = static_cast<SourceData *>(data);
 
-    double latency = src->get_display_latency();
-    char latency_text[64];
-    snprintf(latency_text, sizeof(latency_text), "%.1f ms", latency);
-
-    // Note: Full implementation would use obs_source_draw_text or similar
-    // For now, this is a placeholder that could be expanded with proper text rendering
-    (void)latency_text;  // Suppress unused warning for now
+    if (src->use_gpu_render_ && src->obs_shared_texture_) {
+        // GPU zero-copy path: draw shared RGBA texture
+        // Use OBS_EFFECT_OPAQUE (no alpha) + gs_effect_loop pattern (like game-capture)
+        effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
+        while (gs_effect_loop(effect, "Draw")) {
+            obs_source_draw(src->obs_shared_texture_, 0, 0, 0, 0, false);
+        }
+    }
+    // CPU fallback: do nothing here — OBS's async video pipeline
+    // (obs_source_output_video) renders the frame independently.
+    // NOTE: obs_source_default_render MUST NOT be called from within
+    // video_render on the same source — it causes infinite recursion.
 }
 
 static uint32_t avolocam_get_width(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    if (src->decoder) {
+    if (src->gpu_texture_width_ > 0)
+        return src->gpu_texture_width_;
+    if (src->decoder)
         return src->decoder->get_width();
-    }
-    return 1920;  // Default
+    return 1920;
 }
 
 static uint32_t avolocam_get_height(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    if (src->decoder) {
+    if (src->gpu_texture_height_ > 0)
+        return src->gpu_texture_height_;
+    if (src->decoder)
         return src->decoder->get_height();
-    }
-    return 1080;  // Default
+    return 1080;
 }
 
 } // namespace avolocam
@@ -1232,8 +1404,9 @@ void avolocam_source_register(void)
 
     info.id = "avolocam_source";
     info.type = OBS_SOURCE_TYPE_INPUT;
-    // Pure ASYNC_VIDEO mode for stability (GPU path disabled for now)
-    info.output_flags = OBS_SOURCE_ASYNC_VIDEO;
+    // CUSTOM_DRAW + ASYNC_VIDEO: GPU zero-copy when available, CPU async fallback
+    info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_VIDEO
+                      | OBS_SOURCE_CUSTOM_DRAW;
     info.get_name = avolocam::avolocam_get_name;
     info.create = avolocam::avolocam_create;
     info.destroy = avolocam::avolocam_destroy;
@@ -1244,7 +1417,10 @@ void avolocam_source_register(void)
     info.hide = avolocam::avolocam_hide;
     info.get_properties = avolocam::avolocam_get_properties;
     info.get_defaults = avolocam::avolocam_get_defaults;
-    // Note: video_render and get_width/get_height not needed for pure ASYNC_VIDEO
+    info.video_tick = avolocam::avolocam_video_tick;
+    info.video_render = avolocam::avolocam_video_render;
+    info.get_width = avolocam::avolocam_get_width;
+    info.get_height = avolocam::avolocam_get_height;
 
     obs_register_source(&info);
     blog(LOG_INFO, "[avolocam] Source type registered");
