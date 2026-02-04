@@ -197,8 +197,8 @@ struct SourceData {
 
     // GPU texture for sync video output (video_render callback)
     gs_texture_t *current_gpu_texture_ = nullptr;
-    uint32_t gpu_texture_width_ = 0;
-    uint32_t gpu_texture_height_ = 0;
+    std::atomic<uint32_t> gpu_texture_width_{0};
+    std::atomic<uint32_t> gpu_texture_height_{0};
     std::mutex gpu_texture_mutex_;
     bool has_new_gpu_frame_ = false;
 
@@ -841,10 +841,11 @@ struct SourceData {
                     auto *ctx = static_cast<ID3D11DeviceContext*>(decoder->get_d3d_context());
                     if (ctx) ctx->Flush();
 
-                    // Atomic store: OBS render thread picks this up
-                    latest_shared_handle_.store(converted.shared_handle);
-                    gpu_texture_width_ = frame.width;
-                    gpu_texture_height_ = frame.height;
+                    // Store dimensions first, then handle with release so
+                    // the render thread's acquire load sees consistent values.
+                    gpu_texture_width_.store(frame.width, std::memory_order_relaxed);
+                    gpu_texture_height_.store(frame.height, std::memory_order_relaxed);
+                    latest_shared_handle_.store(converted.shared_handle, std::memory_order_release);
                     use_gpu_render_ = true;
 
                     output_count++;
@@ -1313,6 +1314,9 @@ static void avolocam_video_tick(void *data, float seconds)
                 gs_texture_destroy(src->obs_shared_texture_);
                 src->obs_shared_texture_ = nullptr;
             }
+            // Legacy DXGI shared handles (D3D11_RESOURCE_MISC_SHARED) are
+            // kernel object indices that fit in 32 bits even on x64.
+            // gs_texture_open_shared() takes uint32_t matching this convention.
             src->obs_shared_texture_ = gs_texture_open_shared(
                 static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h)));
             obs_leave_graphics();
@@ -1359,8 +1363,9 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
 static uint32_t avolocam_get_width(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    if (src->gpu_texture_width_ > 0)
-        return src->gpu_texture_width_;
+    uint32_t w = src->gpu_texture_width_.load(std::memory_order_relaxed);
+    if (w > 0)
+        return w;
     if (src->decoder)
         return src->decoder->get_width();
     return 1920;
@@ -1369,8 +1374,9 @@ static uint32_t avolocam_get_width(void *data)
 static uint32_t avolocam_get_height(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    if (src->gpu_texture_height_ > 0)
-        return src->gpu_texture_height_;
+    uint32_t h = src->gpu_texture_height_.load(std::memory_order_relaxed);
+    if (h > 0)
+        return h;
     if (src->decoder)
         return src->decoder->get_height();
     return 1080;
