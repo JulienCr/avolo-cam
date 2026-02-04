@@ -63,9 +63,9 @@ struct SRTConfiguration {
             passphrase: nil,
             width: 1920,
             height: 1080,
-            fps: 30,
+            fps: 25,
             bitrate: 10_000_000,
-            gopSize: 30  // 1 second GOP for stable streaming
+            gopSize: 25  // 1 second GOP for stable streaming
         )
     }
 

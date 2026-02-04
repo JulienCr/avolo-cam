@@ -57,7 +57,7 @@ export interface WhiteBalanceResult {
 // Default Values
 export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   resolution: '1920x1080',
-  framerate: 30,
+  framerate: 25,
   bitrate: 10000000, // 10 Mbps
   codec: 'h264',
   streaming_mode: 'flash',
@@ -67,7 +67,7 @@ export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
   srt_rcv_latency: undefined,  // Use srt_latency
   srt_peer_latency: undefined, // Use srt_latency
   srt_tlpktdrop: true,
-  srt_gop_size: 30,  // 1 second GOP for stable OBS playback
+  srt_gop_size: 25,  // 1 second GOP for stable OBS playback
   // Flash defaults
   flash_destination_port: 5000,
   flash_jitter_mode: 'stable',

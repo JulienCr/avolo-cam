@@ -59,7 +59,7 @@ struct VideoSettings: Codable {
     var srtRcvLatency: Int? = nil  // Receive latency in ms (nil = use srtLatency)
     var srtPeerLatency: Int? = nil // Peer latency in ms (nil = use srtLatency)
     var srtTlPktDrop: Bool = true  // Drop too-late packets (essential for live)
-    var srtGopSize: Int = 30       // GOP in frames - default 1 second (= fps) for stable streaming
+    var srtGopSize: Int = 25       // GOP in frames - default 1 second (= fps) for stable streaming
 
     // Flash mode settings
     var flashDestinationHost: String? = nil  // Target host for UDP/RTP packets
@@ -135,7 +135,7 @@ extension VideoPreset {
             id: "low_power_1080p",
             name: "Low Power 1080p",
             resolution: "1920x1080",
-            fps: 30,
+            fps: 25,
             codec: .h264,
             bitrate: 5_000_000  // 4-6 Mbps average
         ),
@@ -151,7 +151,7 @@ extension VideoPreset {
             id: "high_quality_1080p",
             name: "High Quality 1080p",
             resolution: "1920x1080",
-            fps: 30,
+            fps: 25,
             codec: .hevc,
             bitrate: 3_500_000  // 3-4 Mbps average
         ),
@@ -161,7 +161,7 @@ extension VideoPreset {
             id: "2k_cinematic",
             name: "2K Cinematic",
             resolution: "2560x1440",
-            fps: 30,
+            fps: 25,
             codec: .hevc,
             bitrate: 7_000_000  // 6-8 Mbps average
         ),
@@ -179,7 +179,7 @@ extension VideoPreset {
             id: "4k_standard",
             name: "4K Standard",
             resolution: "3840x2160",
-            fps: 30,
+            fps: 25,
             codec: .h264,
             bitrate: 26_000_000  // 20-32 Mbps average
         ),
@@ -187,7 +187,7 @@ extension VideoPreset {
             id: "4k_efficient",
             name: "4K Efficient",
             resolution: "3840x2160",
-            fps: 30,
+            fps: 25,
             codec: .hevc,
             bitrate: 16_000_000  // 12-20 Mbps average
         ),
@@ -198,6 +198,16 @@ extension VideoPreset {
             fps: 60,
             codec: .hevc,
             bitrate: 30_000_000  // 25-35 Mbps average
+        ),
+
+        // Streaming Presets
+        VideoPreset(
+            id: "twitch_4k",
+            name: "Twitch 4K",
+            resolution: "3840x2160",
+            fps: 25,
+            codec: .h264,
+            bitrate: 25_000_000  // 25 Mbps
         )
     ]
 

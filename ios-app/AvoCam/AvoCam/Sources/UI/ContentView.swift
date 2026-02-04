@@ -72,6 +72,10 @@ struct ContentView: View {
                 onOpenTelemetry: {
                     screenDimManager.wakeScreen()
                     showTelemetry = true
+                },
+                onOpenVideoSettings: {
+                    screenDimManager.wakeScreen()
+                    showingVideoSettings = true
                 }
             )
             .environmentObject(coordinator)
@@ -114,17 +118,6 @@ struct ContentView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showSettings)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showTelemetry)
         .statusBar(hidden: true)
-        .navigationTitle("AvoCam")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
-                    showingVideoSettings = true
-                }) {
-                    Image(systemName: "gearshape.fill")
-                }
-            }
-        }
         .sheet(isPresented: $showingVideoSettings) {
             VideoSettingsView()
         }

@@ -68,7 +68,7 @@
       settings.srt_latency = 120;
     }
     if (settings.srt_gop_size === undefined) {
-      settings.srt_gop_size = settings.framerate || 30; // Default to 1 second
+      settings.srt_gop_size = settings.framerate || 25; // Default to 1 second
     }
     if (settings.srt_tlpktdrop === undefined) {
       settings.srt_tlpktdrop = true;

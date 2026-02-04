@@ -48,7 +48,7 @@ actor FlashManager {
                 destinationPort: 5000,
                 width: 1920,
                 height: 1080,
-                fps: 30,
+                fps: 25,
                 bitrate: 10_000_000,
                 gopSize: 3
             )

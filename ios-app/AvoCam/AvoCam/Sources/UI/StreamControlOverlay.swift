@@ -11,6 +11,7 @@ struct StreamControlOverlay: View {
     @EnvironmentObject var coordinator: AppCoordinator
     let onOpenSettings: () -> Void
     let onOpenTelemetry: () -> Void
+    let onOpenVideoSettings: () -> Void
 
     var body: some View {
         VStack {
@@ -34,13 +35,13 @@ struct StreamControlOverlay: View {
                 // Streaming mode indicator
                 if let settings = coordinator.currentSettings {
                     HStack(spacing: 4) {
-                        Text(settings.streamingMode == .ndi ? "NDI" : "SRT:\(settings.srtPort ?? 9000)")
+                        Text(modeBadgeText(settings))
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundColor(.white)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(settings.streamingMode == .ndi ? Color.blue : Color.green)
+                    .background(modeBadgeColor(settings))
                     .cornerRadius(8)
                 }
 
@@ -162,19 +163,24 @@ struct StreamControlOverlay: View {
                     .disabled(!coordinator.isStreaming)
                 }
 
-                // Current settings display (compact)
+                // Current settings display (tappable to open video settings)
                 if let settings = coordinator.currentSettings {
-                    HStack(spacing: 12) {
-                        Text("\(settings.resolution) @ \(settings.fps)fps")
-                        Text("•")
-                        Text(formatBitrate(settings.bitrate))
+                    Button(action: onOpenVideoSettings) {
+                        HStack(spacing: 12) {
+                            Text("\(settings.resolution) @ \(settings.fps)fps")
+                            Text("•")
+                            Text(formatBitrate(settings.bitrate))
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 10))
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white.opacity(coordinator.isStreaming ? 0.4 : 0.8))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.6))
+                        .cornerRadius(16)
                     }
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.8))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(16)
+                    .disabled(coordinator.isStreaming)
                 }
             }
             .padding()
@@ -223,5 +229,27 @@ struct StreamControlOverlay: View {
     private func formatBitrate(_ bitrate: Int) -> String {
         let mbps = Double(bitrate) / 1_000_000
         return String(format: "%.1f Mbps", mbps)
+    }
+
+    private func modeBadgeText(_ settings: CurrentSettings) -> String {
+        switch settings.streamingMode {
+        case .ndi:
+            return "NDI"
+        case .srt:
+            return "SRT:\(settings.srtPort ?? 9000)"
+        case .flash:
+            return "FLASH:\(settings.flashDestinationPort ?? 5000)"
+        }
+    }
+
+    private func modeBadgeColor(_ settings: CurrentSettings) -> Color {
+        switch settings.streamingMode {
+        case .ndi:
+            return .blue
+        case .srt:
+            return .green
+        case .flash:
+            return .orange
+        }
     }
 }
