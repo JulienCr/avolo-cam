@@ -612,13 +612,59 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
         blog(LOG_INFO, "[avolocam] FFmpeg: Resolution update %ux%u", width_, height_);
     }
 
-    // NOTE: GPU texture output path is disabled because the source's GPU rendering
-    // is also disabled. D3D11VA is still used for fast hardware decoding, but we
-    // transfer to CPU for output compatibility with the async video source.
-    //
-    // TODO: Re-enable GPU texture path when source GPU rendering is fixed.
-    // The shared texture pool code is kept but not used for now.
-    // ====== EXPLICIT FALLBACK: CPU ======
+    // GPU texture output path: copy decoded frame to shared texture
+    if (gpu_output_enabled_ && hardware_mode_ && d3d_device_ &&
+        frame_->format == AV_PIX_FMT_D3D11) {
+
+        // Create shared texture pool if needed
+        if (!create_shared_texture_pool(width_, height_)) {
+            blog(LOG_WARNING, "[avolocam] FFmpeg: Failed to create shared pool, falling back to CPU");
+            goto cpu_fallback;
+        }
+
+        // Get next shared texture from pool
+        SharedTexture *shared = get_available_shared_texture();
+        if (!shared || !shared->texture) {
+            blog(LOG_WARNING, "[avolocam] FFmpeg: No shared texture available, falling back to CPU");
+            goto cpu_fallback;
+        }
+
+        // GPU→GPU copy (same device, <0.5ms)
+        if (!copy_to_shared_texture(frame_, shared)) {
+            blog(LOG_WARNING, "[avolocam] FFmpeg: Copy to shared texture failed, falling back to CPU");
+            goto cpu_fallback;
+        }
+
+        // Flush to submit GPU commands (non-blocking)
+        d3d_context_->Flush();
+
+        // Update current shared handle
+        current_shared_handle_ = shared->shared_handle;
+
+        // Fill output with GPU info
+        out.width = width_;
+        out.height = height_;
+        out.has_gpu_texture = true;
+        out.gpu_texture = shared->texture;
+        // NV12 shared handle stored for completeness; the GPU zero-copy path
+        // uses gpu_texture directly (same D3D device) and GPUConverter produces
+        // its own RGBA shared handle for cross-device sharing with OBS.
+        out.shared_handle = shared->shared_handle;
+        out.y_plane = nullptr;
+        out.uv_plane = nullptr;
+
+        timing_stats_.lock_buffer_ns = 0;
+        timing_stats_.memcpy_ns = 0;
+        timing_stats_.total_decode_ns = get_time_ns() - start_time;
+        timing_stats_.accumulate();
+        timing_stats_.reset_per_frame();
+
+        av_frame_unref(frame_);
+        return true;
+    }
+
+cpu_fallback:
+    // CPU fallback: av_hwframe_transfer_data (slow but reliable)
     timing_stats_.lock_buffer_ns = 0;
     uint64_t fallback_start = get_time_ns();
 
