@@ -646,6 +646,9 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
         out.height = height_;
         out.has_gpu_texture = true;
         out.gpu_texture = shared->texture;
+        // NV12 shared handle stored for completeness; the GPU zero-copy path
+        // uses gpu_texture directly (same D3D device) and GPUConverter produces
+        // its own RGBA shared handle for cross-device sharing with OBS.
         out.shared_handle = shared->shared_handle;
         out.y_plane = nullptr;
         out.uv_plane = nullptr;

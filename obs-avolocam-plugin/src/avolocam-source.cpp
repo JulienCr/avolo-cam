@@ -758,8 +758,9 @@ struct SourceData {
                     if (decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
                         // Enable GPU output if decoder supports it AND
                         // exposes its D3D device (needed for GPUConverter NV12→RGBA).
-                        // MF decoder has GPU textures but doesn't expose device → CPU path.
-                        // FFmpeg D3D11VA exposes device → full GPU zero-copy path.
+                        // MF decoder exposes a D3D device but currently uses the CPU
+                        // conversion path due to GPUConverter interop constraints.
+                        // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
                         if (prefer_zero_copy && decoder->supports_gpu_output()
                             && decoder->get_d3d_device()) {
                             decoder->set_gpu_output(true);
@@ -807,7 +808,7 @@ struct SourceData {
 
         // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
 #ifdef _WIN32
-        if (frame.has_gpu_texture && frame.shared_handle && use_gpu_decode_) {
+        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_) {
             // Initialize GPUConverter once with decoder's D3D11 device
             if (!gpu_converter_initialized_ && decoder) {
                 void *dev = decoder->get_d3d_device();
@@ -1331,11 +1332,8 @@ static void avolocam_video_tick(void *data, float seconds)
         // CPU FALLBACK: upload NV12 frame data into a BGRX texture
         SourceData::LatestFrame *frame = src->latest_frame_.load(std::memory_order_acquire);
         if (frame && frame->valid) {
-            // Use obs_source_output_video for CPU path (already done in decode thread)
-            // Nothing extra needed here for CPU; output_latest_frame() already calls
-            // obs_source_output_video which works with ASYNC_VIDEO flag.
-            // For CUSTOM_DRAW CPU fallback, we'd need to upload to a texture.
-            // For now, this path is handled by the async video output in decode_frame_async.
+            // CPU fallback uses ASYNC_VIDEO mode via obs_source_output_video
+            // (called in decode_frame_async), so no texture upload is needed here.
         }
     }
 }
