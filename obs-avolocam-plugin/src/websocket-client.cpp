@@ -18,6 +18,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "winsock-init.h"
 #pragma comment(lib, "ws2_32.lib")
 #define SOCKET_ERROR_CODE WSAGetLastError()
 #define INVALID_SOCK INVALID_SOCKET
@@ -114,19 +115,13 @@ static bool json_get_uint64(const std::string &json, const std::string &key, uin
 WebSocketClient::WebSocketClient()
 {
 #ifdef _WIN32
-    // Initialize Winsock
-    WSADATA wsa_data;
-    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    ensure_winsock_initialized();
 #endif
 }
 
 WebSocketClient::~WebSocketClient()
 {
     disconnect();
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
 }
 
 bool WebSocketClient::connect(const std::string &url, const std::string &auth_token)

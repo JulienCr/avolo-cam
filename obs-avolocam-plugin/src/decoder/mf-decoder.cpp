@@ -1195,10 +1195,13 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
             out.has_gpu_texture = true;
             out.owns_memory = false;
 
+            // GetResource() added a ref on the texture. Release it now —
+            // the texture stays alive through the IMFSample (result_sample)
+            // which holds its own reference via the IMFMediaBuffer chain.
+            texture->Release();
+
             // Keep sample reference for texture lifetime
             out.platform_handle = result_sample;
-
-            // Don't release texture or sample here - caller is responsible
 
             dxgi_buffer->Release();
             media_buffer->Release();

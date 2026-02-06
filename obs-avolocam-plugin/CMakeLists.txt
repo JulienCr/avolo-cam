@@ -159,6 +159,8 @@ if(WIN32)
         src/texture-output-windows.cpp
         src/gpu-converter.cpp
         src/gpu-converter.h
+        src/winsock-init.cpp
+        src/winsock-init.h
     )
 endif()
 

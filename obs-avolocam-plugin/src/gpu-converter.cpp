@@ -82,16 +82,28 @@ bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context
 
     if (!create_shader()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create shader");
+        device_ = nullptr;
+        context_ = nullptr;
         return false;
     }
 
     if (!create_constant_buffer()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create constant buffer");
+        shader_->Release();
+        shader_ = nullptr;
+        device_ = nullptr;
+        context_ = nullptr;
         return false;
     }
 
     if (!create_sampler()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create sampler");
+        constant_buffer_->Release();
+        constant_buffer_ = nullptr;
+        shader_->Release();
+        shader_ = nullptr;
+        device_ = nullptr;
+        context_ = nullptr;
         return false;
     }
 
@@ -315,9 +327,15 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
     // Pool full - find least recently used (first not in use, any size)
     for (size_t i = 0; i < TEXTURE_POOL_SIZE; i++) {
         if (!texture_pool_[i].in_use) {
-            // Resize this slot
+            // Release old resources and null out immediately to prevent
+            // double-free if CreateTexture2D fails below
             if (texture_pool_[i].uav) texture_pool_[i].uav->Release();
             if (texture_pool_[i].texture) texture_pool_[i].texture->Release();
+            texture_pool_[i].uav = nullptr;
+            texture_pool_[i].texture = nullptr;
+            texture_pool_[i].shared_handle = nullptr;
+            texture_pool_[i].width = 0;
+            texture_pool_[i].height = 0;
 
             // Create new texture at new size
             D3D11_TEXTURE2D_DESC desc = {};
@@ -333,7 +351,10 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
 
             ID3D11Texture2D *texture = nullptr;
             HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture);
-            if (FAILED(hr)) return nullptr;
+            if (FAILED(hr)) {
+                blog(LOG_ERROR, "[avolocam] CreateTexture2D (pool resize) failed: 0x%08X", hr);
+                return nullptr;
+            }
 
             D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc = {};
             uav_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;

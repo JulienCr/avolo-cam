@@ -191,6 +191,7 @@ private:
     gs_texture_t *win_texture_ = nullptr;
     uint32_t win_texture_width_ = 0;
     uint32_t win_texture_height_ = 0;
+    bool gpu_converter_acquired_ = false;  // Guards shutdown_gpu_converter() calls
 
     // Cache for opened shared textures (avoid OpenSharedResource every frame)
     struct SharedTextureCache {
