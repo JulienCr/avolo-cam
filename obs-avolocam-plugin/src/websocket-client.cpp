@@ -204,11 +204,18 @@ bool WebSocketClient::do_connect_socket()
     freeaddrinfo(result);
 
     // Set socket timeout
+#ifdef _WIN32
+    // Windows: SO_RCVTIMEO/SO_SNDTIMEO take DWORD in milliseconds
+    DWORD timeout_ms = 5000;
+    setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+    setsockopt(socket_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+#else
     struct timeval tv;
     tv.tv_sec = 5;
     tv.tv_usec = 0;
     setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
     setsockopt(socket_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
+#endif
 
     // Perform WebSocket handshake
     if (!perform_handshake()) {
@@ -224,20 +231,25 @@ bool WebSocketClient::do_connect_socket()
 }
 
 /**
- * Full connect: connect socket and start receive thread
+ * Full connect: connect socket and start receive thread.
  * Only called from connect() for initial connection.
+ * Always starts recv_thread_ so the reconnect loop can retry on failure.
  */
 bool WebSocketClient::do_connect()
 {
-    if (!do_connect_socket()) {
-        return false;
+    bool connected = do_connect_socket();
+
+    if (!connected) {
+        // Reset state to DISCONNECTED so receive_loop's reconnect logic kicks in
+        // (do_connect_socket sets ERRORED on failure, which would prevent retries).
+        set_state(WSState::DISCONNECTED);
     }
 
-    // Start receive thread
+    // Start receive thread regardless — it handles reconnect on failure.
     running_ = true;
     recv_thread_ = std::thread(&WebSocketClient::receive_loop, this);
 
-    return true;
+    return connected;
 }
 
 void WebSocketClient::disconnect()
@@ -395,7 +407,7 @@ void WebSocketClient::receive_loop()
         if (!read_frame(payload, opcode)) {
             if (running_.load()) {
                 blog(LOG_WARNING, "[avolocam-ws] Read error, disconnecting");
-                set_state(WSState::DISCONNECTED);
+                do_disconnect();
             }
             continue;
         }
@@ -403,6 +415,11 @@ void WebSocketClient::receive_loop()
         // Connection is stable — reset reconnect counter
         reconnect_attempts_ = 0;
         messages_received_++;
+
+        if (messages_received_ == 1) {
+            blog(LOG_INFO, "[avolocam-ws] First message received (opcode=%d, len=%zu)",
+                 opcode, payload.size());
+        }
 
         switch (opcode) {
         case WS_OPCODE_TEXT: {
@@ -422,7 +439,7 @@ void WebSocketClient::receive_loop()
             break;
         case WS_OPCODE_CLOSE:
             blog(LOG_INFO, "[avolocam-ws] Server sent close frame");
-            set_state(WSState::DISCONNECTED);
+            do_disconnect();
             break;
         default:
             break;
@@ -658,14 +675,19 @@ void WebSocketClient::attempt_reconnect()
         slept += chunk;
     }
 
-    // Use do_connect_socket() instead of do_connect() to avoid spawning another thread
+    // Use do_connect_socket() instead of do_connect() to avoid spawning another thread.
     // The existing receive_loop() thread will continue running.
     // NOTE: reconnect_attempts_ is NOT reset here. It's only reset in
     // receive_loop() after a successful message read, proving the connection
     // is actually stable. This prevents infinite reconnect loops where TCP
     // connects succeed but WS reads immediately fail.
     if (running_.load()) {
-        do_connect_socket();
+        if (!do_connect_socket()) {
+            // Stay DISCONNECTED (not ERRORED) so receive_loop keeps retrying.
+            // do_connect_socket() sets ERRORED on failure, but ERRORED causes
+            // receive_loop to break immediately. Only exhaust max_attempts above.
+            set_state(WSState::DISCONNECTED);
+        }
     }
 }
 

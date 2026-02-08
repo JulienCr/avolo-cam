@@ -127,6 +127,7 @@ struct SourceData {
     // Threading
     std::thread receive_thread;
     std::thread decode_thread;  // Separate decode thread for async pipeline
+    std::thread ws_connect_thread_;  // WebSocket connect thread (joinable, not detached)
     std::atomic<bool> running{false};
     std::atomic<bool> visible{true};  // Visibility state for show/hide callbacks
 
@@ -324,15 +325,16 @@ struct SourceData {
         // up to 21 seconds on TCP timeout when the camera is unreachable, and
         // start() runs on the OBS video thread (via activate callback).
         // Blocking here freezes ALL video_tick/video_render for every source.
+        // Thread is stored (not detached) so stop() can join it safely.
         {
             std::string ws_url_str = "ws://" + camera_ip + ":"
                                      + std::to_string(DEFAULT_WS_PORT) + "/ws";
             std::string token_copy = auth_token;
             auto ws = ws_client.get();
-            std::thread([ws, url = std::move(ws_url_str),
+            ws_connect_thread_ = std::thread([ws, url = std::move(ws_url_str),
                          token = std::move(token_copy)]() {
                 ws->connect(url, token);
-            }).detach();
+            });
         }
 
         // Reset async pipeline state
@@ -363,6 +365,11 @@ struct SourceData {
             blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", camera_port);
             running.store(false);
 
+            // Two-phase WS shutdown (see stop() comment for rationale)
+            if (ws_client) ws_client->disconnect();
+            if (ws_connect_thread_.joinable()) ws_connect_thread_.join();
+            if (ws_client) ws_client->disconnect();
+
             {
                 std::lock_guard<std::mutex> lock(decode_queue_mutex_);
                 decode_queue_cv_.notify_all();
@@ -389,9 +396,16 @@ struct SourceData {
         blog(LOG_INFO, "[avolocam] Stopping receiver");
         running.store(false);
 
-        // Disconnect WebSocket FIRST to stop its reconnect loop.
-        // This must happen before joining source threads to avoid
-        // the WS thread spinning uselessly during join waits.
+        // Shut down WebSocket: two-phase disconnect.
+        // Phase 1: close the socket to unblock ::connect() in ws_connect_thread_.
+        // Phase 2 (after join): disconnect again because connect() may have
+        // succeeded between phase 1 and join, re-creating socket + recv_thread_.
+        if (ws_client) {
+            ws_client->disconnect();
+        }
+        if (ws_connect_thread_.joinable()) {
+            ws_connect_thread_.join();
+        }
         if (ws_client) {
             ws_client->disconnect();
         }
@@ -1009,11 +1023,10 @@ struct SourceData {
 
         ws_client->send_command(json);
 
-        if (debug_mode) {
-            blog(LOG_INFO, "[avolocam] Tally state sent: program=%s, preview=%s",
-                 is_program ? "true" : "false",
-                 is_preview ? "true" : "false");
-        }
+        blog(LOG_INFO, "[avolocam] Tally sent: program=%s, preview=%s (ws=%s)",
+             is_program ? "true" : "false",
+             is_preview ? "true" : "false",
+             ws_client->is_connected() ? "connected" : "disconnected");
     }
 
     // Extract SPS and PPS from Annex B formatted data
@@ -1561,9 +1574,11 @@ static uint32_t avolocam_get_width(void *data)
     uint32_t w = src->gpu_texture_width_.load(std::memory_order_relaxed);
     if (w > 0)
         return w;
-    if (src->decoder)
-        return src->decoder->get_width();
-    return 1920;
+    if (src->decoder) {
+        w = src->decoder->get_width();
+        if (w > 0) return w;
+    }
+    return SourceData::TEST_PATTERN_WIDTH;
 }
 
 static uint32_t avolocam_get_height(void *data)
@@ -1572,9 +1587,11 @@ static uint32_t avolocam_get_height(void *data)
     uint32_t h = src->gpu_texture_height_.load(std::memory_order_relaxed);
     if (h > 0)
         return h;
-    if (src->decoder)
-        return src->decoder->get_height();
-    return 1080;
+    if (src->decoder) {
+        h = src->decoder->get_height();
+        if (h > 0) return h;
+    }
+    return SourceData::TEST_PATTERN_HEIGHT;
 }
 
 } // namespace avolocam
