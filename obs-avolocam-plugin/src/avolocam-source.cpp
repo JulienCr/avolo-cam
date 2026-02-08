@@ -213,9 +213,21 @@ struct SourceData {
     uint32_t cpu_fallback_width_ = 0;
     uint32_t cpu_fallback_height_ = 0;
 
+    // "No signal" test pattern
+    gs_texture_t *test_pattern_texture_ = nullptr;
+    bool test_pattern_created_ = false;
+    static constexpr uint32_t TEST_PATTERN_WIDTH = 1920;
+    static constexpr uint32_t TEST_PATTERN_HEIGHT = 1080;
+
     SourceData() = default;
     ~SourceData() {
         stop();
+        if (test_pattern_texture_) {
+            obs_enter_graphics();
+            gs_texture_destroy(test_pattern_texture_);
+            obs_leave_graphics();
+            test_pattern_texture_ = nullptr;
+        }
     }
 
     void start() {
@@ -308,10 +320,20 @@ struct SourceData {
             }
         });
 
-        // Connect WebSocket
-        char ws_url[256];
-        snprintf(ws_url, sizeof(ws_url), "ws://%s:%d/ws", camera_ip.c_str(), DEFAULT_WS_PORT);
-        ws_client->connect(ws_url, auth_token);
+        // Connect WebSocket in background — ws_client->connect() can block for
+        // up to 21 seconds on TCP timeout when the camera is unreachable, and
+        // start() runs on the OBS video thread (via activate callback).
+        // Blocking here freezes ALL video_tick/video_render for every source.
+        {
+            std::string ws_url_str = "ws://" + camera_ip + ":"
+                                     + std::to_string(DEFAULT_WS_PORT) + "/ws";
+            std::string token_copy = auth_token;
+            auto ws = ws_client.get();
+            std::thread([ws, url = std::move(ws_url_str),
+                         token = std::move(token_copy)]() {
+                ws->connect(url, token);
+            }).detach();
+        }
 
         // Reset async pipeline state
         {
@@ -427,6 +449,16 @@ struct SourceData {
         {
             std::lock_guard<std::mutex> lock(decode_queue_mutex_);
             decode_queue_.clear();
+        }
+
+        // Reset frame state so test pattern shows on next start
+        latest_frame_.store(nullptr);
+        frame_buffer_a_.valid = false;
+        frame_buffer_b_.valid = false;
+
+        // Clear OBS async video cache (otherwise last frame stays displayed)
+        if (source) {
+            obs_source_output_video(source, nullptr);
         }
     }
 
@@ -1041,6 +1073,145 @@ struct SourceData {
 };
 
 // ============================================================================
+// "No Signal" SMPTE Test Pattern Generator
+// ============================================================================
+
+// Bitmap font for "NO SIGNAL" text (5x7 pixel glyphs)
+// Each character is represented as 7 rows of 5-bit patterns
+struct BitmapGlyph {
+    uint8_t rows[7];
+};
+
+static const BitmapGlyph g_font_glyphs[] = {
+    // 'N' = index 0
+    {{ 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001 }},
+    // 'O' = index 1
+    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }},
+    // ' ' = index 2
+    {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
+    // 'S' = index 3
+    {{ 0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110 }},
+    // 'I' = index 4
+    {{ 0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 }},
+    // 'G' = index 5
+    {{ 0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110 }},
+    // 'A' = index 6
+    {{ 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 }},
+    // 'L' = index 7
+    {{ 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111 }},
+};
+
+// "NO SIGNAL" as glyph indices
+static const int g_no_signal_text[] = { 0, 1, 2, 3, 4, 5, 0, 6, 7 };
+static const int g_no_signal_len = 9;
+
+/**
+ * Generate a classic SMPTE-style test pattern in RGBA with "NO SIGNAL" text.
+ *
+ * Layout:
+ *   Top 2/3:    7 color bars at 75% (white, yellow, cyan, green, magenta, red, blue)
+ *   Mid strip:  Castellations (blue, black, magenta, black, cyan, black, white)
+ *   Bottom 1/4: Dark gray background with "NO SIGNAL" in white block letters
+ */
+static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t height)
+{
+    std::vector<uint8_t> pixels(width * height * 4);
+
+    // 75% SMPTE color bars (R, G, B)
+    const uint8_t bars[7][3] = {
+        {191, 191, 191},  // White 75%
+        {191, 191,   0},  // Yellow
+        {  0, 191, 191},  // Cyan
+        {  0, 191,   0},  // Green
+        {191,   0, 191},  // Magenta
+        {191,   0,   0},  // Red
+        {  0,   0, 191},  // Blue
+    };
+
+    // Castellation row colors (reverse/complement bars)
+    const uint8_t cast[7][3] = {
+        {  0,   0, 191},  // Blue
+        {  0,   0,   0},  // Black
+        {191,   0, 191},  // Magenta
+        {  0,   0,   0},  // Black
+        {  0, 191, 191},  // Cyan
+        {  0,   0,   0},  // Black
+        {191, 191, 191},  // White
+    };
+
+    uint32_t bar_top = 0;
+    uint32_t bar_bottom = height * 2 / 3;
+    uint32_t cast_bottom = bar_bottom + height / 12;
+    // Rest is the bottom section
+
+    auto set_pixel = [&](uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b) {
+        uint32_t idx = (y * width + x) * 4;
+        pixels[idx + 0] = r;
+        pixels[idx + 1] = g;
+        pixels[idx + 2] = b;
+        pixels[idx + 3] = 255;
+    };
+
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            if (y < bar_bottom) {
+                // Top 2/3: color bars
+                int bar_idx = (int)(x * 7 / width);
+                if (bar_idx > 6) bar_idx = 6;
+                set_pixel(x, y, bars[bar_idx][0], bars[bar_idx][1], bars[bar_idx][2]);
+            } else if (y < cast_bottom) {
+                // Castellation strip
+                int bar_idx = (int)(x * 7 / width);
+                if (bar_idx > 6) bar_idx = 6;
+                set_pixel(x, y, cast[bar_idx][0], cast[bar_idx][1], cast[bar_idx][2]);
+            } else {
+                // Bottom section: dark gray
+                set_pixel(x, y, 40, 40, 40);
+            }
+        }
+    }
+
+    // Draw "NO SIGNAL" text in white block letters
+    const int scale = 6;
+    const int glyph_w = 5;
+    const int glyph_h = 7;
+    const int char_spacing = 1;  // 1 pixel gap between characters (at glyph scale)
+    int text_pixel_w = g_no_signal_len * (glyph_w + char_spacing) * scale;
+    int text_pixel_h = glyph_h * scale;
+
+    // Center horizontally in bottom section
+    int bottom_section_top = (int)cast_bottom;
+    int bottom_section_h = (int)height - bottom_section_top;
+    int text_x0 = ((int)width - text_pixel_w) / 2;
+    int text_y0 = bottom_section_top + (bottom_section_h - text_pixel_h) / 2;
+
+    for (int ci = 0; ci < g_no_signal_len; ci++) {
+        const BitmapGlyph &glyph = g_font_glyphs[g_no_signal_text[ci]];
+        int cx = text_x0 + ci * (glyph_w + char_spacing) * scale;
+
+        for (int gy = 0; gy < glyph_h; gy++) {
+            uint8_t row = glyph.rows[gy];
+            for (int gx = 0; gx < glyph_w; gx++) {
+                if (row & (1 << (glyph_w - 1 - gx))) {
+                    // Draw scaled pixel block
+                    for (int sy = 0; sy < scale; sy++) {
+                        for (int sx = 0; sx < scale; sx++) {
+                            int px = cx + gx * scale + sx;
+                            int py = text_y0 + gy * scale + sy;
+                            if (px >= 0 && px < (int)width && py >= 0 && py < (int)height) {
+                                set_pixel((uint32_t)px, (uint32_t)py, 255, 255, 255);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return pixels;
+}
+
+// ============================================================================
 // OBS Source Callbacks
 // ============================================================================
 
@@ -1306,6 +1477,23 @@ static void avolocam_video_tick(void *data, float seconds)
     UNUSED_PARAMETER(seconds);
     auto *src = static_cast<SourceData *>(data);
 
+    // Lazy-init test pattern texture (once, on graphics thread)
+    if (!src->test_pattern_created_) {
+        blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u",
+             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT);
+        auto pixels = generate_test_pattern_rgba(
+            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT);
+        const uint8_t *ptr = pixels.data();
+        obs_enter_graphics();
+        src->test_pattern_texture_ = gs_texture_create(
+            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+            GS_RGBA, 1, &ptr, 0);
+        obs_leave_graphics();
+        src->test_pattern_created_ = true;
+        blog(LOG_INFO, "[avolocam] Test pattern texture %s",
+             src->test_pattern_texture_ ? "created OK" : "FAILED");
+    }
+
     if (src->use_gpu_render_) {
         // GPU PATH: open the shared RGBA texture on OBS device (cached)
         void *h = src->latest_shared_handle_.load(std::memory_order_acquire);
@@ -1344,18 +1532,27 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
     UNUSED_PARAMETER(effect);
     auto *src = static_cast<SourceData *>(data);
 
+    // GPU path: camera frame available via shared texture
     if (src->use_gpu_render_ && src->obs_shared_texture_) {
-        // GPU zero-copy path: draw shared RGBA texture
-        // Use OBS_EFFECT_OPAQUE (no alpha) + gs_effect_loop pattern (like game-capture)
         effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
         while (gs_effect_loop(effect, "Draw")) {
             obs_source_draw(src->obs_shared_texture_, 0, 0, 0, 0, false);
         }
+        return;
     }
-    // CPU fallback: do nothing here — OBS's async video pipeline
-    // (obs_source_output_video) renders the frame independently.
-    // NOTE: obs_source_default_render MUST NOT be called from within
-    // video_render on the same source — it causes infinite recursion.
+
+    // CPU path: OBS ASYNC_VIDEO renders if a frame has been submitted
+    SourceData::LatestFrame *frame = src->latest_frame_.load(std::memory_order_acquire);
+    if (frame && frame->valid)
+        return;
+
+    // No camera frame available — draw the "NO SIGNAL" test pattern
+    if (src->test_pattern_texture_) {
+        effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
+        while (gs_effect_loop(effect, "Draw")) {
+            obs_source_draw(src->test_pattern_texture_, 0, 0, 0, 0, false);
+        }
+    }
 }
 
 static uint32_t avolocam_get_width(void *data)
