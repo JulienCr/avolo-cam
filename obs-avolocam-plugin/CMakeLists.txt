@@ -21,6 +21,14 @@ if(NOT EXISTS "${OBS_LIBOBS_DIR}/obs-module.h")
     cd deps && curl -sL https://github.com/obsproject/obs-studio/archive/refs/tags/32.0.4.tar.gz | tar -xz")
 endif()
 
+# Generate obsconfig.h from template (required by obs-config.h)
+set(OBS_DATA_PATH "obs-plugins")
+set(OBS_PLUGIN_PATH "obs-plugins")
+set(OBS_PLUGIN_DESTINATION "obs-plugins")
+set(OBS_RELEASE_CANDIDATE 0)
+set(OBS_BETA 0)
+configure_file("${OBS_LIBOBS_DIR}/obsconfig.h.in" "${OBS_LIBOBS_DIR}/obsconfig.h")
+
 # On macOS, we link against the installed OBS framework
 if(APPLE)
     set(OBS_APP_PATH "/Applications/OBS.app")
@@ -246,6 +254,15 @@ target_include_directories(obs-avolocam PRIVATE
     ${OBS_LIBOBS_DIR}
     ${OBS_SOURCE_DIR}
 )
+
+# macOS: OBS SDK 32+ headers reference simde for SSE intrinsics on ARM
+if(APPLE)
+    find_path(SIMDE_INCLUDE_DIR simde/x86/sse2.h
+        HINTS /opt/homebrew/include /usr/local/include)
+    if(SIMDE_INCLUDE_DIR)
+        target_include_directories(obs-avolocam PRIVATE ${SIMDE_INCLUDE_DIR})
+    endif()
+endif()
 
 # Windows: add pthread shim directory
 if(WIN32)

@@ -125,8 +125,8 @@ class AppCoordinator: ObservableObject {
         networkServer.setAuthenticationEnabled(configuration.isAuthenticationEnabled)
 
         // Connect tally callback for OBS WebSocket control
-        networkServer.onTallyUpdate = { [weak self] program, _ in
-            await self?.tallyPoller.setExternalTally(program: program)
+        networkServer.onTallyUpdate = { [weak self] program, preview in
+            await self?.tallyPoller.setExternalTally(program: program, preview: preview)
         }
 
         do {
