@@ -308,8 +308,8 @@ struct SourceData {
                 ws_client->send_command(R"({"op":"subscribe","channels":["frame_info"]})");
 
                 // Invalidate cached tally state to force re-send on reconnect
-                tally_program.store(!obs_source_showing(source));
-                tally_preview.store(true);  // Force mismatch
+                tally_program.store(!tally_program.load());
+                tally_preview.store(!tally_preview.load());
                 send_tally_state();
                 blog(LOG_INFO, "[avolocam] WS connected: subscribed to frame_info, tally re-sent");
             }

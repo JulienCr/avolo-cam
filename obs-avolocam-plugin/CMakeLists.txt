@@ -27,7 +27,7 @@ set(OBS_PLUGIN_PATH "obs-plugins")
 set(OBS_PLUGIN_DESTINATION "obs-plugins")
 set(OBS_RELEASE_CANDIDATE 0)
 set(OBS_BETA 0)
-configure_file("${OBS_LIBOBS_DIR}/obsconfig.h.in" "${OBS_LIBOBS_DIR}/obsconfig.h")
+configure_file("${OBS_LIBOBS_DIR}/obsconfig.h.in" "${CMAKE_CURRENT_BINARY_DIR}/obsconfig.h")
 
 # On macOS, we link against the installed OBS framework
 if(APPLE)
@@ -251,6 +251,7 @@ add_library(obs-avolocam MODULE ${SOURCES})
 # Include directories - use local OBS headers
 target_include_directories(obs-avolocam PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${OBS_LIBOBS_DIR}
     ${OBS_SOURCE_DIR}
 )
@@ -261,6 +262,10 @@ if(APPLE)
         HINTS /opt/homebrew/include /usr/local/include)
     if(SIMDE_INCLUDE_DIR)
         target_include_directories(obs-avolocam PRIVATE ${SIMDE_INCLUDE_DIR})
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+        message(FATAL_ERROR
+            "SIMDe headers not found, but are required for OBS 32+ on Apple Silicon.\n"
+            "Install via Homebrew: brew install simde")
     endif()
 endif()
 
