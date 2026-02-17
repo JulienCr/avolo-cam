@@ -17,9 +17,12 @@ MODULE_EXPORT const char *obs_module_description(void)
     return "Ultra low-latency video source for AvoCam iOS cameras";
 }
 
+// Force recompile on every build (volatile timestamp)
+static const char *g_build_timestamp = __DATE__ " " __TIME__;
+
 bool obs_module_load(void)
 {
-    blog(LOG_INFO, "[avolocam] Plugin built: %s %s", __DATE__, __TIME__);
+    blog(LOG_INFO, "[avolocam] Plugin built: %s", g_build_timestamp);
     blog(LOG_INFO, "[avolocam] Plugin loading...");
 
     // Register the video source

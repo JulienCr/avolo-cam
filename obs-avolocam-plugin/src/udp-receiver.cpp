@@ -7,6 +7,7 @@
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include "winsock-init.h"
     #pragma comment(lib, "ws2_32.lib")
     typedef SOCKET socket_t;
     #define INVALID_SOCKET_VAL INVALID_SOCKET
@@ -37,48 +38,16 @@ struct UdpReceiver::Impl {
     std::string expected_source_ip;
     struct in_addr expected_source_addr;
     bool filter_by_source = false;
-
-#ifdef _WIN32
-    static bool winsock_initialized;
-    static int winsock_refcount;
-
-    static bool init_winsock() {
-        if (!winsock_initialized) {
-            WSADATA wsa_data;
-            if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-                return false;
-            }
-            winsock_initialized = true;
-        }
-        winsock_refcount++;
-        return true;
-    }
-
-    static void cleanup_winsock() {
-        if (--winsock_refcount == 0 && winsock_initialized) {
-            WSACleanup();
-            winsock_initialized = false;
-        }
-    }
-#endif
 };
-
-#ifdef _WIN32
-bool UdpReceiver::Impl::winsock_initialized = false;
-int UdpReceiver::Impl::winsock_refcount = 0;
-#endif
 
 UdpReceiver::UdpReceiver() : impl_(new Impl()) {
 #ifdef _WIN32
-    Impl::init_winsock();
+    ensure_winsock_initialized();
 #endif
 }
 
 UdpReceiver::~UdpReceiver() {
     close();
-#ifdef _WIN32
-    Impl::cleanup_winsock();
-#endif
     delete impl_;
 }
 

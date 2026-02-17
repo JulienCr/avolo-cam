@@ -14,6 +14,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <vector>
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -26,6 +27,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <dns_sd.h>
+#include "winsock-init.h"
 #pragma comment(lib, "dnssd.lib")
 #pragma comment(lib, "ws2_32.lib")
 #elif defined(_WIN32)
@@ -60,6 +62,10 @@ struct MdnsDiscovery::Impl {
     CameraDiscoveryCallback callback_;
     std::atomic<bool> running_{false};
 
+    // Tracked resolve threads (joined in stop to prevent use-after-free)
+    std::mutex resolve_threads_mutex_;
+    std::vector<std::thread> resolve_threads_;
+
 #ifdef __APPLE__
     DNSServiceRef browse_ref_ = nullptr;
     std::map<std::string, DNSServiceRef> resolve_refs_;
@@ -76,6 +82,36 @@ struct MdnsDiscovery::Impl {
 
     ~Impl() {
         stop();
+    }
+
+    void track_resolve_thread(std::thread &&t) {
+        std::lock_guard<std::mutex> lock(resolve_threads_mutex_);
+        // Clean up finished threads to avoid unbounded growth
+        resolve_threads_.erase(
+            std::remove_if(resolve_threads_.begin(), resolve_threads_.end(),
+                [](std::thread &th) {
+                    if (th.joinable()) {
+                        // Try a non-blocking check isn't possible with std::thread,
+                        // but these threads have 5s timeouts so they'll finish quickly
+                        return false;
+                    }
+                    return true;
+                }),
+            resolve_threads_.end());
+        resolve_threads_.push_back(std::move(t));
+    }
+
+    void join_resolve_threads() {
+        std::vector<std::thread> threads;
+        {
+            std::lock_guard<std::mutex> lock(resolve_threads_mutex_);
+            threads = std::move(resolve_threads_);
+        }
+        for (auto &t : threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
     }
 
     bool start(CameraDiscoveryCallback callback) {
@@ -157,6 +193,9 @@ struct MdnsDiscovery::Impl {
             run_loop_thread_.join();
         }
 
+        // Wait for all resolve threads (each has 5s timeout)
+        join_resolve_threads();
+
         // Clean up resolve refs
         for (auto &pair : resolve_refs_) {
             DNSServiceRefDeallocate(pair.second);
@@ -221,8 +260,8 @@ struct MdnsDiscovery::Impl {
         // Store resolve ref
         resolve_refs_[name] = resolve_ref;
 
-        // Process resolve in separate thread
-        std::thread([resolve_ref, this]() {
+        // Process resolve in tracked thread (joined in stop_macos)
+        track_resolve_thread(std::thread([resolve_ref, this]() {
             int fd = DNSServiceRefSockFD(resolve_ref);
             fd_set read_fds;
             FD_ZERO(&read_fds);
@@ -235,7 +274,7 @@ struct MdnsDiscovery::Impl {
             if (result > 0) {
                 DNSServiceProcessResult(resolve_ref);
             }
-        }).detach();
+        }));
     }
 
     static void DNSSD_API resolve_callback(
@@ -305,8 +344,8 @@ struct MdnsDiscovery::Impl {
             return;
         }
 
-        // Process in thread
-        std::thread([getaddr_ref, ctx]() {
+        // Process in tracked thread (joined in stop_macos)
+        track_resolve_thread(std::thread([getaddr_ref, ctx]() {
             int fd = DNSServiceRefSockFD(getaddr_ref);
             fd_set read_fds;
             FD_ZERO(&read_fds);
@@ -322,7 +361,7 @@ struct MdnsDiscovery::Impl {
 
             DNSServiceRefDeallocate(getaddr_ref);
             delete ctx;
-        }).detach();
+        }));
     }
 
     static void DNSSD_API getaddr_callback(
@@ -385,9 +424,7 @@ struct MdnsDiscovery::Impl {
     // Windows implementation using Bonjour SDK
 
     bool start_windows() {
-        // Initialize Winsock
-        WSADATA wsa_data;
-        WSAStartup(MAKEWORD(2, 2), &wsa_data);
+        ensure_winsock_initialized();
 
         stop_event_ = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
@@ -450,6 +487,9 @@ struct MdnsDiscovery::Impl {
             event_thread_.join();
         }
 
+        // Wait for all resolve threads (each has 5s timeout)
+        join_resolve_threads();
+
         for (auto &pair : resolve_refs_) {
             DNSServiceRefDeallocate(pair.second);
         }
@@ -464,8 +504,6 @@ struct MdnsDiscovery::Impl {
             CloseHandle(stop_event_);
             stop_event_ = nullptr;
         }
-
-        WSACleanup();
     }
 
     static void DNSSD_API browse_callback_win(
@@ -531,8 +569,8 @@ struct MdnsDiscovery::Impl {
             resolve_refs_[name] = resolve_ref;
         }
 
-        // Process resolve in separate thread with proper Windows event handling
-        std::thread([resolve_ref, ctx, this]() {
+        // Process resolve in tracked thread (joined in stop_windows)
+        track_resolve_thread(std::thread([resolve_ref, ctx, this]() {
             SOCKET fd = (SOCKET)DNSServiceRefSockFD(resolve_ref);
             WSAEVENT read_event = WSACreateEvent();
             WSAEventSelect(fd, read_event, FD_READ);
@@ -558,7 +596,7 @@ struct MdnsDiscovery::Impl {
             }
             DNSServiceRefDeallocate(resolve_ref);
             delete ctx;
-        }).detach();
+        }));
     }
 
     static void DNSSD_API resolve_callback_win(
@@ -644,8 +682,8 @@ struct MdnsDiscovery::Impl {
             return;
         }
 
-        // Process in thread with proper Windows event handling
-        std::thread([getaddr_ref, ctx]() {
+        // Process in tracked thread (joined in stop_windows)
+        track_resolve_thread(std::thread([getaddr_ref, ctx]() {
             SOCKET fd = (SOCKET)DNSServiceRefSockFD(getaddr_ref);
             WSAEVENT read_event = WSACreateEvent();
             WSAEventSelect(fd, read_event, FD_READ);
@@ -662,7 +700,7 @@ struct MdnsDiscovery::Impl {
             WSACloseEvent(read_event);
             DNSServiceRefDeallocate(getaddr_ref);
             delete ctx;
-        }).detach();
+        }));
     }
 
     static void DNSSD_API getaddr_callback_win(

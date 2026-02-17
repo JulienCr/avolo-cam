@@ -93,19 +93,18 @@ static bool init_gpu_converter(ID3D11Device *device, ID3D11DeviceContext *contex
 {
     std::lock_guard<std::mutex> lock(g_gpu_converter_mutex);
 
-    g_gpu_converter_ref_count++;
-
     if (g_gpu_converter && g_gpu_converter->is_initialized()) {
+        g_gpu_converter_ref_count++;
         return true;
     }
 
     g_gpu_converter = std::make_unique<GPUConverter>();
     if (!g_gpu_converter->initialize(device, context)) {
         g_gpu_converter.reset();
-        g_gpu_converter_ref_count--;
         return false;
     }
 
+    g_gpu_converter_ref_count++;
     return true;
 }
 
@@ -165,7 +164,10 @@ void TextureOutput::shutdown()
 
     release_shared_cache();
     release_win_texture();
-    shutdown_gpu_converter();
+    if (gpu_converter_acquired_) {
+        shutdown_gpu_converter();
+        gpu_converter_acquired_ = false;
+    }
     source_ = nullptr;
     initialized_ = false;
 }
@@ -764,9 +766,13 @@ bool TextureOutput::init_gpu_output(void *d3d_device, void *d3d_context)
         return false;
     }
 
-    return init_gpu_converter(
+    bool result = init_gpu_converter(
         static_cast<ID3D11Device*>(d3d_device),
         static_cast<ID3D11DeviceContext*>(d3d_context));
+    if (result) {
+        gpu_converter_acquired_ = true;
+    }
+    return result;
 }
 
 // Platform-level queries
