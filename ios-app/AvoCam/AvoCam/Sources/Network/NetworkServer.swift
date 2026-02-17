@@ -213,17 +213,17 @@ class NetworkServer {
         }
     }
 
-    /// Broadcast frame timing info to all WebSocket clients (for Flash mode latency correlation)
+    /// Broadcast frame timing info to subscribed WebSocket clients only (for Flash mode latency correlation)
     /// - Parameter frameInfo: Frame timing and RTP timestamp information
     func broadcastFrameInfo(_ frameInfo: WebSocketFrameInfo) {
-        let clients = wsClients.withLock { Array($0) }
+        let clients = wsClients.withLock { $0.filter { $0.subscribedToFrameInfo } }
+        guard !clients.isEmpty else { return }
 
         guard let jsonData = try? JSONEncoder().encode(frameInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             return
         }
 
-        // Send to all connected clients
         for client in clients {
             client.send(text: jsonString)
         }
@@ -596,6 +596,7 @@ struct HTTPResponse {
 class WebSocketClient {
     private let channel: Channel
     private let eventLoop: EventLoop
+    var subscribedToFrameInfo: Bool = false
 
     init(channel: Channel) {
         self.channel = channel
@@ -800,7 +801,7 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
         case .text:
             var data = frame.unmaskedData
             if let text = data.readString(length: data.readableBytes) {
-                handleWebSocketMessage(text: text)
+                handleWebSocketMessage(text: text, client: wsClient)
             }
 
         case .binary:
@@ -825,7 +826,7 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
         }
     }
 
-    private func handleWebSocketMessage(text: String) {
+    private func handleWebSocketMessage(text: String, client: WebSocketClient?) {
         guard let data = text.data(using: .utf8) else {
             print("⚠️ Invalid WebSocket message encoding")
             return
@@ -855,6 +856,16 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
                     // Forward to request handler
                     // Note: This would require async support in the handler
                     print("📥 WS camera command: \(cameraSettings)")
+                }
+            }
+
+        case "subscribe":
+            // Handle channel subscription (e.g., OBS subscribing to frame_info)
+            struct SubscribeMessage: Codable { let op: String; let channels: [String] }
+            if let subMsg = try? JSONDecoder().decode(SubscribeMessage.self, from: data) {
+                if subMsg.channels.contains("frame_info") {
+                    client?.subscribedToFrameInfo = true
+                    print("📡 WS client subscribed to frame_info")
                 }
             }
 

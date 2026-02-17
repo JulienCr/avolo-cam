@@ -26,7 +26,7 @@ for arg in "$@"; do
     esac
 done
 
-BUILD_DIR="${SCRIPT_DIR}/build-${BUILD_TYPE,,}"
+BUILD_DIR="${SCRIPT_DIR}/build-$(echo "${BUILD_TYPE}" | tr '[:upper:]' '[:lower:]')"
 
 echo "=========================================="
 echo "Building OBS AvoCam Plugin (${BUILD_TYPE})"

@@ -301,6 +301,20 @@ struct SourceData {
             }
         });
 
+        // Re-send tally + subscribe to frame_info on every (re)connect
+        ws_client->set_connection_callback([this](WSState state) {
+            if (state == WSState::CONNECTED) {
+                // Subscribe to frame_info channel (only OBS needs it)
+                ws_client->send_command(R"({"op":"subscribe","channels":["frame_info"]})");
+
+                // Invalidate cached tally state to force re-send on reconnect
+                tally_program.store(!tally_program.load());
+                tally_preview.store(!tally_preview.load());
+                send_tally_state();
+                blog(LOG_INFO, "[avolocam] WS connected: subscribed to frame_info, tally re-sent");
+            }
+        });
+
         // Set up IDR request callback for sync state machine
         sync_state->set_idr_request_callback([this]() {
             if (ws_client && ws_client->is_connected()) {
@@ -459,9 +473,13 @@ struct SourceData {
 
         std::vector<uint8_t> packet_buffer(2048);
 
-        // Tally polling: check every ~100ms
+        // Tally polling: check every ~100ms (change detection)
         constexpr uint64_t TALLY_POLL_INTERVAL_NS = 100 * 1000 * 1000;  // 100ms in nanoseconds
         uint64_t last_tally_check = os_gettime_ns();
+
+        // Tally heartbeat: unconditional re-send every 2s (guards against lost messages)
+        constexpr uint64_t TALLY_HEARTBEAT_NS = 2000ULL * 1000 * 1000;  // 2s
+        uint64_t last_tally_heartbeat = os_gettime_ns();
 
         // Track current bound port for auto-switching
         uint16_t current_bound_port = camera_port;
@@ -525,11 +543,24 @@ struct SourceData {
                                              packet_buffer.size(),
                                              recv_timeout);
 
-            // Check tally state periodically
+            // Check tally state periodically (change detection)
             uint64_t now = os_gettime_ns();
             if (now - last_tally_check >= TALLY_POLL_INTERVAL_NS) {
                 send_tally_state();
                 last_tally_check = now;
+            }
+
+            // Unconditional tally heartbeat every 2s (guards against lost messages)
+            if (now - last_tally_heartbeat >= TALLY_HEARTBEAT_NS) {
+                if (ws_client && ws_client->is_connected() && source) {
+                    char json[128];
+                    snprintf(json, sizeof(json),
+                             R"({"op":"tally","program":%s,"preview":%s})",
+                             tally_program.load() ? "true" : "false",
+                             tally_preview.load() ? "true" : "false");
+                    ws_client->send_command(json);
+                }
+                last_tally_heartbeat = now;
             }
 
             if (received <= 0) continue;

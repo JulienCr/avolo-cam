@@ -133,13 +133,15 @@ class NDITallyPoller {
 
     /// Set tally state from external source (e.g., OBS WebSocket)
     /// This allows OBS to control the torch directly without NDI polling
-    /// - Parameter program: Whether the camera is in Program (live) mode
-    func setExternalTally(program: Bool) async {
+    /// - Parameters:
+    ///   - program: Whether the camera is in Program (live) mode
+    ///   - preview: Whether the camera is in Preview mode
+    func setExternalTally(program: Bool, preview: Bool) async {
         // Record the time of external tally to suppress NDI polling
         lastExternalTallyTime = DispatchTime.now().uptimeNanoseconds
 
         // Update published state for UI
-        currentTallyState = (program: program, preview: currentTallyState.preview)
+        currentTallyState = (program: program, preview: preview)
 
         // Only update torch if state changed
         if program != lastProgram {
@@ -150,6 +152,15 @@ class NDITallyPoller {
                 logger.info("🔴 External tally ON → Torch ON (NDI polling suppressed for 5s)")
             } else {
                 logger.info("⚫️ External tally OFF → Torch OFF (NDI polling suppressed for 5s)")
+            }
+        }
+
+        if preview != lastPreview {
+            lastPreview = preview
+            if preview {
+                logger.debug("🟢 External preview tally ON")
+            } else {
+                logger.debug("⚫️ External preview tally OFF")
             }
         }
     }
