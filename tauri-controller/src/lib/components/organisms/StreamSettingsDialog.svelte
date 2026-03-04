@@ -10,7 +10,8 @@
   export let open: Writable<boolean>;
   export let settings: StreamSettings;
   export let onApply: (() => void) | undefined = undefined;
-  export let flashPort: number | undefined = undefined; // Auto-assigned port from camera
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  export let flashPort: number | undefined = undefined;
 
   let useSeparateLatencies = false;
 
@@ -85,8 +86,10 @@
     }
   }
 
-  // Effective flash port: use auto-assigned if available, otherwise show placeholder
-  $: effectiveFlashPort = flashPort ?? settings.flash_destination_port ?? 5000;
+  // Initialize flash port with default if not set
+  $: if (settings.streaming_mode === 'flash' && !settings.flash_destination_port) {
+    settings.flash_destination_port = 5000;
+  }
 
   // Check if separate latencies are being used
   $: useSeparateLatencies = settings.srt_rcv_latency !== undefined || settings.srt_peer_latency !== undefined;
@@ -278,18 +281,14 @@
           </FormRow>
 
           <FormRow label="Destination Port" layout="vertical">
-            <div class="flex items-center gap-2">
-              <input
-                type="number"
-                value={effectiveFlashPort}
-                readonly
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-base text-gray-700 bg-gray-100 cursor-not-allowed dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
-              />
-              <span class="inline-flex items-center px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 rounded dark:text-purple-300 dark:bg-purple-800 whitespace-nowrap">
-                Auto
-              </span>
-            </div>
-            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">Port auto-assigned per camera</span>
+            <input
+              type="number"
+              bind:value={settings.flash_destination_port}
+              min="1024"
+              max="65535"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-base text-gray-900 bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600"
+            />
+            <span class="mt-1 text-xs text-gray-600 dark:text-gray-400">UDP port on the receiving computer (must match OBS source)</span>
           </FormRow>
 
           <FormRow label="Jitter Buffer Mode" layout="vertical">
