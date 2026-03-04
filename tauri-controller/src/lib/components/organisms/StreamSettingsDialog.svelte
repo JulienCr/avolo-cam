@@ -10,8 +10,6 @@
   export let open: Writable<boolean>;
   export let settings: StreamSettings;
   export let onApply: (() => void) | undefined = undefined;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  export let flashPort: number | undefined = undefined;
 
   let useSeparateLatencies = false;
 

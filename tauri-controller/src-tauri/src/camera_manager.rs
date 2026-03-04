@@ -610,11 +610,13 @@ impl CameraManager {
     }
 
     pub async fn start_stream(&mut self, camera_id: &str, request: StreamStartRequest) -> Result<()> {
-        let camera = self.cameras.get_mut(camera_id)
-            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
-
         // Persist flash_destination_port into CameraInfo for UI display
-        camera.info.flash_port = request.flash_destination_port.map(|p| p as u16);
+        {
+            let camera = self.cameras.get_mut(camera_id)
+                .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
+            camera.info.flash_port = request.flash_destination_port
+                .map(|p| p.min(65535) as u16);
+        }
 
         // Store settings in persisted_settings before starting stream
         self.persisted_settings
@@ -622,7 +624,8 @@ impl CameraManager {
             .and_modify(|(stream, _)| *stream = Some(request.clone()))
             .or_insert((Some(request.clone()), None));
 
-        let camera = self.cameras.get(camera_id).unwrap();
+        let camera = self.cameras.get(camera_id)
+            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
         camera.client.read().await.start_stream(request).await?;
 
         // Save to disk after successful start
