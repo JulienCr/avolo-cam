@@ -48,9 +48,9 @@ export async function startStream(
     srtPeerLatency: settings.srt_peer_latency,
     srtTlpktdrop: settings.srt_tlpktdrop,
     srtGopSize: settings.srt_gop_size,
-    // Flash params - use auto-detected IP as fallback
-    // NOTE: Don't send flashDestinationPort - let backend auto-assign per-camera ports
+    // Flash params
     flashDestinationHost: getEffectiveFlashHost(settings),
+    flashDestinationPort: settings.flash_destination_port,
     flashJitterMode: settings.flash_jitter_mode,
   });
 }
@@ -115,9 +115,9 @@ export async function groupStartStream(
     srtPeerLatency: settings.srt_peer_latency,
     srtTlpktdrop: settings.srt_tlpktdrop,
     srtGopSize: settings.srt_gop_size,
-    // Flash params - use auto-detected IP as fallback
-    // NOTE: Don't send flashDestinationPort - let backend auto-assign per-camera ports
+    // Flash params
     flashDestinationHost: getEffectiveFlashHost(settings),
+    flashDestinationPort: settings.flash_destination_port,
     flashJitterMode: settings.flash_jitter_mode,
   });
 }

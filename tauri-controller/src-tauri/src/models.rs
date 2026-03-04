@@ -266,7 +266,7 @@ pub struct CameraInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<Vec<Capability>>, // Cached capabilities for max_zoom lookup
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub flash_port: Option<u16>, // Auto-assigned Flash UDP port (5000 + camera_index)
+    pub flash_port: Option<u16>, // Flash UDP port (user-configured, persisted)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

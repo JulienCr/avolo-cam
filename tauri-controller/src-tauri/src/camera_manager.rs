@@ -109,15 +109,11 @@ pub struct CameraManager {
     persisted_settings: HashMap<String, (Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
     // MIDI manager for feedback
     pub(crate) midi_manager: Option<Arc<RwLock<MidiManager>>>,
-    /// Next camera index to assign for Flash port allocation
-    next_camera_index: u16,
 }
 
 struct Camera {
     info: CameraInfo,
     client: Arc<RwLock<CameraClient>>,
-    /// Index used for Flash port allocation (port = 5000 + camera_index)
-    camera_index: u16,
 }
 
 impl CameraManager {
@@ -131,7 +127,6 @@ impl CameraManager {
             settings_file_path: None,
             persisted_settings: HashMap::new(),
             midi_manager: None,
-            next_camera_index: 0,
         }
     }
 
@@ -485,12 +480,6 @@ impl CameraManager {
             log::info!("Auto-assigned MIDI channel {} to camera {}", channel, id);
         }
 
-        // Assign camera index for Flash port allocation
-        let camera_index = self.next_camera_index;
-        self.next_camera_index += 1;
-        let flash_port = 5000 + camera_index;
-        log::info!("Assigned Flash port {} to camera {}", flash_port, id);
-
         // Create camera info
         let info = CameraInfo {
             id: id.clone(),
@@ -502,14 +491,13 @@ impl CameraManager {
             connection_state: ConnectionState::Connected,
             midi_channel,
             capabilities,
-            flash_port: Some(flash_port),
+            flash_port: None,
         };
 
         // Store camera
         self.cameras.insert(id.clone(), Camera {
             info,
             client: client_arc,
-            camera_index,
         });
 
         log::info!("Added camera: {}", id);
@@ -622,8 +610,13 @@ impl CameraManager {
     }
 
     pub async fn start_stream(&mut self, camera_id: &str, request: StreamStartRequest) -> Result<()> {
-        let camera = self.cameras.get(camera_id)
-            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
+        // Persist flash_destination_port into CameraInfo for UI display
+        {
+            let camera = self.cameras.get_mut(camera_id)
+                .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
+            camera.info.flash_port = request.flash_destination_port
+                .map(|p| p.min(65535) as u16);
+        }
 
         // Store settings in persisted_settings before starting stream
         self.persisted_settings
@@ -631,6 +624,8 @@ impl CameraManager {
             .and_modify(|(stream, _)| *stream = Some(request.clone()))
             .or_insert((Some(request.clone()), None));
 
+        let camera = self.cameras.get(camera_id)
+            .ok_or_else(|| anyhow::anyhow!("Camera not found: {}", camera_id))?;
         camera.client.read().await.start_stream(request).await?;
 
         // Save to disk after successful start
@@ -715,15 +710,7 @@ impl CameraManager {
         let mut per_camera_requests: HashMap<String, StreamStartRequest> = HashMap::new();
 
         for camera_id in camera_ids {
-            let mut camera_request = request.clone();
-
-            // Auto-assign flash_destination_port if not explicitly provided and mode is Flash
-            if camera_request.flash_destination_port.is_none() {
-                if let Some(flash_port) = self.get_flash_port_for_camera(camera_id) {
-                    camera_request.flash_destination_port = Some(flash_port as u32);
-                    log::info!("Auto-assigned Flash port {} to camera {} for group start", flash_port, camera_id);
-                }
-            }
+            let camera_request = request.clone();
 
             // Store settings for persistence
             self.persisted_settings
@@ -968,12 +955,6 @@ impl CameraManager {
             .map(|(id, _)| id.clone())
     }
 
-    /// Get the auto-assigned Flash port for a camera
-    /// Returns the port (5000 + camera_index) if the camera exists
-    pub fn get_flash_port_for_camera(&self, camera_id: &str) -> Option<u16> {
-        self.cameras.get(camera_id).map(|camera| 5000 + camera.camera_index)
-    }
-
     // MARK: - Start/Stop All Operations
 
     /// Start all cameras with their persisted settings (or default settings if not available)
@@ -993,7 +974,7 @@ impl CameraManager {
             };
 
             // Get persisted stream settings or use defaults
-            let mut stream_settings = self.persisted_settings
+            let stream_settings = self.persisted_settings
                 .get(&camera_id)
                 .and_then(|(stream, _)| stream.clone())
                 .unwrap_or_else(|| StreamStartRequest {
@@ -1012,13 +993,6 @@ impl CameraManager {
                     flash_destination_port: None,
                     flash_jitter_mode: None,
                 });
-
-            // Auto-assign flash_destination_port if not explicitly set
-            if stream_settings.flash_destination_port.is_none() {
-                let flash_port = 5000 + camera.camera_index;
-                stream_settings.flash_destination_port = Some(flash_port as u32);
-                log::info!("Auto-assigned Flash port {} to camera {} for start all", flash_port, camera_id);
-            }
 
             let client = camera.client.clone();
             let camera_id_clone = camera_id.clone();

@@ -483,12 +483,10 @@
 {/if}
 
 {#if $streamSettingsCameraId}
-  {@const currentCamera = $cameras.find(c => c.id === $streamSettingsCameraId)}
   <StreamSettingsDialog
     open={showStreamSettingsDialog}
     bind:settings={$currentStreamSettings}
     onApply={handleApplyStreamSettings}
-    flashPort={currentCamera?.flash_port}
   />
 {/if}
 

@@ -71,30 +71,6 @@ static std::mutex g_discovery_mutex;
 static std::set<uint16_t> g_bound_ports;
 static std::mutex g_ports_mutex;
 
-// Auto-incrementing default port for new sources
-static std::atomic<uint16_t> g_next_default_port{5000};
-
-// Port range for auto-assignment (avoids privileged and ephemeral ports)
-static constexpr uint16_t PORT_RANGE_START = 5000;
-static constexpr uint16_t PORT_RANGE_END   = 9999;
-
-// Get next available auto-assigned port in valid range, avoiding collisions
-static uint16_t allocate_next_port() {
-    std::lock_guard<std::mutex> lock(g_ports_mutex);
-    for (int attempts = 0; attempts < (PORT_RANGE_END - PORT_RANGE_START + 1); attempts++) {
-        uint16_t port = g_next_default_port.fetch_add(1);
-        // Wrap to valid range
-        if (port > PORT_RANGE_END || port < PORT_RANGE_START) {
-            g_next_default_port.store(PORT_RANGE_START + 1);
-            port = PORT_RANGE_START;
-        }
-        if (g_bound_ports.count(port) == 0) {
-            return port;
-        }
-    }
-    blog(LOG_ERROR, "[avolocam] No available ports in range %d-%d", PORT_RANGE_START, PORT_RANGE_END);
-    return PORT_RANGE_START;  // Fallback — will fail at bind time with clear error
-}
 
 /**
  * Source instance data
@@ -151,9 +127,6 @@ struct SourceData {
     // Camera telemetry from WebSocket
     CameraTelemetry camera_telemetry;
     std::mutex telemetry_mutex;
-
-    // Auto-port switching: track the last received flash port from WebSocket
-    std::atomic<uint16_t> ws_reported_flash_port{0};
 
     // Bind result signaling: 0=pending, 1=success, -1=failure
     std::atomic<int> bind_result_{0};
@@ -306,11 +279,6 @@ struct SourceData {
             {
                 std::lock_guard<std::mutex> lock(telemetry_mutex);
                 camera_telemetry = telemetry;
-            }
-
-            // Store flash port for auto-switching
-            if (telemetry.flash_udp_port > 0) {
-                ws_reported_flash_port.store(telemetry.flash_udp_port);
             }
         });
 
@@ -527,61 +495,7 @@ struct SourceData {
         constexpr uint64_t TALLY_HEARTBEAT_NS = 2000ULL * 1000 * 1000;  // 2s
         uint64_t last_tally_heartbeat = os_gettime_ns();
 
-        // Track current bound port for auto-switching
-        uint16_t current_bound_port = camera_port;
-
         while (running.load()) {
-            // Check for auto-port switching (from WebSocket telemetry)
-            uint16_t ws_port = ws_reported_flash_port.load();
-            if (ws_port > 0 && ws_port != current_bound_port) {
-                // Check port collision before attempting bind
-                {
-                    std::lock_guard<std::mutex> lock(g_ports_mutex);
-                    if (g_bound_ports.count(ws_port)) {
-                        blog(LOG_ERROR, "[avolocam] Cannot auto-switch to port %d — already in use "
-                             "by another source. Staying on port %d.", ws_port, current_bound_port);
-                        ws_reported_flash_port.store(current_bound_port);  // Suppress repeated attempts
-                        goto skip_port_switch;
-                    }
-                }
-
-                blog(LOG_INFO, "[avolocam] Auto-switching UDP port from %d to %d (from WebSocket)",
-                     current_bound_port, ws_port);
-
-                // Re-bind to new port
-                if (receiver->bind(ws_port)) {
-                    // Update port registry: remove old, add new
-                    {
-                        std::lock_guard<std::mutex> lock(g_ports_mutex);
-                        g_bound_ports.erase(current_bound_port);
-                        g_bound_ports.insert(ws_port);
-                    }
-
-                    // Flush the entire pipeline to avoid stale data from old stream
-                    if (jitter_buffer) jitter_buffer->clear();
-                    if (assembler) assembler->reset();
-                    if (decoder) decoder->reset();
-
-                    // Clear the decode queue
-                    {
-                        std::lock_guard<std::mutex> lock(decode_queue_mutex_);
-                        decode_queue_.clear();
-                    }
-
-                    // Force resync: transition to OUT_OF_SYNC and request IDR
-                    if (sync_state) sync_state->on_packet_loss(100);
-
-                    current_bound_port = ws_port;
-                    camera_port = ws_port;  // Update config for future reference
-                    blog(LOG_INFO, "[avolocam] Successfully rebound to port %d (pipeline flushed, IDR requested)",
-                         ws_port);
-                } else {
-                    blog(LOG_WARNING, "[avolocam] Failed to rebind to port %d, staying on %d",
-                         ws_port, current_bound_port);
-                }
-            }
-            skip_port_switch:
-
             // Receive UDP packet with timeout
             // Flash mode: 5ms timeout for fast wakeup; Stable: 100ms
             int recv_timeout = flash_mode_ ? 5 : 100;
@@ -637,7 +551,7 @@ struct SourceData {
         // Unregister port from global registry when receive loop exits
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            g_bound_ports.erase(current_bound_port);
+            g_bound_ports.erase(camera_port);
         }
 
         receiver->close();
@@ -1279,11 +1193,6 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     data->debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
     data->decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
-    if (data->camera_port == 0) {
-        data->camera_port = allocate_next_port();
-        blog(LOG_INFO, "[avolocam] Auto-assigned UDP port %d", data->camera_port);
-    }
-
     blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
          data->decoder_type, data->camera_port);
     return data;
@@ -1318,11 +1227,6 @@ static void avolocam_update(void *data, obs_data_t *settings)
     bool new_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
     bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
     int new_decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
-
-    if (new_port == 0) {
-        new_port = allocate_next_port();
-        blog(LOG_INFO, "[avolocam] Auto-assigned UDP port %d on update", new_port);
-    }
 
     // Check if we need to restart
     bool needs_restart = (new_ip != src->camera_ip ||
@@ -1450,8 +1354,8 @@ static obs_properties_t *avolocam_get_properties(void *data)
                             OBS_TEXT_DEFAULT);
     obs_property_set_visible(ip_prop, true);
 
-    // UDP Port - ALWAYS visible, must match Tauri Controller assignment (5000 + camera_index)
-    obs_property_t *port_prop = obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port (from Tauri)",
+    // UDP Port - must match the port configured in Tauri Controller
+    obs_property_t *port_prop = obs_properties_add_int(props, PROP_MANUAL_PORT, "UDP Port",
                            1024, 65535, 1);
     obs_property_set_visible(port_prop, true);
     obs_property_set_long_description(port_prop,

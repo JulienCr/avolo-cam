@@ -8,7 +8,6 @@
   import { detectedLocalIP } from '$lib/stores/settings';
 
   export let settings: StreamSettings;
-  export let flashPort: number | undefined = undefined; // Auto-assigned port from camera
 
   const resolutionOptions = [
     { value: '1280x720', label: '1280×720 (720p)' },
@@ -57,7 +56,7 @@
 
   // Effective flash destination: use settings if set, otherwise auto-detected
   $: effectiveFlashHost = settings.flash_destination_host || $detectedLocalIP || 'Not configured';
-  $: effectiveFlashPort = flashPort ?? settings.flash_destination_port ?? 5000;
+  $: effectiveFlashPort = settings.flash_destination_port ?? 5000;
 </script>
 
 <div class="rounded-lg bg-gray-50 p-4">
