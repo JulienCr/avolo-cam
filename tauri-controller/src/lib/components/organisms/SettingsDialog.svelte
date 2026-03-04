@@ -5,6 +5,7 @@
   import MidiSettingsPanel from './MidiSettingsPanel.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { UI_SCALE_OPTIONS } from '$lib/types/app-settings';
+  import { toastSuccess, toastError } from '$lib/stores/toast';
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -44,7 +45,7 @@
     try {
       requestingPermission = true;
       notificationPermissionGranted = await invoke<boolean>('request_notification_permission');
-    } catch (e) { alert('Failed: ' + e); } finally { requestingPermission = false; }
+    } catch (e) { toastError('Failed: ' + e); } finally { requestingPermission = false; }
   }
 
   async function handleSave() {
@@ -58,9 +59,9 @@
           batteryCritical: { enabled: batteryCriticalEnabled, temperatureThreshold: 0, cpuThreshold: 0, batteryLowThreshold: 0, batteryCriticalThreshold },
         },
       });
-      alert('Settings saved!');
+      toastSuccess('Settings saved');
       onClose();
-    } catch (e) { alert('Failed: ' + e); }
+    } catch (e) { toastError('Failed to save settings: ' + e); }
   }
 
   async function handleDeleteCameras() {
@@ -68,16 +69,16 @@
     try {
       await deleteCamerasData();
       await refreshCameras();
-      alert('Camera data deleted.');
+      toastSuccess('Camera data deleted');
       onClose();
-    } catch (e) { alert('Failed: ' + e); }
+    } catch (e) { toastError('Failed: ' + e); }
   }
 
   async function handleTestNotification() {
-    if (!notificationPermissionGranted) { alert('Enable notifications first.'); return; }
+    if (!notificationPermissionGranted) { toastError('Enable notifications first'); return; }
     try {
       await invoke('send_test_notification', { title: 'Test', body: 'Notifications working!' });
-    } catch (e) { alert('Failed: ' + e); }
+    } catch (e) { toastError('Failed: ' + e); }
   }
 </script>
 

@@ -5,6 +5,8 @@
   import AddCameraDialog from '$lib/components/organisms/AddCameraDialog.svelte';
   import ProfileDialog from '$lib/components/organisms/ProfileDialog.svelte';
   import SettingsDialog from '$lib/components/organisms/SettingsDialog.svelte';
+  import ToastContainer from '$lib/components/layout/ToastContainer.svelte';
+  import { toastSuccess, toastError } from '$lib/stores/toast';
 
   // Stores
   import {
@@ -84,7 +86,7 @@
         return set;
       });
     } catch (e) {
-      alert(`Failed to remove camera: ${e}`);
+      toastError(`Failed to remove camera: ${e}`);
     }
   }
 
@@ -96,11 +98,11 @@
       const results = await api.startAllCameras();
       const failures = results.filter((r: any) => !r.success);
       if (failures.length > 0) {
-        alert(`Failed for ${failures.length} camera(s):\n${failures.map((f: any) => f.error).join('\n')}`);
+        toastError(`Start failed for ${failures.length} camera(s)`);
       }
       await refreshCameras();
     } catch (e) {
-      alert(`Start all failed: ${e}`);
+      toastError(`Start all failed: ${e}`);
     }
   }
 
@@ -111,11 +113,11 @@
       const results = await api.stopAllCameras();
       const failures = results.filter((r: any) => !r.success);
       if (failures.length > 0) {
-        alert(`Failed for ${failures.length} camera(s):\n${failures.map((f: any) => f.error).join('\n')}`);
+        toastError(`Stop failed for ${failures.length} camera(s)`);
       }
       await refreshCameras();
     } catch (e) {
-      alert(`Stop all failed: ${e}`);
+      toastError(`Stop all failed: ${e}`);
     }
   }
 
@@ -137,17 +139,17 @@
       },
     };
     await saveProfileAction(profile);
-    alert('Profile saved!');
+    toastSuccess('Profile saved');
   }
 
   async function handleApplyProfile(profileName: string) {
     const ids = Array.from(get(selectedCameraIds));
     if (ids.length === 0) {
-      alert('No cameras selected');
+      toastError('No cameras selected');
       return;
     }
     await applyProfileAction(profileName, ids);
-    alert(`Profile applied to ${ids.length} camera(s)`);
+    toastSuccess(`Profile applied to ${ids.length} camera(s)`);
     await refreshCameras();
   }
 
@@ -224,3 +226,5 @@
 {#if $showAppSettingsDialog}
   <SettingsDialog onClose={() => ($showAppSettingsDialog = false)} />
 {/if}
+
+<ToastContainer />

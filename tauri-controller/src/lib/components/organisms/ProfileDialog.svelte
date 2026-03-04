@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Profile } from '$lib/types/profile';
   import type { Writable } from 'svelte/store';
+  import { toastError } from '$lib/stores/toast';
 
   let {
     open,
@@ -28,19 +29,19 @@
       await onSave(profileName.trim());
       profileName = '';
     } catch (e) {
-      alert(`Failed to save profile: ${e}`);
+      toastError(`Failed to save profile: ${e}`);
     } finally {
       saving = false;
     }
   }
 
   async function handleApply(name: string) {
-    try { await onApply(name); } catch (e) { alert(String(e)); }
+    try { await onApply(name); } catch (e) { toastError(String(e)); }
   }
 
   async function handleDelete(name: string) {
     if (!confirm(`Delete profile "${name}"?`)) return;
-    try { await onDelete(name); } catch (e) { alert(`Failed: ${e}`); }
+    try { await onDelete(name); } catch (e) { toastError(`Failed: ${e}`); }
   }
 </script>
 

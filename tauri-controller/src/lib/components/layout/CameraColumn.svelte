@@ -17,6 +17,7 @@
   import { refreshCameras } from '$lib/stores/cameras';
   import { debounce } from '$lib/utils/debounce';
   import { onMount } from 'svelte';
+  import { toastError } from '$lib/stores/toast';
 
   let {
     camera,
@@ -192,7 +193,7 @@
       await api.startStream(camera.id, streamSettings);
       await refreshCameras();
     } catch (e) {
-      alert(`Failed to start stream: ${e}`);
+      toastError(`Failed to start stream: ${e}`);
     }
   }
 
@@ -201,7 +202,7 @@
       await api.stopStream(camera.id);
       await refreshCameras();
     } catch (e) {
-      alert(`Failed to stop stream: ${e}`);
+      toastError(`Failed to stop stream: ${e}`);
     }
   }
 
@@ -213,7 +214,7 @@
       cameraSettings.wb_tint = Math.round(result.tint);
       cameraSettings.wb_mode = 'manual';
     } catch (e) {
-      alert(`Failed to measure WB: ${e}`);
+      toastError(`Failed to measure WB: ${e}`);
     } finally {
       measuringWB.set(false);
     }

@@ -570,30 +570,21 @@ impl CameraManager {
         }
     }
 
-    pub async fn get_all_cameras(&mut self) -> Vec<CameraInfo> {
+    pub async fn get_all_cameras(&self) -> Vec<CameraInfo> {
         let mut result = Vec::new();
-        let mut reconnected: Vec<String> = Vec::new();
 
-        for (id, camera) in &mut self.cameras {
+        for (id, camera) in &self.cameras {
             let mut info = camera.info.clone();
-            let was_offline = camera.info.connection_state != ConnectionState::Connected;
 
             // Fetch fresh status from camera
             match camera.client.read().await.get_status().await {
                 Ok(status) => {
                     info.status = Some(status);
                     info.connection_state = ConnectionState::Connected;
-
-                    // Track reconnection transitions
-                    if was_offline {
-                        reconnected.push(id.clone());
-                    }
-                    camera.info.connection_state = ConnectionState::Connected;
                 }
                 Err(e) => {
                     log::warn!("Failed to get status for camera {}: {}", id, e);
                     info.connection_state = ConnectionState::Error;
-                    camera.info.connection_state = ConnectionState::Error;
                     // Keep existing status if available
                 }
             }
@@ -601,23 +592,31 @@ impl CameraManager {
             result.push(info);
         }
 
-        // Auto-apply persisted settings to reconnected cameras
-        for id in &reconnected {
-            if let Some((_, Some(cam_settings))) = self.persisted_settings.get(id) {
-                let settings = cam_settings.clone();
-                if let Some(camera) = self.cameras.get(id) {
-                    log::info!("Camera {} reconnected, applying persisted settings", id);
-                    if let Err(e) = camera.client.read().await.update_camera_settings(settings).await {
-                        log::warn!("Failed to apply persisted settings to {}: {}", id, e);
-                    }
-                }
-            }
-        }
-
         // Send MIDI feedback for cameras in manual focus mode
         self.send_midi_feedback_for_cameras(&result).await;
 
         result
+    }
+
+    /// Update stored connection states and auto-apply persisted settings on reconnect.
+    /// Call this after get_all_cameras() with its results.
+    pub async fn apply_reconnect_settings(&mut self, fresh_cameras: &[CameraInfo]) {
+        for info in fresh_cameras {
+            let Some(camera) = self.cameras.get_mut(&info.id) else { continue };
+            let was_offline = camera.info.connection_state != ConnectionState::Connected;
+            camera.info.connection_state = info.connection_state;
+
+            // Auto-apply persisted settings on reconnect
+            if was_offline && info.connection_state == ConnectionState::Connected {
+                if let Some((_, Some(cam_settings))) = self.persisted_settings.get(&info.id) {
+                    let settings = cam_settings.clone();
+                    log::info!("Camera {} reconnected, applying persisted settings", info.id);
+                    if let Err(e) = camera.client.read().await.update_camera_settings(settings).await {
+                        log::warn!("Failed to apply persisted settings to {}: {}", info.id, e);
+                    }
+                }
+            }
+        }
     }
 
     /// Send MIDI feedback for all cameras in manual focus mode

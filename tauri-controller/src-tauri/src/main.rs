@@ -118,7 +118,7 @@ async fn handle_midi_command(
             // Pitch Bend = Zoom control (only in manual mode)
             log::debug!("MIDI: Pitch Bend {} on channel {}", value, channel);
 
-            let mut manager = camera_manager.write().await;
+            let manager = camera_manager.read().await;
             if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
                 // Check if camera is in manual focus mode
                 let camera = manager.get_all_cameras().await.into_iter()
@@ -143,6 +143,9 @@ async fn handle_midi_command(
 
                     let zoom_factor = MidiManager::pitch_bend_to_zoom(value, max_zoom);
 
+                    drop(manager); // Release read lock
+
+                    let mut manager = camera_manager.write().await;
                     let settings = CameraSettingsRequest {
                         zoom_factor: Some(zoom_factor),
                         ..Default::default()
@@ -208,8 +211,17 @@ async fn remove_camera(
 async fn get_cameras(
     state: State<'_, AppState>,
 ) -> Result<Vec<CameraInfo>, String> {
-    let mut manager = state.camera_manager.write().await;
-    Ok(manager.get_all_cameras().await)
+    // Use read lock for HTTP polling (can take seconds, must not block writes)
+    let cameras = {
+        let manager = state.camera_manager.read().await;
+        manager.get_all_cameras().await
+    };
+    // Brief write lock only to update connection states and auto-apply on reconnect
+    {
+        let mut manager = state.camera_manager.write().await;
+        manager.apply_reconnect_settings(&cameras).await;
+    }
+    Ok(cameras)
 }
 
 #[tauri::command]

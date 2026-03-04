@@ -42,6 +42,10 @@
     --t-magenta: #C43BAA;
   }
 
+  html {
+    @apply overflow-hidden;
+  }
+
   * {
     @apply border-border box-border;
   }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Writable } from 'svelte/store';
+  import { toastError } from '$lib/stores/toast';
 
   let {
     open,
@@ -24,7 +25,7 @@
       token = '';
       open.set(false);
     } catch (err) {
-      alert(`Failed to add camera: ${err}`);
+      toastError(`Failed to add camera: ${err}`);
     } finally {
       submitting = false;
     }
