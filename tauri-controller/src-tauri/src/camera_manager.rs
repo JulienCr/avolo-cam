@@ -200,10 +200,16 @@ impl CameraManager {
             let camera_settings = persisted.camera_settings.clone();
             let midi_channel = persisted.midi_channel;
 
+            // Clone fields needed for offline fallback (add_camera_manual moves the originals)
+            let alias_clone = persisted.alias.clone();
+            let ip_clone = persisted.ip.clone();
+            let port_val = persisted.port;
+            let token_clone = persisted.token.clone();
+
             // Try to add camera, but don't fail if one camera fails
             match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
                 Ok(id) => {
-                    log::info!("Loaded camera: {} ({})", persisted.alias, id);
+                    log::info!("Loaded camera: ({})", id);
 
                     // Restore MIDI channel assignment
                     if let Some(channel) = midi_channel {
@@ -220,7 +226,35 @@ impl CameraManager {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to load camera {}: {}", persisted.alias, e);
+                    log::warn!("Failed to connect to camera {} ({}): {} — adding as offline", alias_clone, camera_id, e);
+
+                    // Insert camera as offline (disconnected) so it still appears in the UI
+                    let offline_info = CameraInfo {
+                        id: camera_id.clone(),
+                        alias: alias_clone,
+                        ip: ip_clone.clone(),
+                        port: port_val,
+                        token: token_clone.clone(),
+                        status: None,
+                        connection_state: ConnectionState::Disconnected,
+                        midi_channel,
+                        capabilities: None,
+                        flash_port: None,
+                    };
+
+                    // Create a dummy client (not connected) for the camera entry
+                    let offline_client = CameraClient::new(ip_clone, port_val, token_clone);
+                    let offline_client_arc = Arc::new(RwLock::new(offline_client));
+
+                    self.cameras.insert(camera_id.clone(), Camera {
+                        info: offline_info,
+                        client: offline_client_arc,
+                    });
+
+                    // Store persisted settings for this camera
+                    if stream_settings.is_some() || camera_settings.is_some() {
+                        self.persisted_settings.insert(camera_id, (stream_settings, camera_settings));
+                    }
                 }
             }
         }

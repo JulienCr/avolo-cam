@@ -1,27 +1,28 @@
 <script lang="ts">
-  import Modal from './Modal.svelte';
-  import Button from '../atoms/Button.svelte';
-  import Input from '../atoms/Input.svelte';
-  import Card from '../atoms/Card.svelte';
   import type { Profile } from '$lib/types/profile';
   import type { Writable } from 'svelte/store';
 
-  export let open: Writable<boolean>;
-  export let profiles: Profile[];
-  export let onSave: (name: string) => Promise<void>;
-  export let onApply: (profileName: string) => Promise<void>;
-  export let onDelete: (profileName: string) => Promise<void>;
-  export let canSave = false;
+  let {
+    open,
+    profiles,
+    onSave,
+    onApply,
+    onDelete,
+    canSave = false,
+  }: {
+    open: Writable<boolean>;
+    profiles: Profile[];
+    onSave: (name: string) => Promise<void>;
+    onApply: (profileName: string) => Promise<void>;
+    onDelete: (profileName: string) => Promise<void>;
+    canSave: boolean;
+  } = $props();
 
-  let profileName = '';
-  let saving = false;
+  let profileName = $state('');
+  let saving = $state(false);
 
   async function handleSave() {
-    if (!profileName.trim()) {
-      alert('Please enter a profile name');
-      return;
-    }
-
+    if (!profileName.trim()) return;
     try {
       saving = true;
       await onSave(profileName.trim());
@@ -34,96 +35,73 @@
   }
 
   async function handleApply(name: string) {
-    try {
-      await onApply(name);
-    } catch (e) {
-      alert(String(e));
-    }
+    try { await onApply(name); } catch (e) { alert(String(e)); }
   }
 
   async function handleDelete(name: string) {
     if (!confirm(`Delete profile "${name}"?`)) return;
-
-    try {
-      await onDelete(name);
-    } catch (e) {
-      alert(`Failed to delete profile: ${e}`);
-    }
+    try { await onDelete(name); } catch (e) { alert(`Failed: ${e}`); }
   }
 </script>
 
-<Modal {open} title="Profile Management" size="lg">
-  <div class="flex flex-col gap-6">
-    <!-- Save Current Settings -->
-    {#if canSave}
-      <Card padding="md">
-        <h3 class="mb-3 text-base font-semibold text-gray-700">Save Current Settings</h3>
-        <div class="flex gap-2">
-          <Input
-            type="text"
-            bind:value={profileName}
-            placeholder="Profile name"
-            disabled={saving}
-          />
-          <Button
-            variant="primary"
-            size="md"
-            on:click={handleSave}
-            disabled={saving || !profileName.trim()}
-          >
+{#if $open}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onclick={() => open.set(false)}>
+    <div class="w-96 max-h-[80vh] bg-card border border-border rounded-sm p-4 shadow-lg flex flex-col" onclick={(e) => e.stopPropagation()}>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-semibold text-foreground">Profiles</h2>
+        <button onclick={() => open.set(false)} class="text-muted-foreground hover:text-foreground text-sm">X</button>
+      </div>
+
+      {#if canSave}
+        <div class="flex gap-1.5 mb-3">
+          <input type="text" bind:value={profileName} placeholder="Profile name" disabled={saving}
+            class="flex-1 h-6 px-1.5 text-[11px] bg-input border border-border rounded-sm text-foreground placeholder-muted-foreground" />
+          <button onclick={handleSave} disabled={saving || !profileName.trim()}
+            class="h-6 px-2 text-[10px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40">
             {saving ? 'Saving...' : 'Save'}
-          </Button>
+          </button>
         </div>
-      </Card>
-    {/if}
+      {/if}
 
-    <!-- Saved Profiles -->
-    <div>
-      <h3 class="mb-3 text-base font-semibold text-gray-700">
-        Saved Profiles ({profiles.length})
-      </h3>
-
-      {#if profiles.length === 0}
-        <p class="py-8 text-center italic text-gray-500">No profiles saved yet</p>
-      {:else}
-        <div class="flex flex-col gap-2">
-          {#each profiles as profile (profile.name)}
-            <Card padding="sm">
-              <div class="flex items-center justify-between gap-4">
-                <div class="flex-1">
-                  <strong class="block text-sm text-gray-900">{profile.name}</strong>
-                  <span class="text-xs text-gray-600">
+      <div class="flex-1 overflow-y-auto">
+        <span class="text-[10px] text-muted-foreground mb-1 block">Saved ({profiles.length})</span>
+        {#if profiles.length === 0}
+          <p class="text-[10px] text-muted-foreground italic py-4 text-center">No profiles yet</p>
+        {:else}
+          <div class="flex flex-col gap-1">
+            {#each profiles as profile (profile.name)}
+              <div class="flex items-center justify-between gap-2 p-1.5 border border-border rounded-sm">
+                <div class="min-w-0 flex-1">
+                  <span class="text-[11px] font-medium text-foreground block truncate">{profile.name}</span>
+                  <span class="text-[9px] text-muted-foreground">
                     WB: {profile.settings.wb_mode || 'auto'}
                     {#if profile.settings.wb_mode === 'manual' && profile.settings.wb_kelvin}
                       ({profile.settings.wb_kelvin}K)
                     {/if}
                     | ISO: {profile.settings.iso_mode || 'auto'}
-                    {#if profile.settings.iso_mode === 'manual' && profile.settings.iso}
-                      ({profile.settings.iso})
-                    {/if}
                     | Lens: {profile.settings.lens || 'wide'}
                   </span>
                 </div>
-
-                <div class="flex gap-2">
-                  <Button variant="primary" size="sm" on:click={() => handleApply(profile.name)}>
-                    Apply
-                  </Button>
-                  <Button variant="danger" size="sm" on:click={() => handleDelete(profile.name)}>
-                    Delete
-                  </Button>
+                <div class="flex gap-0.5 shrink-0">
+                  <button onclick={() => handleApply(profile.name)}
+                    class="h-5 px-1.5 text-[9px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90">Apply</button>
+                  <button onclick={() => handleDelete(profile.name)}
+                    class="h-5 px-1.5 text-[9px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90">Del</button>
                 </div>
               </div>
-            </Card>
-          {/each}
-        </div>
-      {/if}
-    </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
 
-    <div class="flex justify-end">
-      <Button variant="secondary" size="md" on:click={() => open.set(false)}>
-        Close
-      </Button>
+      <div class="flex justify-end mt-3">
+        <button onclick={() => open.set(false)}
+          class="h-6 px-3 text-[10px] font-medium rounded-sm bg-secondary text-secondary-foreground hover:bg-accent transition-colors">
+          Close
+        </button>
+      </div>
     </div>
   </div>
-</Modal>
+{/if}
