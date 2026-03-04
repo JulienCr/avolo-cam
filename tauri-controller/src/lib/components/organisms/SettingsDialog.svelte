@@ -4,10 +4,11 @@
   import { refreshCameras } from '$lib/stores/cameras';
   import MidiSettingsPanel from './MidiSettingsPanel.svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { UI_SCALE_OPTIONS } from '$lib/types/app-settings';
 
   let { onClose }: { onClose: () => void } = $props();
 
-  let activeTab = $state('alerts');
+  let activeTab = $state('display');
 
   let temperatureEnabled = $state($appSettings.alerts.temperature.enabled);
   let temperatureThreshold = $state($appSettings.alerts.temperature.temperatureThreshold);
@@ -17,12 +18,14 @@
   let batteryLowThreshold = $state($appSettings.alerts.batteryLow.batteryLowThreshold);
   let batteryCriticalEnabled = $state($appSettings.alerts.batteryCritical.enabled);
   let batteryCriticalThreshold = $state($appSettings.alerts.batteryCritical.batteryCriticalThreshold);
+  let uiScale = $state($appSettings.ui_scale ?? 100);
 
   let notificationPermissionGranted = $state(false);
   let checkingPermission = $state(true);
   let requestingPermission = $state(false);
 
   const tabs = [
+    { id: 'display', label: 'Display' },
     { id: 'alerts', label: 'Alerts' },
     { id: 'midi', label: 'MIDI' },
     { id: 'data', label: 'Data' },
@@ -47,6 +50,7 @@
   async function handleSave() {
     try {
       await saveAppSettings({
+        ui_scale: uiScale,
         alerts: {
           temperature: { enabled: temperatureEnabled, temperatureThreshold, cpuThreshold: 0, batteryLowThreshold: 0, batteryCriticalThreshold: 0 },
           cpu: { enabled: cpuEnabled, temperatureThreshold: 0, cpuThreshold, batteryLowThreshold: 0, batteryCriticalThreshold: 0 },
@@ -100,7 +104,23 @@
 
     <!-- Content -->
     <div class="flex-1 overflow-y-auto px-3 py-3">
-      {#if activeTab === 'alerts'}
+      {#if activeTab === 'display'}
+        <div class="flex flex-col gap-2">
+          <span class="text-[10px] font-medium text-foreground">UI Scale</span>
+          <div class="flex gap-1">
+            {#each UI_SCALE_OPTIONS as option}
+              <button
+                onclick={() => uiScale = option.value}
+                class="px-2 py-1 text-[10px] font-medium rounded-sm border transition-colors
+                  {uiScale === option.value
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-secondary text-secondary-foreground border-border hover:bg-accent'}"
+              >{option.label}</button>
+            {/each}
+          </div>
+          <span class="text-[9px] text-muted-foreground">Scale the entire interface. Useful for large screens.</span>
+        </div>
+      {:else if activeTab === 'alerts'}
         {#if !checkingPermission && !notificationPermissionGranted}
           <div class="flex items-center justify-between mb-2 p-1.5 border border-orange-800 bg-orange-950 rounded-sm">
             <span class="text-[10px] text-orange-400">Notifications not enabled</span>

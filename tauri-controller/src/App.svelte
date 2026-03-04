@@ -43,11 +43,17 @@
     deleteProfileAction,
   } from '$lib/stores/profiles';
 
-  import { loadAppSettings } from '$lib/stores/appSettings';
+  import { appSettings, loadAppSettings } from '$lib/stores/appSettings';
   import { loadMidiConnectionStatus, loadMidiNotesConfig } from '$lib/stores/midi';
 
   import * as api from '$lib/utils/api';
   import { get } from 'svelte/store';
+
+  // Apply UI scale as CSS zoom
+  $: {
+    const scale = $appSettings.ui_scale ?? 100;
+    document.documentElement.style.zoom = `${scale}%`;
+  }
 
   // Lifecycle
   onMount(() => {

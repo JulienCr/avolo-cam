@@ -219,11 +219,12 @@ All endpoints require Bearer token authentication.
 ## Tech Stack
 
 - **iOS**: Swift, AVFoundation, VideoToolbox, NDI|HX SDK, SwiftNIO (HTTP/WS), Bonjour
-- **Controller**: Tauri (Rust backend, Svelte/React frontend), Rust mDNS + HTTP/WS clients
+- **Controller**: Tauri (Rust backend, Svelte frontend), pnpm, Rust mDNS + HTTP/WS clients
 - **OBS**: NDI Source plugin (standard), Rec.709/Full project settings
 
 ## Important Notes
 
+- **Package manager**: Always use `pnpm`, never `npm` or `yarn`
 - This is for **internal use** (no NDI branding/redistribution)
 - Start with Lot A as MCP (Minimum Complete Product)
 - Focus on stability and low latency over feature richness initially

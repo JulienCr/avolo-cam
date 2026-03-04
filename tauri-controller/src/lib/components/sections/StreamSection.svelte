@@ -66,8 +66,6 @@
   );
 
   let localIP = $derived(get(detectedLocalIP) || '');
-  let effectiveFlashHost = $derived(settings.flash_destination_host || localIP || 'N/A');
-  let effectiveFlashPort = $derived(settings.flash_destination_port ?? 5000);
 </script>
 
 <div class="border-b border-border">
@@ -153,11 +151,24 @@
       {#if settings.streaming_mode === 'flash'}
         <div class="border-t border-border pt-1.5 mt-0.5 flex flex-col gap-1.5">
           <div class="flex items-center gap-1">
-            <label class="text-[10px] text-muted-foreground w-12 shrink-0">Dest</label>
-            <span class="text-[10px] text-foreground font-mono truncate">{effectiveFlashHost}:{effectiveFlashPort}</span>
-            {#if !settings.flash_destination_host && localIP}
-              <span class="text-[9px] text-muted-foreground">(auto)</span>
-            {/if}
+            <label class="text-[10px] text-muted-foreground w-12 shrink-0">Host</label>
+            <input
+              type="text"
+              bind:value={settings.flash_destination_host}
+              placeholder={localIP || 'Auto-detect'}
+              class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
+            />
+          </div>
+          <div class="flex items-center gap-1">
+            <label class="text-[10px] text-muted-foreground w-12 shrink-0">Port</label>
+            <input
+              type="number"
+              bind:value={settings.flash_destination_port}
+              placeholder="5000"
+              min={1024}
+              max={65535}
+              class="w-16 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
+            />
           </div>
           <div class="flex items-center gap-1">
             <label class="text-[10px] text-muted-foreground w-12 shrink-0">Jitter</label>
