@@ -16,6 +16,7 @@
   import * as api from '$lib/utils/api';
   import { refreshCameras } from '$lib/stores/cameras';
   import { debounce } from '$lib/utils/debounce';
+  import { onMount } from 'svelte';
 
   let {
     camera,
@@ -59,6 +60,35 @@
       : { ...DEFAULT_CAMERA_SETTINGS }
   );
 
+  // Load persisted settings on mount (for offline cameras)
+  onMount(async () => {
+    if (!camera.status?.current) {
+      try {
+        const persisted = await api.getPersistedCameraSettings(camera.id);
+        if (persisted) {
+          cameraSettings = {
+            wb_mode: persisted.wb_mode || 'auto',
+            wb_kelvin: persisted.wb_kelvin || 5000,
+            wb_tint: persisted.wb_tint || 0,
+            iso_mode: persisted.iso_mode || 'auto',
+            iso: persisted.iso || 400,
+            shutter_mode: persisted.shutter_mode || 'auto',
+            shutter_s: persisted.shutter_s || 0.01,
+            focus_mode: persisted.focus_mode || 'auto',
+            focus_distance: persisted.focus_distance || 0.5,
+            zoom_factor: persisted.zoom_factor || 2.0,
+            lens: (persisted.lens as any) || 'wide',
+            camera_position: (persisted.camera_position as any) || 'back',
+            torch_mode: 'auto',
+            torch_level: persisted.torch_level || 0.03,
+          };
+        }
+      } catch (e) {
+        console.warn('Could not load persisted camera settings:', e);
+      }
+    }
+  });
+
   // Debounced stream settings save
   const debouncedSaveStreamSettings = debounce(async () => {
     try {
@@ -68,37 +98,51 @@
     }
   }, 300);
 
-  // Debounced camera settings save
+  // Build camera settings payload
+  function buildCameraPayload() {
+    const payload: any = {
+      wb_mode: cameraSettings.wb_mode,
+      iso_mode: cameraSettings.iso_mode,
+      shutter_mode: cameraSettings.shutter_mode,
+      focus_mode: cameraSettings.focus_mode,
+      zoom_factor: cameraSettings.zoom_factor,
+      lens: cameraSettings.lens,
+      camera_position: cameraSettings.camera_position,
+    };
+    if (cameraSettings.wb_mode === 'manual') {
+      payload.wb_kelvin = cameraSettings.wb_kelvin;
+      payload.wb_tint = cameraSettings.wb_tint;
+    }
+    if (cameraSettings.iso_mode === 'manual') {
+      payload.iso = cameraSettings.iso;
+    }
+    if (cameraSettings.shutter_mode === 'manual') {
+      payload.shutter_s = cameraSettings.shutter_s;
+    }
+    if (cameraSettings.focus_mode === 'manual') {
+      payload.focus_distance = cameraSettings.focus_distance;
+    }
+    if (cameraSettings.torch_mode === 'manual') {
+      payload.torch_level = cameraSettings.torch_level;
+    }
+    return payload;
+  }
+
+  // Debounced camera settings save (online: sends to camera + persists)
   const debouncedSaveCameraSettings = debounce(async () => {
     try {
-      const payload: any = {
-        wb_mode: cameraSettings.wb_mode,
-        iso_mode: cameraSettings.iso_mode,
-        shutter_mode: cameraSettings.shutter_mode,
-        focus_mode: cameraSettings.focus_mode,
-        zoom_factor: cameraSettings.zoom_factor,
-        lens: cameraSettings.lens,
-        camera_position: cameraSettings.camera_position,
-      };
-      if (cameraSettings.wb_mode === 'manual') {
-        payload.wb_kelvin = cameraSettings.wb_kelvin;
-        payload.wb_tint = cameraSettings.wb_tint;
-      }
-      if (cameraSettings.iso_mode === 'manual') {
-        payload.iso = cameraSettings.iso;
-      }
-      if (cameraSettings.shutter_mode === 'manual') {
-        payload.shutter_s = cameraSettings.shutter_s;
-      }
-      if (cameraSettings.focus_mode === 'manual') {
-        payload.focus_distance = cameraSettings.focus_distance;
-      }
-      if (cameraSettings.torch_mode === 'manual') {
-        payload.torch_level = cameraSettings.torch_level;
-      }
-      await api.updateCameraSettings(camera.id, payload);
+      await api.updateCameraSettings(camera.id, buildCameraPayload());
     } catch (e) {
       console.error('Failed to save camera settings:', e);
+    }
+  }, 300);
+
+  // Debounced camera settings persist (offline: persists only, no HTTP)
+  const debouncedPersistCameraSettings = debounce(async () => {
+    try {
+      await api.persistCameraSettings(camera.id, buildCameraPayload());
+    } catch (e) {
+      console.error('Failed to persist camera settings:', e);
     }
   }, 300);
 
@@ -120,7 +164,6 @@
 
   // Watch camera settings changes
   $effect(() => {
-    if (!isOnline) return;
     const _ = [
       cameraSettings.wb_mode,
       cameraSettings.wb_kelvin,
@@ -137,7 +180,11 @@
       cameraSettings.torch_mode,
       cameraSettings.torch_level,
     ];
-    debouncedSaveCameraSettings();
+    if (isOnline) {
+      debouncedSaveCameraSettings();
+    } else {
+      debouncedPersistCameraSettings();
+    }
   });
 
   async function handleStartStream() {

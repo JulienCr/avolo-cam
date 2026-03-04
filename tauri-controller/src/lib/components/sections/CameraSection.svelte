@@ -87,8 +87,14 @@
     </svg>
   </button>
 
-  {#if open && isOnline}
+  {#if open}
     <div class="px-2 pb-2 flex flex-col gap-1">
+
+      {#if !isOnline}
+        <div class="flex items-center gap-1 py-0.5 px-1 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <span class="text-[10px] italic">Pending — will apply on connect</span>
+        </div>
+      {/if}
 
       <!-- White Balance -->
       <div>
@@ -117,7 +123,7 @@
             {#if settings.wb_mode === 'manual'}
               <button
                 onclick={onMeasureWB}
-                disabled={measuring}
+                disabled={measuring || !isOnline}
                 class="h-5 text-[10px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-opacity"
               >{measuring ? 'Measuring...' : 'Auto Calibrate'}</button>
             {/if}
@@ -237,10 +243,6 @@
         {/if}
       </div>
 
-    </div>
-  {:else if open && !isOnline}
-    <div class="px-2 pb-2">
-      <span class="text-[10px] text-muted-foreground italic">Camera offline</span>
     </div>
   {/if}
 </div>

@@ -33,7 +33,10 @@ struct PersistedCamera {
 }
 
 impl PersistedCamera {
-    fn from_camera_info(info: &CameraInfo) -> Self {
+    fn from_camera_info_with_fallback(
+        info: &CameraInfo,
+        fallback: Option<&(Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
+    ) -> Self {
         // Extract current settings from status if available
         let (stream_settings, camera_settings) = if let Some(ref status) = info.status {
             let stream = StreamStartRequest {
@@ -72,7 +75,10 @@ impl PersistedCamera {
 
             (Some(stream), Some(camera))
         } else {
-            (None, None)
+            // Camera offline: use fallback from persisted_settings
+            let stream = fallback.and_then(|(s, _)| s.clone());
+            let camera = fallback.and_then(|(_, c)| c.clone());
+            (stream, camera)
         };
 
         Self {
@@ -158,7 +164,10 @@ impl CameraManager {
 
         let persisted_cameras: Vec<PersistedCamera> = self.cameras
             .values()
-            .map(|camera| PersistedCamera::from_camera_info(&camera.info))
+            .map(|camera| {
+                let fallback = self.persisted_settings.get(&camera.info.id);
+                PersistedCamera::from_camera_info_with_fallback(&camera.info, fallback)
+            })
             .collect();
 
         let persistence = CamerasPersistence {
@@ -561,26 +570,48 @@ impl CameraManager {
         }
     }
 
-    pub async fn get_all_cameras(&self) -> Vec<CameraInfo> {
+    pub async fn get_all_cameras(&mut self) -> Vec<CameraInfo> {
         let mut result = Vec::new();
+        let mut reconnected: Vec<String> = Vec::new();
 
-        for (id, camera) in &self.cameras {
+        for (id, camera) in &mut self.cameras {
             let mut info = camera.info.clone();
+            let was_offline = camera.info.connection_state != ConnectionState::Connected;
 
             // Fetch fresh status from camera
             match camera.client.read().await.get_status().await {
                 Ok(status) => {
                     info.status = Some(status);
                     info.connection_state = ConnectionState::Connected;
+
+                    // Track reconnection transitions
+                    if was_offline {
+                        reconnected.push(id.clone());
+                    }
+                    camera.info.connection_state = ConnectionState::Connected;
                 }
                 Err(e) => {
                     log::warn!("Failed to get status for camera {}: {}", id, e);
                     info.connection_state = ConnectionState::Error;
+                    camera.info.connection_state = ConnectionState::Error;
                     // Keep existing status if available
                 }
             }
 
             result.push(info);
+        }
+
+        // Auto-apply persisted settings to reconnected cameras
+        for id in &reconnected {
+            if let Some((_, Some(cam_settings))) = self.persisted_settings.get(id) {
+                let settings = cam_settings.clone();
+                if let Some(camera) = self.cameras.get(id) {
+                    log::info!("Camera {} reconnected, applying persisted settings", id);
+                    if let Err(e) = camera.client.read().await.update_camera_settings(settings).await {
+                        log::warn!("Failed to apply persisted settings to {}: {}", id, e);
+                    }
+                }
+            }
         }
 
         // Send MIDI feedback for cameras in manual focus mode
@@ -927,6 +958,24 @@ impl CameraManager {
     #[allow(dead_code)]
     pub fn get_persisted_settings(&self, camera_id: &str) -> Option<(Option<StreamStartRequest>, Option<CameraSettingsRequest>)> {
         self.persisted_settings.get(camera_id).cloned()
+    }
+
+    /// Persist camera settings without sending to the camera (for offline editing)
+    pub async fn persist_camera_settings(&mut self, camera_id: &str, settings: CameraSettingsRequest) -> Result<()> {
+        if !self.cameras.contains_key(camera_id) {
+            anyhow::bail!("Camera not found: {}", camera_id);
+        }
+        self.persisted_settings
+            .entry(camera_id.to_string())
+            .and_modify(|(_, cam)| *cam = Some(settings.clone()))
+            .or_insert((None, Some(settings)));
+        self.save_cameras_to_disk().await?;
+        Ok(())
+    }
+
+    /// Get persisted camera settings for a camera (used to init UI when offline)
+    pub fn get_persisted_camera_settings(&self, camera_id: &str) -> Option<CameraSettingsRequest> {
+        self.persisted_settings.get(camera_id).and_then(|(_, cam)| cam.clone())
     }
 
     // MARK: - MIDI Channel Management
