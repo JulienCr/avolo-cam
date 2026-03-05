@@ -96,6 +96,20 @@ export async function measureWhiteBalance(cameraId: string): Promise<WhiteBalanc
   return invoke('measure_white_balance', { cameraId });
 }
 
+// Offline camera settings persistence
+export async function persistCameraSettings(
+  cameraId: string,
+  settings: Partial<CameraSettings>
+): Promise<void> {
+  return invoke('persist_camera_settings', { cameraId, settings });
+}
+
+export async function getPersistedCameraSettings(
+  cameraId: string
+): Promise<Partial<CameraSettings> | null> {
+  return invoke('get_persisted_camera_settings', { cameraId });
+}
+
 // Group Operations
 export async function groupStartStream(
   cameraIds: string[],

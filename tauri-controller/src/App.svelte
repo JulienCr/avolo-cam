@@ -1,15 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import StatusBar from '$lib/components/organisms/StatusBar.svelte';
-  import GroupControlBar from '$lib/components/organisms/GroupControlBar.svelte';
-  import CameraCard from '$lib/components/organisms/CameraCard.svelte';
+  import { onMount } from 'svelte';
+  import AppHeader from '$lib/components/layout/AppHeader.svelte';
+  import CameraColumn from '$lib/components/layout/CameraColumn.svelte';
   import AddCameraDialog from '$lib/components/organisms/AddCameraDialog.svelte';
   import ProfileDialog from '$lib/components/organisms/ProfileDialog.svelte';
-  import CameraSettingsDialog from '$lib/components/organisms/CameraSettingsDialog.svelte';
-  import StreamSettingsDialog from '$lib/components/organisms/StreamSettingsDialog.svelte';
   import SettingsDialog from '$lib/components/organisms/SettingsDialog.svelte';
-  import Card from '$lib/components/atoms/Card.svelte';
-  import Button from '$lib/components/atoms/Button.svelte';
+  import ToastContainer from '$lib/components/layout/ToastContainer.svelte';
+  import { toastSuccess, toastError } from '$lib/stores/toast';
 
   // Stores
   import {
@@ -22,7 +19,6 @@
     startAutoRefresh,
     stopAutoRefresh,
     addCameraManualAction,
-    addDiscoveredCameraAction,
     removeCameraAction,
     discoverCamerasAction,
   } from '$lib/stores/cameras';
@@ -30,93 +26,59 @@
   import {
     showAddDialog,
     showProfileDialog,
-    showSettingsDialog,
-    showStreamSettingsDialog,
     showAppSettingsDialog,
-    settingsCameraId,
-    streamSettingsCameraId,
     selectedCameraIds,
     selectionCount,
     toggleCameraSelection,
-    openSettingsDialog,
-    closeSettingsDialog,
-    openStreamSettingsDialog,
-    closeStreamSettingsDialog,
   } from '$lib/stores/ui';
 
   import {
-    cameraStreamSettings,
-    currentStreamSettings,
     currentCameraSettings,
-    savingSettings,
-    measuringWB,
-    getStreamSettings,
-    loadStreamSettingsForEditing,
-    saveStreamSettingsFromEditing,
     initFlashDefaults,
   } from '$lib/stores/settings';
 
   import {
     profiles,
-    profileName,
-    savingProfile,
     loadProfiles,
     saveProfileAction,
     applyProfileAction,
     deleteProfileAction,
   } from '$lib/stores/profiles';
 
-  import { loadAppSettings } from '$lib/stores/appSettings';
+  import { appSettings, loadAppSettings } from '$lib/stores/appSettings';
   import { loadMidiConnectionStatus, loadMidiNotesConfig } from '$lib/stores/midi';
 
   import * as api from '$lib/utils/api';
-  import { debounce } from '$lib/utils/debounce';
-  import { DEFAULT_CAMERA_SETTINGS } from '$lib/types/settings';
+  import { get } from 'svelte/store';
+
+  // Apply UI scale as CSS zoom
+  $: {
+    const scale = $appSettings.ui_scale ?? 100;
+    document.documentElement.style.zoom = `${scale}%`;
+  }
 
   // Lifecycle
-  onMount(async () => {
-    await loadAppSettings();
-    await loadProfiles();
-    // Load MIDI settings and restore connections
-    await loadMidiConnectionStatus();
-    await loadMidiNotesConfig();
-    // Initialize Flash mode defaults (detect local IP)
-    await initFlashDefaults();
-    startAutoRefresh(2000);
-    // Auto-discover and add cameras on startup after a short delay
-    // to allow mDNS discovery to complete
-    setTimeout(async () => {
-      await discoverCamerasAction();
-    }, 2000);
+  onMount(() => {
+    (async () => {
+      await loadAppSettings();
+      await loadProfiles();
+      await loadMidiConnectionStatus();
+      await loadMidiNotesConfig();
+      await initFlashDefaults();
+      startAutoRefresh(2000);
+      setTimeout(async () => {
+        await discoverCamerasAction();
+      }, 2000);
+    })();
+
+    return () => {
+      stopAutoRefresh();
+    };
   });
 
-  onDestroy(() => {
-    stopAutoRefresh();
-  });
-
-  // Camera Actions
-  async function handleStartStream(cameraId: string) {
-    try {
-      const settings = getStreamSettings(cameraId);
-      await api.startStream(cameraId, settings);
-      await refreshCameras();
-    } catch (e) {
-      alert(`Failed to start stream: ${e}`);
-    }
-  }
-
-  async function handleStopStream(cameraId: string) {
-    try {
-      await api.stopStream(cameraId);
-      await refreshCameras();
-    } catch (e) {
-      alert(`Failed to stop stream: ${e}`);
-    }
-  }
-
+  // Camera removal
   async function handleRemoveCamera(cameraId: string) {
     if (!confirm('Remove this camera?')) return;
-
     try {
       await removeCameraAction(cameraId);
       selectedCameraIds.update((set) => {
@@ -124,282 +86,83 @@
         return set;
       });
     } catch (e) {
-      alert(`Failed to remove camera: ${e}`);
+      toastError(`Failed to remove camera: ${e}`);
     }
   }
 
-  // Group Actions
-  async function handleGroupStartStream() {
-    const ids = Array.from($selectedCameraIds);
-    if (ids.length === 0) {
-      alert('No cameras selected');
-      return;
-    }
-
-    try {
-      const firstId = ids[0];
-      const settings = getStreamSettings(firstId);
-      const results = await api.groupStartStream(ids, settings);
-
-      const failures = results.filter((r) => !r.success);
-      if (failures.length > 0) {
-        alert(`Failed for ${failures.length} cameras:\n${failures.map((f) => f.error).join('\n')}`);
-      }
-
-      await refreshCameras();
-    } catch (e) {
-      alert(`Group start failed: ${e}`);
-    }
-  }
-
-  async function handleGroupStopStream() {
-    const ids = Array.from($selectedCameraIds);
-    if (ids.length === 0) {
-      alert('No cameras selected');
-      return;
-    }
-
-    try {
-      await api.groupStopStream(ids);
-      await refreshCameras();
-    } catch (e) {
-      alert(`Group stop failed: ${e}`);
-    }
-  }
-
-  // Start/Stop All Actions
+  // Start/Stop All
   async function handleStartAllCameras() {
-    if ($cameras.length === 0) {
-      alert('No cameras available');
-      return;
-    }
-
+    const cams = get(cameras);
+    if (cams.length === 0) return;
     try {
       const results = await api.startAllCameras();
-
-      const failures = results.filter((r) => !r.success);
+      const failures = results.filter((r: any) => !r.success);
       if (failures.length > 0) {
-        alert(`Failed to start ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+        toastError(`Start failed for ${failures.length} camera(s)`);
       }
-
       await refreshCameras();
     } catch (e) {
-      alert(`Start all cameras failed: ${e}`);
+      toastError(`Start all failed: ${e}`);
     }
   }
 
   async function handleStopAllCameras() {
-    if ($cameras.length === 0) {
-      alert('No cameras available');
-      return;
-    }
-
+    const cams = get(cameras);
+    if (cams.length === 0) return;
     try {
       const results = await api.stopAllCameras();
-
-      const failures = results.filter((r) => !r.success);
+      const failures = results.filter((r: any) => !r.success);
       if (failures.length > 0) {
-        alert(`Failed to stop ${failures.length} camera(s):\n${failures.map((f) => f.error).join('\n')}`);
+        toastError(`Stop failed for ${failures.length} camera(s)`);
       }
-
       await refreshCameras();
     } catch (e) {
-      alert(`Stop all cameras failed: ${e}`);
-    }
-  }
-
-  // Camera Settings Dialog
-  function handleOpenCameraSettings(cameraId: string) {
-    // Load current settings from camera
-    const camera = $cameras.find((c) => c.id === cameraId);
-    if (camera?.status?.current) {
-      const current = camera.status.current;
-      $currentCameraSettings = {
-        wb_mode: current.wb_mode || 'auto',
-        wb_kelvin: current.wb_kelvin || 5000,
-        wb_tint: current.wb_tint || 0,
-        iso_mode: current.iso_mode || 'auto',
-        iso: current.iso || 400,
-        shutter_mode: current.shutter_mode || 'auto',
-        shutter_s: current.shutter_s || 0.01,
-        focus_mode: current.focus_mode || 'auto',
-        focus_distance: current.focus_distance || 0.5,
-        zoom_factor: current.zoom_factor || 2.0,
-        lens: current.lens || 'wide',
-        camera_position: current.camera_position || 'back',
-        torch_mode: 'auto',  // Default to auto
-        torch_level: current.torch_level || 0.03,  // Default torch level
-      };
-    } else {
-      $currentCameraSettings = { ...DEFAULT_CAMERA_SETTINGS };
-    }
-
-    openSettingsDialog(cameraId);
-  }
-
-  // Stream Settings Dialog
-  function handleOpenStreamSettings(cameraId: string) {
-    // Load current stream settings into editing store
-    loadStreamSettingsForEditing(cameraId);
-    openStreamSettingsDialog(cameraId);
-  }
-
-  async function handleApplyStreamSettings() {
-    if (!$streamSettingsCameraId) return;
-
-    try {
-      // Save the edited settings back to the per-camera settings store
-      saveStreamSettingsFromEditing($streamSettingsCameraId);
-
-      // Persist to backend (cameras.json and potentially device)
-      const settings = $currentStreamSettings;
-      await api.updateStreamSettings($streamSettingsCameraId, settings);
-
-      console.log('Stream settings saved successfully');
-    } catch (e) {
-      console.error('Failed to save stream settings:', e);
-      alert(`Failed to save stream settings: ${e}`);
-    }
-  }
-
-  // Debounced settings update
-  const debouncedUpdateSettings = debounce(async () => {
-    if (!$settingsCameraId) return;
-
-    try {
-      savingSettings.set(true);
-
-      const settings: any = {
-        wb_mode: $currentCameraSettings.wb_mode,
-        iso_mode: $currentCameraSettings.iso_mode,
-        shutter_mode: $currentCameraSettings.shutter_mode,
-        focus_mode: $currentCameraSettings.focus_mode,
-        zoom_factor: $currentCameraSettings.zoom_factor,
-        lens: $currentCameraSettings.lens,
-        camera_position: $currentCameraSettings.camera_position,
-      };
-
-      if ($currentCameraSettings.wb_mode === 'manual') {
-        settings.wb_kelvin = $currentCameraSettings.wb_kelvin;
-        settings.wb_tint = $currentCameraSettings.wb_tint;
-      }
-      if ($currentCameraSettings.iso_mode === 'manual') {
-        settings.iso = $currentCameraSettings.iso;
-      }
-      if ($currentCameraSettings.shutter_mode === 'manual') {
-        settings.shutter_s = $currentCameraSettings.shutter_s;
-      }
-      if ($currentCameraSettings.focus_mode === 'manual') {
-        settings.focus_distance = $currentCameraSettings.focus_distance;
-      }
-      if ($currentCameraSettings.torch_mode === 'manual') {
-        settings.torch_level = $currentCameraSettings.torch_level;
-      }
-
-      await api.updateCameraSettings($settingsCameraId, settings);
-      await refreshCameras();
-    } catch (e) {
-      console.error('Failed to update settings:', e);
-    } finally {
-      savingSettings.set(false);
-    }
-  }, 300);
-
-  // Watch for settings changes and auto-save with debounce
-  $: if ($settingsCameraId && $showSettingsDialog) {
-    // Access all settings properties to create reactive dependencies
-    const _ = [
-      $currentCameraSettings.wb_mode,
-      $currentCameraSettings.wb_kelvin,
-      $currentCameraSettings.wb_tint,
-      $currentCameraSettings.iso_mode,
-      $currentCameraSettings.iso,
-      $currentCameraSettings.shutter_mode,
-      $currentCameraSettings.shutter_s,
-      $currentCameraSettings.zoom_factor,
-      $currentCameraSettings.lens,
-      $currentCameraSettings.camera_position,
-      $currentCameraSettings.torch_mode,
-      $currentCameraSettings.torch_level,
-    ];
-    debouncedUpdateSettings();
-  }
-
-  // White Balance Measurement
-  async function handleMeasureWB() {
-    if (!$settingsCameraId) return;
-
-    try {
-      measuringWB.set(true);
-      const result = await api.measureWhiteBalance($settingsCameraId);
-
-      $currentCameraSettings.wb_kelvin = result.scene_cct_k;
-      $currentCameraSettings.wb_tint = Math.round(result.tint);
-      $currentCameraSettings.wb_mode = 'manual';
-
-      console.log('WB Measured:', result);
-    } catch (e) {
-      alert(`Failed to measure white balance: ${e}`);
-    } finally {
-      measuringWB.set(false);
+      toastError(`Stop all failed: ${e}`);
     }
   }
 
   // Profile Actions
   async function handleSaveProfile(name: string) {
+    const cs = get(currentCameraSettings);
     const profile = {
       name,
       settings: {
-        wb_mode: $currentCameraSettings.wb_mode,
-        wb_kelvin: $currentCameraSettings.wb_mode === 'manual' ? $currentCameraSettings.wb_kelvin : null,
-        wb_tint: $currentCameraSettings.wb_mode === 'manual' ? $currentCameraSettings.wb_tint : null,
-        iso_mode: $currentCameraSettings.iso_mode,
-        iso: $currentCameraSettings.iso_mode === 'manual' ? $currentCameraSettings.iso : null,
-        shutter_mode: $currentCameraSettings.shutter_mode,
-        shutter_s: $currentCameraSettings.shutter_mode === 'manual' ? $currentCameraSettings.shutter_s : null,
-        zoom_factor: $currentCameraSettings.zoom_factor,
-        lens: $currentCameraSettings.lens,
+        wb_mode: cs.wb_mode,
+        wb_kelvin: cs.wb_mode === 'manual' ? cs.wb_kelvin : null,
+        wb_tint: cs.wb_mode === 'manual' ? cs.wb_tint : null,
+        iso_mode: cs.iso_mode,
+        iso: cs.iso_mode === 'manual' ? cs.iso : null,
+        shutter_mode: cs.shutter_mode,
+        shutter_s: cs.shutter_mode === 'manual' ? cs.shutter_s : null,
+        zoom_factor: cs.zoom_factor,
+        lens: cs.lens,
       },
     };
-
     await saveProfileAction(profile);
-    alert('Profile saved successfully!');
+    toastSuccess('Profile saved');
   }
 
   async function handleApplyProfile(profileName: string) {
-    const ids = Array.from($selectedCameraIds);
+    const ids = Array.from(get(selectedCameraIds));
     if (ids.length === 0) {
-      alert('No cameras selected');
+      toastError('No cameras selected');
       return;
     }
-
     await applyProfileAction(profileName, ids);
-    alert(`Profile "${profileName}" applied to ${ids.length} camera(s)`);
+    toastSuccess(`Profile applied to ${ids.length} camera(s)`);
     await refreshCameras();
   }
 
-  // Discovered Camera
-  async function handleAddDiscoveredCamera(discovered: any) {
-    const token = prompt(`Enter bearer token for ${discovered.alias}:`, '');
-    if (!token) return;
-
-    try {
-      await addDiscoveredCameraAction(discovered, token);
-    } catch (e) {
-      alert(`Failed to add camera: ${e}`);
-    }
-  }
-
   // Alias Update
-  async function handleAliasUpdated(cameraId: string, newAlias: string) {
-    // Refresh cameras to get the updated alias
+  async function handleAliasUpdated(_cameraId: string, _newAlias: string) {
     await refreshCameras();
   }
 </script>
 
-<main class="container mx-auto max-w-7xl px-4 py-6 dark:bg-gray-900">
-  <StatusBar
+<div class="flex flex-col h-screen bg-background">
+  <AppHeader
     cameras={$cameras}
+    discovering={$discovering}
     onAddCamera={() => ($showAddDialog = true)}
     onProfiles={() => ($showProfileDialog = true)}
     onRefresh={refreshCameras}
@@ -407,58 +170,46 @@
     onSettings={() => ($showAppSettingsDialog = true)}
     onStartAll={handleStartAllCameras}
     onStopAll={handleStopAllCameras}
-    discovering={$discovering}
   />
 
   {#if $error}
-    <div class="mb-4 rounded-lg bg-red-50 p-4 text-red-700 dark:bg-red-900/20 dark:text-red-400">
+    <div class="px-2 py-1 text-[10px] text-red-400 bg-red-900/20 border-b border-border">
       Error: {$error}
     </div>
   {/if}
 
-  {#if $loading}
-    <div class="py-20 text-center text-gray-500 dark:text-gray-400">Loading cameras...</div>
-  {:else if $cameras.length === 0}
-    <div class="py-20 text-center">
-      <p class="text-lg text-gray-600 dark:text-gray-300">No cameras found</p>
-      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Add a camera manually or ensure cameras are on the same network</p>
-    </div>
-  {:else}
-    <!-- Group Controls -->
-    {#if $selectionCount > 0}
-      <div class="mb-6">
-        <GroupControlBar
-          count={$selectionCount}
-          onStartAll={handleGroupStartStream}
-          onStopAll={handleGroupStopStream}
-        />
-      </div>
-    {/if}
-
-    <!-- Discovery Status -->
-    {#if $discovering}
-      <div class="mb-6 rounded-lg bg-blue-50 p-4 text-center text-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
-        🔍 Discovering and adding cameras...
-      </div>
-    {/if}
-
-    <!-- Camera Grid -->
-    <div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-      {#each $cameras as camera (camera.id)}
-        <CameraCard
-          {camera}
-          selected={$selectedCameraIds.has(camera.id)}
-          onToggleSelection={() => toggleCameraSelection(camera.id)}
-          onStart={() => handleStartStream(camera.id)}
-          onStop={() => handleStopStream(camera.id)}
-          onCameraSettings={() => handleOpenCameraSettings(camera.id)}
-          onStreamSettings={() => handleOpenStreamSettings(camera.id)}
-          onAliasUpdated={(newAlias) => handleAliasUpdated(camera.id, newAlias)}
-        />
-      {/each}
+  {#if $discovering}
+    <div class="px-2 py-1 text-[10px] text-blue-400 bg-blue-900/20 border-b border-border text-center">
+      Discovering cameras...
     </div>
   {/if}
-</main>
+
+  {#if $loading}
+    <div class="flex-1 flex items-center justify-center text-xs text-muted-foreground">
+      Loading cameras...
+    </div>
+  {:else if $cameras.length === 0}
+    <div class="flex-1 flex flex-col items-center justify-center gap-2">
+      <span class="text-xs text-muted-foreground">No cameras found</span>
+      <span class="text-[10px] text-muted-foreground">Add a camera or discover on the network</span>
+    </div>
+  {:else}
+    <!-- Camera columns -->
+    <div class="flex-1 overflow-x-auto overflow-y-hidden">
+      <div class="flex h-full">
+        {#each $cameras as camera (camera.id)}
+          <CameraColumn
+            {camera}
+            selected={$selectedCameraIds.has(camera.id)}
+            onToggleSelection={() => toggleCameraSelection(camera.id)}
+            onRemove={() => handleRemoveCamera(camera.id)}
+            onAliasUpdated={(alias) => handleAliasUpdated(camera.id, alias)}
+          />
+        {/each}
+      </div>
+    </div>
+  {/if}
+</div>
 
 <!-- Dialogs -->
 <AddCameraDialog open={showAddDialog} onAdd={addCameraManualAction} />
@@ -469,27 +220,11 @@
   onSave={handleSaveProfile}
   onApply={handleApplyProfile}
   onDelete={deleteProfileAction}
-  canSave={$showSettingsDialog && !!$settingsCameraId}
+  canSave={false}
 />
-
-{#if $settingsCameraId}
-  <CameraSettingsDialog
-    open={showSettingsDialog}
-    bind:cameraSettings={$currentCameraSettings}
-    onMeasureWB={handleMeasureWB}
-    measuring={$measuringWB}
-    saving={$savingSettings}
-  />
-{/if}
-
-{#if $streamSettingsCameraId}
-  <StreamSettingsDialog
-    open={showStreamSettingsDialog}
-    bind:settings={$currentStreamSettings}
-    onApply={handleApplyStreamSettings}
-  />
-{/if}
 
 {#if $showAppSettingsDialog}
   <SettingsDialog onClose={() => ($showAppSettingsDialog = false)} />
 {/if}
+
+<ToastContainer />

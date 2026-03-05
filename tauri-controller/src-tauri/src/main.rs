@@ -211,8 +211,17 @@ async fn remove_camera(
 async fn get_cameras(
     state: State<'_, AppState>,
 ) -> Result<Vec<CameraInfo>, String> {
-    let manager = state.camera_manager.read().await;
-    Ok(manager.get_all_cameras().await)
+    // Use read lock for HTTP polling (can take seconds, must not block writes)
+    let cameras = {
+        let manager = state.camera_manager.read().await;
+        manager.get_all_cameras().await
+    };
+    // Brief write lock only to update connection states and auto-apply on reconnect
+    {
+        let mut manager = state.camera_manager.write().await;
+        manager.apply_reconnect_settings(&cameras).await;
+    }
+    Ok(cameras)
 }
 
 #[tauri::command]
@@ -682,6 +691,28 @@ async fn cancel_midi_learn_mode(
     Ok(())
 }
 
+// Offline camera settings persistence
+
+#[tauri::command]
+async fn persist_camera_settings(
+    state: State<'_, AppState>,
+    camera_id: String,
+    settings: CameraSettingsRequest,
+) -> Result<(), String> {
+    let mut manager = state.camera_manager.write().await;
+    manager.persist_camera_settings(&camera_id, settings).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_persisted_camera_settings(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<Option<CameraSettingsRequest>, String> {
+    let manager = state.camera_manager.read().await;
+    Ok(manager.get_persisted_camera_settings(&camera_id))
+}
+
 // App settings commands
 
 #[tauri::command]
@@ -902,6 +933,8 @@ fn main() {
             get_profiles,
             delete_profile,
             apply_profile,
+            persist_camera_settings,
+            get_persisted_camera_settings,
             get_app_settings,
             save_app_settings,
             delete_cameras_data,

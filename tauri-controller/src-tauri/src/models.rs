@@ -341,6 +341,12 @@ pub struct AppSettings {
     pub alerts: AlertsConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub midi: Option<MidiSettings>,
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: u32,
+}
+
+fn default_ui_scale() -> u32 {
+    100
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,6 +393,7 @@ impl Default for AppSettings {
                 },
             },
             midi: None,
+            ui_scale: 100,
         }
     }
 }

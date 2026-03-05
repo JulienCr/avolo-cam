@@ -129,7 +129,7 @@ Rust + Svelte desktop application for multi-camera control.
 ### Prerequisites
 
 - **iOS Development**: macOS with Xcode 15+, iOS 15+ iPhones
-- **Desktop Controller**: Rust 1.70+, Node.js 18+
+- **Desktop Controller**: Rust 1.70+, Node.js 18+, pnpm
 - **OBS Plugin (Windows)**: MSVC, CMake 3.16+, OBS SDK, FFmpeg D3D11VA headers/libs
 - **Network**: All devices on same WiFi (with multicast support for mDNS)
 
@@ -146,8 +146,8 @@ Rust + Svelte desktop application for multi-camera control.
 2. **Tauri Controller**:
    ```bash
    cd tauri-controller
-   npm install
-   npm run tauri:dev
+   pnpm install
+   pnpm tauri:dev
    ```
 
 3. **OBS Plugin** (Windows):

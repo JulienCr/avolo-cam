@@ -25,13 +25,22 @@ export interface AppSettings {
     batteryCritical: AlertSettings;
   };
   midi?: MidiSettings;
+  ui_scale: number;
 }
+
+export const UI_SCALE_OPTIONS = [
+  { value: 100, label: '100%' },
+  { value: 110, label: '110%' },
+  { value: 125, label: '125%' },
+  { value: 150, label: '150%' },
+];
 
 export const DEFAULT_MIDI_NOTE_CONFIG: MidiNoteConfig = {
   focusToggleNote: 60, // C3
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
+  ui_scale: 100,
   alerts: {
     temperature: {
       enabled: true,

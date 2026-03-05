@@ -2,66 +2,79 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  /* Temperature: warm → neutral → cool */
-  --k-2000: #FF8C3A; /* warm tungsten ~2000K */
-  --k-3000: #FFC47E; /* halogen ~3000K */
-  --k-4000: #FFF0D9; /* neutral-warm ~4000K */
-  --k-5500: #F8F9FB; /* daylight neutral */
-  --k-6500: #E6F2FF; /* cool neutral */
-  --k-8000: #A8C8FF; /* cool blue */
-  --k-10000: #6BA1FF; /* deeper blue */
-
-  /* Tint: green ↔ neutral ↔ magenta */
-  --t-green: #1F8F5F;
-  --t-green-soft: #BFE5CF;
-  --t-neutral: #F8F9FB;
-  --t-magenta-soft: #EBC2E7;
-  --t-magenta: #C43BAA;
-}
-
 @layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 90%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 90%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 90%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 12%;
+    --accent-foreground: 0 0% 90%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 217 91% 60%;
+    --radius: 0.125rem;
+
+    /* Temperature: warm -> neutral -> cool */
+    --k-2000: #FF8C3A;
+    --k-3000: #FFC47E;
+    --k-4000: #FFF0D9;
+    --k-5500: #F8F9FB;
+    --k-6500: #E6F2FF;
+    --k-8000: #A8C8FF;
+    --k-10000: #6BA1FF;
+
+    /* Tint: green <-> neutral <-> magenta */
+    --t-green: #1F8F5F;
+    --t-green-soft: #BFE5CF;
+    --t-neutral: #F8F9FB;
+    --t-magenta-soft: #EBC2E7;
+    --t-magenta: #C43BAA;
+  }
+
+  html {
+    @apply overflow-hidden;
+  }
+
   * {
-    @apply box-border;
+    @apply border-border box-border;
   }
 
   body {
-    @apply m-0 p-0 font-sans bg-gray-50 text-gray-900 antialiased;
+    @apply m-0 p-0 bg-background text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 11px;
   }
 
   #app {
-    @apply w-full min-h-screen;
+    @apply w-full h-screen overflow-hidden;
   }
 }
 
 @layer components {
-  /* Streaming mode badges */
   .mode-badge {
-    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold;
+    @apply inline-flex items-center rounded-sm px-1.5 py-0.5 text-[10px] font-semibold;
   }
 
   .mode-badge-ndi {
-    @apply bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400;
+    @apply bg-blue-900/30 text-blue-400;
   }
 
   .mode-badge-srt {
-    @apply bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400;
+    @apply bg-green-900/30 text-green-400;
   }
 
-  /* SRT URL display */
-  .srt-url-container {
-    @apply rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-700 dark:bg-green-900/20;
+  .mode-badge-flash {
+    @apply bg-orange-900/30 text-orange-400;
   }
-
-  .srt-url-code {
-    @apply text-xs font-mono text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-600;
-  }
-
-  .copy-button {
-    @apply p-1.5 rounded hover:bg-green-100 dark:hover:bg-green-800/30 transition-colors;
-  }
-}
-
-@layer utilities {
-  /* Custom utilities if needed */
 }
