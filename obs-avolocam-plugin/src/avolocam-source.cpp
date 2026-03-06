@@ -79,15 +79,16 @@ static std::mutex g_ports_mutex;
 struct SourceData {
     obs_source_t *source = nullptr;
 
-    // Configuration
-    std::string camera_ip;
-    uint16_t camera_port = 5000;
-    int jitter_mode = JITTER_STABLE;
-    bool show_latency = false;
-    std::string auth_token;
-    bool prefer_zero_copy = true;
-    bool debug_mode = false;
-    int decoder_type = DECODER_TYPE_AUTO;
+    // Configuration (thread-safe: atomics for simple types, config_mutex_ for strings)
+    std::string camera_ip;               // protected by config_mutex_
+    std::atomic<uint16_t> camera_port{5000};
+    std::atomic<int> jitter_mode{JITTER_STABLE};
+    std::atomic<bool> show_latency{false};
+    std::string auth_token;              // protected by config_mutex_
+    std::atomic<bool> prefer_zero_copy{true};
+    std::atomic<bool> debug_mode{false};
+    std::atomic<int> decoder_type{DECODER_TYPE_AUTO};
+    std::mutex config_mutex_;            // protects camera_ip, auth_token
 
     // Pipeline components
     std::unique_ptr<UdpReceiver> receiver;
@@ -159,10 +160,10 @@ struct SourceData {
     std::atomic<int> current_frame_buffer_{0};  // 0 = A, 1 = B
 
     // GPU output enabled flag
-    bool use_gpu_decode_ = false;
+    std::atomic<bool> use_gpu_decode_{false};
 
     // Flash mode: ultra-low latency path (derived from jitter_mode == ULTRA_LOW)
-    bool flash_mode_ = false;
+    std::atomic<bool> flash_mode_{false};
 
     // GPUConverter for NV12→RGBA on decoder device (Phase 2 zero-copy)
 #ifdef _WIN32
@@ -181,7 +182,7 @@ struct SourceData {
     std::atomic<void*> latest_shared_handle_{nullptr};
     void *cached_shared_handle_ = nullptr;
     gs_texture_t *obs_shared_texture_ = nullptr;
-    bool use_gpu_render_ = false;
+    std::atomic<bool> use_gpu_render_{false};
 
     // CPU fallback texture for CUSTOM_DRAW mode
     gs_texture_t *cpu_fallback_texture_ = nullptr;
@@ -209,7 +210,20 @@ struct SourceData {
 
     void start() {
         if (running.load()) return;
-        if (camera_ip.empty()) {
+
+        // Snapshot config under lock
+        std::string ip_copy, token_copy;
+        {
+            std::lock_guard<std::mutex> lock(config_mutex_);
+            ip_copy = camera_ip;
+            token_copy = auth_token;
+        }
+        uint16_t port_copy = camera_port.load();
+        int jitter_copy = jitter_mode.load();
+        bool zero_copy = prefer_zero_copy.load();
+        int dec_type = decoder_type.load();
+
+        if (ip_copy.empty()) {
             blog(LOG_WARNING, "[avolocam] No camera IP configured");
             return;
         }
@@ -217,24 +231,24 @@ struct SourceData {
         // Check port availability before starting
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            if (g_bound_ports.count(camera_port)) {
+            if (g_bound_ports.count(port_copy)) {
                 blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
-                     "Each source must use a unique UDP port.", camera_port);
+                     "Each source must use a unique UDP port.", port_copy);
                 return;
             }
         }
 
         blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
-             camera_ip.c_str(), camera_port);
+             ip_copy.c_str(), port_copy);
 
         // Derive flash mode from jitter setting
-        flash_mode_ = (jitter_mode == JITTER_ULTRA_LOW);
+        flash_mode_.store(jitter_copy == JITTER_ULTRA_LOW);
 
         // Initialize components
         receiver = std::make_unique<UdpReceiver>();
-        receiver->set_expected_source(camera_ip);  // Filter packets to only accept from this camera
+        receiver->set_expected_source(ip_copy);  // Filter packets to only accept from this camera
         jitter_buffer = std::make_unique<JitterBuffer>(
-            jitter_mode == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
+            jitter_copy == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
         depacketizer = std::make_unique<RtpDepacketizer>();
         assembler = std::make_unique<AccessUnitAssembler>();
@@ -243,14 +257,14 @@ struct SourceData {
 
         // Initialize texture output
         texture_output = std::make_unique<TextureOutput>();
-        texture_output->initialize(source, prefer_zero_copy);
+        texture_output->initialize(source, zero_copy);
 
         // Create platform-specific decoder with configured type
         DecoderConfig decoder_config;
-        decoder_config.prefer_hardware = prefer_zero_copy;
+        decoder_config.prefer_hardware = zero_copy;
         decoder_config.low_latency = true;
         decoder_config.output_nv12 = true;
-        decoder_config.decoder_type = static_cast<DecoderType>(decoder_type);
+        decoder_config.decoder_type = static_cast<DecoderType>(dec_type);
 
         decoder = PlatformDecoder::create(decoder_config);
         if (!decoder) {
@@ -260,10 +274,10 @@ struct SourceData {
 
         // Note: GPU output will be enabled after decoder initialization in decode_frame_async
         // because supports_gpu_output() requires the D3D device to be created first
-        use_gpu_decode_ = prefer_zero_copy;  // Store preference, will verify after init
+        use_gpu_decode_.store(zero_copy);  // Store preference, will verify after init
 
         // Flash mode: minimal decode queue for lowest latency
-        if (flash_mode_) {
+        if (flash_mode_.load()) {
             max_decode_queue_size_ = 1;
             blog(LOG_INFO, "[avolocam] Flash mode: decode queue = 1, jitter bypass ON");
         }
@@ -312,9 +326,8 @@ struct SourceData {
         // Blocking here freezes ALL video_tick/video_render for every source.
         // Thread is stored (not detached) so stop() can join it safely.
         {
-            std::string ws_url_str = "ws://" + camera_ip + ":"
+            std::string ws_url_str = "ws://" + ip_copy + ":"
                                      + std::to_string(DEFAULT_WS_PORT) + "/ws";
-            std::string token_copy = auth_token;
             auto ws = ws_client.get();
             ws_connect_thread_ = std::thread([ws, url = std::move(ws_url_str),
                          token = std::move(token_copy)]() {
@@ -347,7 +360,7 @@ struct SourceData {
         }
 
         if (bind_result_.load() != 1) {
-            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", camera_port);
+            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", port_copy);
             running.store(false);
 
             // Two-phase WS shutdown (see stop() comment for rationale)
@@ -418,7 +431,7 @@ struct SourceData {
         gpu_converter_.reset();
 #endif
         gpu_converter_initialized_ = false;
-        use_gpu_render_ = false;
+        use_gpu_render_.store(false);
         latest_shared_handle_.store(nullptr);
         cached_shared_handle_ = nullptr;
         if (obs_shared_texture_) {
@@ -462,10 +475,12 @@ struct SourceData {
     }
 
     void receive_loop() {
+        uint16_t port = camera_port.load();
+
         // Bind to UDP port
-        if (!receiver->bind(camera_port)) {
+        if (!receiver->bind(port)) {
             blog(LOG_ERROR, "[avolocam] Failed to bind to port %d - port may already be in use",
-                 camera_port);
+                 port);
             bind_result_.store(-1);
             return;
         }
@@ -473,7 +488,7 @@ struct SourceData {
         // Register port in global registry
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            g_bound_ports.insert(camera_port);
+            g_bound_ports.insert(port);
         }
 
         bind_result_.store(1);  // Signal success to start()
@@ -486,7 +501,7 @@ struct SourceData {
         }
 
         blog(LOG_INFO, "[avolocam] Listening on UDP port %d (rcvbuf=%dKB)",
-             camera_port, actual_rcvbuf / 1024);
+             port, actual_rcvbuf / 1024);
 
         std::vector<uint8_t> packet_buffer(2048);
 
@@ -554,7 +569,7 @@ struct SourceData {
         // Unregister port from global registry when receive loop exits
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            g_bound_ports.erase(camera_port);
+            g_bound_ports.erase(port);
         }
 
         receiver->close();
@@ -755,20 +770,20 @@ struct SourceData {
                         // MF decoder exposes a D3D device but currently uses the CPU
                         // conversion path due to GPUConverter interop constraints.
                         // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
-                        if (prefer_zero_copy && decoder->supports_gpu_output()
+                        if (prefer_zero_copy.load() && decoder->supports_gpu_output()
                             && decoder->get_d3d_device()) {
                             decoder->set_gpu_output(true);
-                            use_gpu_decode_ = true;
+                            use_gpu_decode_.store(true);
                             blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
                         } else {
-                            use_gpu_decode_ = false;
+                            use_gpu_decode_.store(false);
                         }
 
                         // Set decode queue size based on mode and decoder type:
                         // Flash mode: always 1 (minimum latency)
                         // Hardware decoders are fast → small queue (4)
                         // Software fallback is slower → larger queue (6) to absorb stalls
-                        if (flash_mode_) {
+                        if (flash_mode_.load()) {
                             max_decode_queue_size_ = 1;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
                                  "flash mode: decode queue size = 1",
@@ -802,7 +817,7 @@ struct SourceData {
 
         // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
 #ifdef _WIN32
-        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_) {
+        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_.load()) {
             // Initialize GPUConverter once with decoder's D3D11 device
             if (!gpu_converter_initialized_ && decoder) {
                 void *dev = decoder->get_d3d_device();
@@ -841,7 +856,7 @@ struct SourceData {
                     gpu_texture_width_.store(frame.width, std::memory_order_relaxed);
                     gpu_texture_height_.store(frame.height, std::memory_order_relaxed);
                     latest_shared_handle_.store(converted.shared_handle, std::memory_order_release);
-                    use_gpu_render_ = true;
+                    use_gpu_render_.store(true);
 
                     output_count++;
                     if (output_count == 1) {
@@ -1424,18 +1439,18 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     auto *data = new SourceData();
     data->source = source;
 
-    // Load settings
+    // Load settings (single-threaded construction, but use store() for atomics)
     data->camera_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
-    data->camera_port = (uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT);
-    data->jitter_mode = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
-    data->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
+    data->camera_port.store((uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT));
+    data->jitter_mode.store((int)obs_data_get_int(settings, PROP_JITTER_MODE));
+    data->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
     data->auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
-    data->prefer_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
-    data->debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
-    data->decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
+    data->prefer_zero_copy.store(obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY));
+    data->debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
+    data->decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
 
     blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
-         data->decoder_type, data->camera_port);
+         data->decoder_type.load(), data->camera_port.load());
     return data;
 }
 
@@ -1469,22 +1484,35 @@ static void avolocam_update(void *data, obs_data_t *settings)
     bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
     int new_decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
-    // Check if we need to restart
-    bool needs_restart = (new_ip != src->camera_ip ||
-                          new_port != src->camera_port ||
-                          new_jitter != src->jitter_mode ||
-                          new_token != src->auth_token ||
-                          new_zero_copy != src->prefer_zero_copy ||
-                          new_decoder_type != src->decoder_type);
+    // Snapshot current string values under lock for comparison
+    std::string old_ip, old_token;
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        old_ip = src->camera_ip;
+        old_token = src->auth_token;
+    }
 
-    src->camera_ip = new_ip;
-    src->camera_port = new_port;
-    src->jitter_mode = new_jitter;
-    src->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
-    src->auth_token = new_token;
-    src->prefer_zero_copy = new_zero_copy;
-    src->debug_mode = new_debug_mode;
-    src->decoder_type = new_decoder_type;
+    // Check if we need to restart
+    bool needs_restart = (new_ip != old_ip ||
+                          new_port != src->camera_port.load() ||
+                          new_jitter != src->jitter_mode.load() ||
+                          new_token != old_token ||
+                          new_zero_copy != src->prefer_zero_copy.load() ||
+                          new_decoder_type != src->decoder_type.load());
+
+    // Update string fields under lock
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        src->camera_ip = new_ip;
+        src->auth_token = new_token;
+    }
+    // Update atomic fields
+    src->camera_port.store(new_port);
+    src->jitter_mode.store(new_jitter);
+    src->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
+    src->prefer_zero_copy.store(new_zero_copy);
+    src->debug_mode.store(new_debug_mode);
+    src->decoder_type.store(new_decoder_type);
 
     if (needs_restart && src->running.load()) {
         src->stop();
@@ -1551,7 +1579,7 @@ static bool port_changed_callback(void *priv, obs_properties_t *props,
 
     // Exclude this source's own currently-bound port from collision check
     auto *src = static_cast<SourceData *>(priv);
-    uint16_t own_port = (src && src->running.load()) ? src->camera_port : 0;
+    uint16_t own_port = (src && src->running.load()) ? src->camera_port.load() : 0;
 
     bool collision = false;
     if (port > 0) {
@@ -1670,9 +1698,16 @@ static void avolocam_video_tick(void *data, float seconds)
     const char *name_ptr = obs_source_get_name(src->source);
     std::string cur_name = name_ptr ? name_ptr : "";
 
+    // Snapshot camera_ip under lock for test pattern comparison
+    std::string ip_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        ip_snapshot = src->camera_ip;
+    }
+
     // Invalidate test pattern if camera IP or source name changed
     if (src->test_pattern_created_ &&
-        (src->camera_ip != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
+        (ip_snapshot != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
         obs_enter_graphics();
         if (src->test_pattern_texture_) {
             gs_texture_destroy(src->test_pattern_texture_);
@@ -1686,10 +1721,10 @@ static void avolocam_video_tick(void *data, float seconds)
     if (!src->test_pattern_created_) {
         blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u (name='%s', ip='%s')",
              SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
-             cur_name.c_str(), src->camera_ip.c_str());
+             cur_name.c_str(), ip_snapshot.c_str());
         auto pixels = generate_test_pattern_rgba(
             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
-            cur_name, src->camera_ip);
+            cur_name, ip_snapshot);
         const uint8_t *ptr = pixels.data();
         obs_enter_graphics();
         src->test_pattern_texture_ = gs_texture_create(
@@ -1697,13 +1732,13 @@ static void avolocam_video_tick(void *data, float seconds)
             GS_RGBA, 1, &ptr, 0);
         obs_leave_graphics();
         src->test_pattern_created_ = true;
-        src->test_pattern_ip_ = src->camera_ip;
+        src->test_pattern_ip_ = ip_snapshot;
         src->test_pattern_name_ = cur_name;
         blog(LOG_INFO, "[avolocam] Test pattern texture %s",
              src->test_pattern_texture_ ? "created OK" : "FAILED");
     }
 
-    if (src->use_gpu_render_) {
+    if (src->use_gpu_render_.load()) {
         // GPU PATH: open the shared RGBA texture on OBS device (cached)
         void *h = src->latest_shared_handle_.load(std::memory_order_acquire);
         if (h && h != src->cached_shared_handle_) {
@@ -1742,7 +1777,7 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
     auto *src = static_cast<SourceData *>(data);
 
     // GPU path: camera frame available via shared texture
-    if (src->use_gpu_render_ && src->obs_shared_texture_) {
+    if (src->use_gpu_render_.load() && src->obs_shared_texture_) {
         effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
         while (gs_effect_loop(effect, "Draw")) {
             obs_source_draw(src->obs_shared_texture_, 0, 0, 0, 0, false);
