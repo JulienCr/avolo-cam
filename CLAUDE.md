@@ -230,6 +230,10 @@ All endpoints require Bearer token authentication.
 - Focus on stability and low latency over feature richness initially
 - Uniform JSON error format across all APIs
 
+## Project-Local Plugins
+
+- **bug-hunters** (`obs-avolocam-plugin/.claude/plugins/bug-hunters/`) — Systematic bug hunting for the OBS plugin with spec reconstruction, adversarial validation, and confidence scoring. **Always use this plugin's workflow (orchestrator + logic-hunter/cpp-hunter) for bug hunting on the OBS plugin instead of generic agents.** Read the orchestrator agent and follow its phases: spec reconstruction, hunt, adversarial challenge, confidence scoring.
+
 ## Development Resources
 
 - **Implementation Checklist**: See [docs/LOT-A-CHECKLIST.md](docs/LOT-A-CHECKLIST.md) for detailed task breakdown
