@@ -2,6 +2,7 @@
   import type { CameraSettings } from '$lib/types/settings';
   import type { LensType } from '$lib/types/camera';
   import { getLensFromZoom, getZoomFromLens } from '$lib/stores/settings';
+  import { formatShutterSpeed } from '$lib/utils/format';
 
   let {
     settings = $bindable(),
@@ -151,7 +152,7 @@
               settings.shutter_s,
               (v) => settings.shutter_s = v,
               0.001, 0.1, 0.001,
-              `1/${Math.round(1 / settings.shutter_s)}`,
+              formatShutterSpeed(settings.shutter_s),
               settings.shutter_mode === 'auto'
             )}
           </div>

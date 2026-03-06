@@ -21,17 +21,8 @@ export async function initFlashDefaults(): Promise<void> {
 // Per-camera stream settings (cameraId -> StreamSettings)
 export const cameraStreamSettings = writable<Record<string, StreamSettings>>({});
 
-// Current stream settings being edited
-export const currentStreamSettings = writable<StreamSettings>(DEFAULT_STREAM_SETTINGS);
-
-// Current camera settings being edited
+// Current camera settings being edited (used by profile save)
 export const currentCameraSettings = writable<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
-
-// Saving state
-export const savingSettings = writable(false);
-
-// Measuring white balance
-export const measuringWB = writable(false);
 
 // Actions
 export function getStreamSettings(cameraId: string): StreamSettings {
@@ -41,16 +32,6 @@ export function getStreamSettings(cameraId: string): StreamSettings {
     return DEFAULT_STREAM_SETTINGS;
   }
   return settings[cameraId];
-}
-
-export function loadStreamSettingsForEditing(cameraId: string): void {
-  const settings = getStreamSettings(cameraId);
-  currentStreamSettings.set({ ...settings });
-}
-
-export function saveStreamSettingsFromEditing(cameraId: string): void {
-  const settings = get(currentStreamSettings);
-  updateStreamSettings(cameraId, settings);
 }
 
 export function updateStreamSettings(
