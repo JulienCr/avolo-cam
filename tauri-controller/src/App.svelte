@@ -61,10 +61,12 @@
   onMount(() => {
     (async () => {
       await loadAppSettings();
-      await loadProfiles();
-      await loadMidiConnectionStatus();
-      await loadMidiNotesConfig();
-      await initFlashDefaults();
+      await Promise.all([
+        loadProfiles(),
+        loadMidiConnectionStatus(),
+        loadMidiNotesConfig(),
+        initFlashDefaults(),
+      ]);
       startAutoRefresh(2000);
       setTimeout(async () => {
         await discoverCamerasAction();
@@ -91,33 +93,18 @@
   }
 
   // Start/Stop All
-  async function handleStartAllCameras() {
+  async function handleGroupAction(action: () => Promise<any[]>, label: string) {
     const cams = get(cameras);
     if (cams.length === 0) return;
     try {
-      const results = await api.startAllCameras();
+      const results = await action();
       const failures = results.filter((r: any) => !r.success);
       if (failures.length > 0) {
-        toastError(`Start failed for ${failures.length} camera(s)`);
+        toastError(`${label} failed for ${failures.length} camera(s)`);
       }
       await refreshCameras();
     } catch (e) {
-      toastError(`Start all failed: ${e}`);
-    }
-  }
-
-  async function handleStopAllCameras() {
-    const cams = get(cameras);
-    if (cams.length === 0) return;
-    try {
-      const results = await api.stopAllCameras();
-      const failures = results.filter((r: any) => !r.success);
-      if (failures.length > 0) {
-        toastError(`Stop failed for ${failures.length} camera(s)`);
-      }
-      await refreshCameras();
-    } catch (e) {
-      toastError(`Stop all failed: ${e}`);
+      toastError(`${label} all failed: ${e}`);
     }
   }
 
@@ -168,8 +155,8 @@
     onRefresh={refreshCameras}
     onDiscover={discoverCamerasAction}
     onSettings={() => ($showAppSettingsDialog = true)}
-    onStartAll={handleStartAllCameras}
-    onStopAll={handleStopAllCameras}
+    onStartAll={() => handleGroupAction(api.startAllCameras, 'Start')}
+    onStopAll={() => handleGroupAction(api.stopAllCameras, 'Stop')}
   />
 
   {#if $error}

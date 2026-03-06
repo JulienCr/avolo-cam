@@ -5,7 +5,6 @@
   import { formatBattery, formatTemperature, formatBitrate } from '$lib/utils/format';
   import * as api from '$lib/utils/api';
   import { cameraStreamSettings } from '$lib/stores/settings';
-  import { get } from 'svelte/store';
 
   let {
     camera,
@@ -70,7 +69,7 @@
 
   // SRT copy
   let copiedSrt = $state(false);
-  let cameraSettings = $derived(get(cameraStreamSettings)[camera.id]);
+  let cameraSettings = $derived($cameraStreamSettings[camera.id]);
   let configuredStreamingMode = $derived(cameraSettings?.streaming_mode || 'ndi');
   let configuredSrtPort = $derived(cameraSettings?.srt_port || 9000);
   let constructedSrtUrl = $derived(`srt://${camera.ip}:${configuredSrtPort}?mode=caller`);

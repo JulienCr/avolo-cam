@@ -7,12 +7,7 @@
   import CameraSection from '../sections/CameraSection.svelte';
   import {
     getStreamSettings,
-    loadStreamSettingsForEditing,
-    currentStreamSettings,
-    currentCameraSettings,
-    measuringWB,
   } from '$lib/stores/settings';
-  import { get } from 'svelte/store';
   import * as api from '$lib/utils/api';
   import { refreshCameras } from '$lib/stores/cameras';
   import { debounce } from '$lib/utils/debounce';
@@ -39,25 +34,15 @@
   // Local stream settings for this column
   let streamSettings = $state<StreamSettings>(getStreamSettings(camera.id));
 
+  // Merge partial source over defaults to build a full CameraSettings
+  function toCameraSettings(source: Partial<CameraSettings>): CameraSettings {
+    return { ...DEFAULT_CAMERA_SETTINGS, ...source, torch_mode: 'auto' };
+  }
+
   // Local camera settings for this column
   let cameraSettings = $state<CameraSettings>(
     camera.status?.current
-      ? {
-          wb_mode: camera.status.current.wb_mode || 'auto',
-          wb_kelvin: camera.status.current.wb_kelvin || 5000,
-          wb_tint: camera.status.current.wb_tint || 0,
-          iso_mode: camera.status.current.iso_mode || 'auto',
-          iso: camera.status.current.iso || 400,
-          shutter_mode: camera.status.current.shutter_mode || 'auto',
-          shutter_s: camera.status.current.shutter_s || 0.01,
-          focus_mode: camera.status.current.focus_mode || 'auto',
-          focus_distance: camera.status.current.focus_distance || 0.5,
-          zoom_factor: camera.status.current.zoom_factor || 2.0,
-          lens: (camera.status.current.lens as any) || 'wide',
-          camera_position: (camera.status.current.camera_position as any) || 'back',
-          torch_mode: 'auto',
-          torch_level: camera.status.current.torch_level || 0.03,
-        }
+      ? toCameraSettings(camera.status.current as Partial<CameraSettings>)
       : { ...DEFAULT_CAMERA_SETTINGS }
   );
 
@@ -67,22 +52,7 @@
       try {
         const persisted = await api.getPersistedCameraSettings(camera.id);
         if (persisted) {
-          cameraSettings = {
-            wb_mode: persisted.wb_mode || 'auto',
-            wb_kelvin: persisted.wb_kelvin || 5000,
-            wb_tint: persisted.wb_tint || 0,
-            iso_mode: persisted.iso_mode || 'auto',
-            iso: persisted.iso || 400,
-            shutter_mode: persisted.shutter_mode || 'auto',
-            shutter_s: persisted.shutter_s || 0.01,
-            focus_mode: persisted.focus_mode || 'auto',
-            focus_distance: persisted.focus_distance || 0.5,
-            zoom_factor: persisted.zoom_factor || 2.0,
-            lens: (persisted.lens as any) || 'wide',
-            camera_position: (persisted.camera_position as any) || 'back',
-            torch_mode: 'auto',
-            torch_level: persisted.torch_level || 0.03,
-          };
+          cameraSettings = toCameraSettings(persisted as Partial<CameraSettings>);
         }
       } catch (e) {
         console.warn('Could not load persisted camera settings:', e);
@@ -147,6 +117,10 @@
     }
   }, 300);
 
+  // Skip first $effect run to avoid spurious API calls on mount
+  let streamInitialized = false;
+  let cameraInitialized = false;
+
   // Watch stream settings changes
   $effect(() => {
     // Access all stream setting props to establish reactive tracking
@@ -160,6 +134,7 @@
       streamSettings.srt_gop_size,
       streamSettings.flash_jitter_mode,
     ];
+    if (!streamInitialized) { streamInitialized = true; return; }
     debouncedSaveStreamSettings();
   });
 
@@ -181,6 +156,7 @@
       cameraSettings.torch_mode,
       cameraSettings.torch_level,
     ];
+    if (!cameraInitialized) { cameraInitialized = true; return; }
     if (isOnline) {
       debouncedSaveCameraSettings();
     } else {
@@ -206,9 +182,11 @@
     }
   }
 
+  let measuring = $state(false);
+
   async function handleMeasureWB() {
     try {
-      measuringWB.set(true);
+      measuring = true;
       const result = await api.measureWhiteBalance(camera.id);
       cameraSettings.wb_kelvin = result.scene_cct_k;
       cameraSettings.wb_tint = Math.round(result.tint);
@@ -216,11 +194,9 @@
     } catch (e) {
       toastError(`Failed to measure WB: ${e}`);
     } finally {
-      measuringWB.set(false);
+      measuring = false;
     }
   }
-
-  let measuring = $derived(get(measuringWB));
 </script>
 
 <div class="w-[280px] min-w-[280px] h-full flex flex-col border-r border-border bg-card">
