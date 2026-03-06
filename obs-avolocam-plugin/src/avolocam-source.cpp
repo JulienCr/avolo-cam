@@ -1043,6 +1043,7 @@ struct BitmapGlyph {
 };
 
 // ASCII-indexed font table (32..127). Index with: g_font[ch - 32]
+// Lowercase a-z maps to uppercase via get_glyph(), so those entries are unused.
 static const BitmapGlyph g_font[96] = {
     // 32 ' ' (space)
     {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
@@ -1217,9 +1218,12 @@ static const int GLYPH_W = 5;
 static const int GLYPH_H = 7;
 static const int CHAR_SPACING = 1;  // 1 pixel gap between characters (at glyph scale)
 
-// Get glyph for a character, returns space glyph for unsupported chars
+// Get glyph for a character, returns space glyph for unsupported chars.
+// Lowercase a-z is rendered as uppercase A-Z.
 static const BitmapGlyph &get_glyph(char ch)
 {
+    if (ch >= 'a' && ch <= 'z')
+        ch = ch - 'a' + 'A';
     if (ch >= 32 && ch <= 127)
         return g_font[ch - 32];
     return g_font[0]; // space
@@ -1657,30 +1661,30 @@ static void avolocam_video_tick(void *data, float seconds)
     UNUSED_PARAMETER(seconds);
     auto *src = static_cast<SourceData *>(data);
 
+    // Cache source name once per tick (avoid repeated obs_source_get_name calls)
+    const char *name_ptr = obs_source_get_name(src->source);
+    std::string cur_name = name_ptr ? name_ptr : "";
+
     // Invalidate test pattern if camera IP or source name changed
-    {
-        std::string cur_name = obs_source_get_name(src->source) ? obs_source_get_name(src->source) : "";
-        if (src->test_pattern_created_ &&
-            (src->camera_ip != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
-            obs_enter_graphics();
-            if (src->test_pattern_texture_) {
-                gs_texture_destroy(src->test_pattern_texture_);
-                src->test_pattern_texture_ = nullptr;
-            }
-            obs_leave_graphics();
-            src->test_pattern_created_ = false;
+    if (src->test_pattern_created_ &&
+        (src->camera_ip != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
+        obs_enter_graphics();
+        if (src->test_pattern_texture_) {
+            gs_texture_destroy(src->test_pattern_texture_);
+            src->test_pattern_texture_ = nullptr;
         }
+        obs_leave_graphics();
+        src->test_pattern_created_ = false;
     }
 
     // Lazy-init test pattern texture (on graphics thread)
     if (!src->test_pattern_created_) {
-        std::string source_name = obs_source_get_name(src->source) ? obs_source_get_name(src->source) : "";
         blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u (name='%s', ip='%s')",
              SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
-             source_name.c_str(), src->camera_ip.c_str());
+             cur_name.c_str(), src->camera_ip.c_str());
         auto pixels = generate_test_pattern_rgba(
             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
-            source_name, src->camera_ip);
+            cur_name, src->camera_ip);
         const uint8_t *ptr = pixels.data();
         obs_enter_graphics();
         src->test_pattern_texture_ = gs_texture_create(
@@ -1689,7 +1693,7 @@ static void avolocam_video_tick(void *data, float seconds)
         obs_leave_graphics();
         src->test_pattern_created_ = true;
         src->test_pattern_ip_ = src->camera_ip;
-        src->test_pattern_name_ = source_name;
+        src->test_pattern_name_ = cur_name;
         blog(LOG_INFO, "[avolocam] Test pattern texture %s",
              src->test_pattern_texture_ ? "created OK" : "FAILED");
     }
