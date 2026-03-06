@@ -31,6 +31,7 @@
 #include <condition_variable>
 #include <string>
 #include <cstdio>
+#include <cstring>
 
 #ifdef _WIN32
 #include <mfapi.h>
@@ -78,15 +79,16 @@ static std::mutex g_ports_mutex;
 struct SourceData {
     obs_source_t *source = nullptr;
 
-    // Configuration
-    std::string camera_ip;
-    uint16_t camera_port = 5000;
-    int jitter_mode = JITTER_STABLE;
-    bool show_latency = false;
-    std::string auth_token;
-    bool prefer_zero_copy = true;
-    bool debug_mode = false;
-    int decoder_type = DECODER_TYPE_AUTO;
+    // Configuration (thread-safe: atomics for simple types, config_mutex_ for strings)
+    std::string camera_ip;               // protected by config_mutex_
+    std::atomic<uint16_t> camera_port{5000};
+    std::atomic<int> jitter_mode{JITTER_STABLE};
+    std::atomic<bool> show_latency{false};
+    std::string auth_token;              // protected by config_mutex_
+    std::atomic<bool> prefer_zero_copy{true};
+    std::atomic<bool> debug_mode{false};
+    std::atomic<int> decoder_type{DECODER_TYPE_AUTO};
+    std::mutex config_mutex_;            // protects camera_ip, auth_token
 
     // Pipeline components
     std::unique_ptr<UdpReceiver> receiver;
@@ -158,10 +160,10 @@ struct SourceData {
     std::atomic<int> current_frame_buffer_{0};  // 0 = A, 1 = B
 
     // GPU output enabled flag
-    bool use_gpu_decode_ = false;
+    std::atomic<bool> use_gpu_decode_{false};
 
     // Flash mode: ultra-low latency path (derived from jitter_mode == ULTRA_LOW)
-    bool flash_mode_ = false;
+    std::atomic<bool> flash_mode_{false};
 
     // GPUConverter for NV12→RGBA on decoder device (Phase 2 zero-copy)
 #ifdef _WIN32
@@ -180,7 +182,7 @@ struct SourceData {
     std::atomic<void*> latest_shared_handle_{nullptr};
     void *cached_shared_handle_ = nullptr;
     gs_texture_t *obs_shared_texture_ = nullptr;
-    bool use_gpu_render_ = false;
+    std::atomic<bool> use_gpu_render_{false};
 
     // CPU fallback texture for CUSTOM_DRAW mode
     gs_texture_t *cpu_fallback_texture_ = nullptr;
@@ -190,6 +192,8 @@ struct SourceData {
     // "No signal" test pattern
     gs_texture_t *test_pattern_texture_ = nullptr;
     bool test_pattern_created_ = false;
+    std::string test_pattern_ip_;   // IP baked into current test pattern
+    std::string test_pattern_name_; // source name baked into current test pattern
     static constexpr uint32_t TEST_PATTERN_WIDTH = 1920;
     static constexpr uint32_t TEST_PATTERN_HEIGHT = 1080;
 
@@ -206,7 +210,20 @@ struct SourceData {
 
     void start() {
         if (running.load()) return;
-        if (camera_ip.empty()) {
+
+        // Snapshot config under lock
+        std::string ip_copy, token_copy;
+        {
+            std::lock_guard<std::mutex> lock(config_mutex_);
+            ip_copy = camera_ip;
+            token_copy = auth_token;
+        }
+        uint16_t port_copy = camera_port.load();
+        int jitter_copy = jitter_mode.load();
+        bool zero_copy = prefer_zero_copy.load();
+        int dec_type = decoder_type.load();
+
+        if (ip_copy.empty()) {
             blog(LOG_WARNING, "[avolocam] No camera IP configured");
             return;
         }
@@ -214,24 +231,24 @@ struct SourceData {
         // Check port availability before starting
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            if (g_bound_ports.count(camera_port)) {
+            if (g_bound_ports.count(port_copy)) {
                 blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
-                     "Each source must use a unique UDP port.", camera_port);
+                     "Each source must use a unique UDP port.", port_copy);
                 return;
             }
         }
 
         blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
-             camera_ip.c_str(), camera_port);
+             ip_copy.c_str(), port_copy);
 
         // Derive flash mode from jitter setting
-        flash_mode_ = (jitter_mode == JITTER_ULTRA_LOW);
+        flash_mode_.store(jitter_copy == JITTER_ULTRA_LOW);
 
         // Initialize components
         receiver = std::make_unique<UdpReceiver>();
-        receiver->set_expected_source(camera_ip);  // Filter packets to only accept from this camera
+        receiver->set_expected_source(ip_copy);  // Filter packets to only accept from this camera
         jitter_buffer = std::make_unique<JitterBuffer>(
-            jitter_mode == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
+            jitter_copy == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
         depacketizer = std::make_unique<RtpDepacketizer>();
         assembler = std::make_unique<AccessUnitAssembler>();
@@ -240,14 +257,14 @@ struct SourceData {
 
         // Initialize texture output
         texture_output = std::make_unique<TextureOutput>();
-        texture_output->initialize(source, prefer_zero_copy);
+        texture_output->initialize(source, zero_copy);
 
         // Create platform-specific decoder with configured type
         DecoderConfig decoder_config;
-        decoder_config.prefer_hardware = prefer_zero_copy;
+        decoder_config.prefer_hardware = zero_copy;
         decoder_config.low_latency = true;
         decoder_config.output_nv12 = true;
-        decoder_config.decoder_type = static_cast<DecoderType>(decoder_type);
+        decoder_config.decoder_type = static_cast<DecoderType>(dec_type);
 
         decoder = PlatformDecoder::create(decoder_config);
         if (!decoder) {
@@ -257,10 +274,10 @@ struct SourceData {
 
         // Note: GPU output will be enabled after decoder initialization in decode_frame_async
         // because supports_gpu_output() requires the D3D device to be created first
-        use_gpu_decode_ = prefer_zero_copy;  // Store preference, will verify after init
+        use_gpu_decode_.store(zero_copy);  // Store preference, will verify after init
 
         // Flash mode: minimal decode queue for lowest latency
-        if (flash_mode_) {
+        if (flash_mode_.load()) {
             max_decode_queue_size_ = 1;
             blog(LOG_INFO, "[avolocam] Flash mode: decode queue = 1, jitter bypass ON");
         }
@@ -309,9 +326,8 @@ struct SourceData {
         // Blocking here freezes ALL video_tick/video_render for every source.
         // Thread is stored (not detached) so stop() can join it safely.
         {
-            std::string ws_url_str = "ws://" + camera_ip + ":"
+            std::string ws_url_str = "ws://" + ip_copy + ":"
                                      + std::to_string(DEFAULT_WS_PORT) + "/ws";
-            std::string token_copy = auth_token;
             auto ws = ws_client.get();
             ws_connect_thread_ = std::thread([ws, url = std::move(ws_url_str),
                          token = std::move(token_copy)]() {
@@ -344,7 +360,7 @@ struct SourceData {
         }
 
         if (bind_result_.load() != 1) {
-            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", camera_port);
+            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", port_copy);
             running.store(false);
 
             // Two-phase WS shutdown (see stop() comment for rationale)
@@ -415,7 +431,7 @@ struct SourceData {
         gpu_converter_.reset();
 #endif
         gpu_converter_initialized_ = false;
-        use_gpu_render_ = false;
+        use_gpu_render_.store(false);
         latest_shared_handle_.store(nullptr);
         cached_shared_handle_ = nullptr;
         if (obs_shared_texture_) {
@@ -459,10 +475,12 @@ struct SourceData {
     }
 
     void receive_loop() {
+        uint16_t port = camera_port.load();
+
         // Bind to UDP port
-        if (!receiver->bind(camera_port)) {
+        if (!receiver->bind(port)) {
             blog(LOG_ERROR, "[avolocam] Failed to bind to port %d - port may already be in use",
-                 camera_port);
+                 port);
             bind_result_.store(-1);
             return;
         }
@@ -470,7 +488,7 @@ struct SourceData {
         // Register port in global registry
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            g_bound_ports.insert(camera_port);
+            g_bound_ports.insert(port);
         }
 
         bind_result_.store(1);  // Signal success to start()
@@ -483,7 +501,7 @@ struct SourceData {
         }
 
         blog(LOG_INFO, "[avolocam] Listening on UDP port %d (rcvbuf=%dKB)",
-             camera_port, actual_rcvbuf / 1024);
+             port, actual_rcvbuf / 1024);
 
         std::vector<uint8_t> packet_buffer(2048);
 
@@ -551,7 +569,7 @@ struct SourceData {
         // Unregister port from global registry when receive loop exits
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
-            g_bound_ports.erase(camera_port);
+            g_bound_ports.erase(port);
         }
 
         receiver->close();
@@ -752,20 +770,20 @@ struct SourceData {
                         // MF decoder exposes a D3D device but currently uses the CPU
                         // conversion path due to GPUConverter interop constraints.
                         // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
-                        if (prefer_zero_copy && decoder->supports_gpu_output()
+                        if (prefer_zero_copy.load() && decoder->supports_gpu_output()
                             && decoder->get_d3d_device()) {
                             decoder->set_gpu_output(true);
-                            use_gpu_decode_ = true;
+                            use_gpu_decode_.store(true);
                             blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
                         } else {
-                            use_gpu_decode_ = false;
+                            use_gpu_decode_.store(false);
                         }
 
                         // Set decode queue size based on mode and decoder type:
                         // Flash mode: always 1 (minimum latency)
                         // Hardware decoders are fast → small queue (4)
                         // Software fallback is slower → larger queue (6) to absorb stalls
-                        if (flash_mode_) {
+                        if (flash_mode_.load()) {
                             max_decode_queue_size_ = 1;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
                                  "flash mode: decode queue size = 1",
@@ -799,7 +817,7 @@ struct SourceData {
 
         // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
 #ifdef _WIN32
-        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_) {
+        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_.load()) {
             // Initialize GPUConverter once with decoder's D3D11 device
             if (!gpu_converter_initialized_ && decoder) {
                 void *dev = decoder->get_d3d_device();
@@ -838,7 +856,7 @@ struct SourceData {
                     gpu_texture_width_.store(frame.width, std::memory_order_relaxed);
                     gpu_texture_height_.store(frame.height, std::memory_order_relaxed);
                     latest_shared_handle_.store(converted.shared_handle, std::memory_order_release);
-                    use_gpu_render_ = true;
+                    use_gpu_render_.store(true);
 
                     output_count++;
                     if (output_count == 1) {
@@ -1034,44 +1052,269 @@ struct SourceData {
 // "No Signal" SMPTE Test Pattern Generator
 // ============================================================================
 
-// Bitmap font for "NO SIGNAL" text (5x7 pixel glyphs)
+// Bitmap font: 5x7 pixel glyphs covering A-Z, 0-9, and common punctuation
 // Each character is represented as 7 rows of 5-bit patterns
 struct BitmapGlyph {
     uint8_t rows[7];
 };
 
-static const BitmapGlyph g_font_glyphs[] = {
-    // 'N' = index 0
-    {{ 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001 }},
-    // 'O' = index 1
-    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }},
-    // ' ' = index 2
+// ASCII-indexed font table (32..127). Index with: g_font[ch - 32]
+// Lowercase a-z maps to uppercase via get_glyph(), so those entries are unused.
+static const BitmapGlyph g_font[96] = {
+    // 32 ' ' (space)
     {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
-    // 'S' = index 3
-    {{ 0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110 }},
-    // 'I' = index 4
-    {{ 0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 }},
-    // 'G' = index 5
-    {{ 0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110 }},
-    // 'A' = index 6
+    // 33 '!'
+    {{ 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100 }},
+    // 34 '"'
+    {{ 0b01010, 0b01010, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
+    // 35 '#'
+    {{ 0b01010, 0b11111, 0b01010, 0b01010, 0b11111, 0b01010, 0b00000 }},
+    // 36 '$'
+    {{ 0b00100, 0b01111, 0b10100, 0b01110, 0b00101, 0b11110, 0b00100 }},
+    // 37 '%'
+    {{ 0b11001, 0b11010, 0b00100, 0b00100, 0b01011, 0b10011, 0b00000 }},
+    // 38 '&'
+    {{ 0b01100, 0b10010, 0b01100, 0b10110, 0b10001, 0b10010, 0b01101 }},
+    // 39 '\''
+    {{ 0b00100, 0b00100, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
+    // 40 '('
+    {{ 0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010 }},
+    // 41 ')'
+    {{ 0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000 }},
+    // 42 '*'
+    {{ 0b00000, 0b00100, 0b10101, 0b01110, 0b10101, 0b00100, 0b00000 }},
+    // 43 '+'
+    {{ 0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000 }},
+    // 44 ','
+    {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b01000 }},
+    // 45 '-'
+    {{ 0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000 }},
+    // 46 '.'
+    {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100 }},
+    // 47 '/'
+    {{ 0b00001, 0b00010, 0b00100, 0b00100, 0b01000, 0b10000, 0b00000 }},
+    // 48 '0'
+    {{ 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 }},
+    // 49 '1'
+    {{ 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 }},
+    // 50 '2'
+    {{ 0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111 }},
+    // 51 '3'
+    {{ 0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110 }},
+    // 52 '4'
+    {{ 0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010 }},
+    // 53 '5'
+    {{ 0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110 }},
+    // 54 '6'
+    {{ 0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110 }},
+    // 55 '7'
+    {{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000 }},
+    // 56 '8'
+    {{ 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 }},
+    // 57 '9'
+    {{ 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110 }},
+    // 58 ':'
+    {{ 0b00000, 0b00000, 0b00100, 0b00000, 0b00000, 0b00100, 0b00000 }},
+    // 59 ';'
+    {{ 0b00000, 0b00000, 0b00100, 0b00000, 0b00000, 0b00100, 0b01000 }},
+    // 60 '<'
+    {{ 0b00010, 0b00100, 0b01000, 0b10000, 0b01000, 0b00100, 0b00010 }},
+    // 61 '='
+    {{ 0b00000, 0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000 }},
+    // 62 '>'
+    {{ 0b10000, 0b01000, 0b00100, 0b00010, 0b00100, 0b01000, 0b10000 }},
+    // 63 '?'
+    {{ 0b01110, 0b10001, 0b00001, 0b00110, 0b00100, 0b00000, 0b00100 }},
+    // 64 '@'
+    {{ 0b01110, 0b10001, 0b10111, 0b10101, 0b10110, 0b10000, 0b01110 }},
+    // 65 'A'
     {{ 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 }},
-    // 'L' = index 7
+    // 66 'B'
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110 }},
+    // 67 'C'
+    {{ 0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110 }},
+    // 68 'D'
+    {{ 0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110 }},
+    // 69 'E'
+    {{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111 }},
+    // 70 'F'
+    {{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000 }},
+    // 71 'G'
+    {{ 0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110 }},
+    // 72 'H'
+    {{ 0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 }},
+    // 73 'I'
+    {{ 0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 }},
+    // 74 'J'
+    {{ 0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100 }},
+    // 75 'K'
+    {{ 0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001 }},
+    // 76 'L'
     {{ 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111 }},
+    // 77 'M'
+    {{ 0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001 }},
+    // 78 'N'
+    {{ 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001 }},
+    // 79 'O'
+    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }},
+    // 80 'P'
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000 }},
+    // 81 'Q'
+    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101 }},
+    // 82 'R'
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001 }},
+    // 83 'S'
+    {{ 0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110 }},
+    // 84 'T'
+    {{ 0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 }},
+    // 85 'U'
+    {{ 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }},
+    // 86 'V'
+    {{ 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b01010, 0b00100 }},
+    // 87 'W'
+    {{ 0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001 }},
+    // 88 'X'
+    {{ 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001 }},
+    // 89 'Y'
+    {{ 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 }},
+    // 90 'Z'
+    {{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111 }},
+    // 91 '['
+    {{ 0b01110, 0b01000, 0b01000, 0b01000, 0b01000, 0b01000, 0b01110 }},
+    // 92 '\'
+    {{ 0b10000, 0b01000, 0b00100, 0b00100, 0b00010, 0b00001, 0b00000 }},
+    // 93 ']'
+    {{ 0b01110, 0b00010, 0b00010, 0b00010, 0b00010, 0b00010, 0b01110 }},
+    // 94 '^'
+    {{ 0b00100, 0b01010, 0b10001, 0b00000, 0b00000, 0b00000, 0b00000 }},
+    // 95 '_'
+    {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111 }},
+    // 96 '`'
+    {{ 0b01000, 0b00100, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
+    // 97-122: lowercase a-z (rendered same as uppercase)
+    {{ 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 }}, // a=A
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110 }}, // b=B
+    {{ 0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110 }}, // c=C
+    {{ 0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110 }}, // d=D
+    {{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111 }}, // e=E
+    {{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000 }}, // f=F
+    {{ 0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110 }}, // g=G
+    {{ 0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 }}, // h=H
+    {{ 0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 }}, // i=I
+    {{ 0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100 }}, // j=J
+    {{ 0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001 }}, // k=K
+    {{ 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111 }}, // l=L
+    {{ 0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001 }}, // m=M
+    {{ 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001 }}, // n=N
+    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }}, // o=O
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000 }}, // p=P
+    {{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101 }}, // q=Q
+    {{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001 }}, // r=R
+    {{ 0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110 }}, // s=S
+    {{ 0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 }}, // t=T
+    {{ 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 }}, // u=U
+    {{ 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b01010, 0b00100 }}, // v=V
+    {{ 0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001 }}, // w=W
+    {{ 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001 }}, // x=X
+    {{ 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 }}, // y=Y
+    {{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111 }}, // z=Z
+    // 123 '{'
+    {{ 0b00110, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00110 }},
+    // 124 '|'
+    {{ 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 }},
+    // 125 '}'
+    {{ 0b01100, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01100 }},
+    // 126 '~'
+    {{ 0b00000, 0b00000, 0b01000, 0b10101, 0b00010, 0b00000, 0b00000 }},
+    // 127 DEL (blank)
+    {{ 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 }},
 };
 
-// "NO SIGNAL" as glyph indices
-static const int g_no_signal_text[] = { 0, 1, 2, 3, 4, 5, 0, 6, 7 };
-static const int g_no_signal_len = 9;
+static const int GLYPH_W = 5;
+static const int GLYPH_H = 7;
+static const int CHAR_SPACING = 1;  // 1 pixel gap between characters (at glyph scale)
+
+// Get glyph for a character, returns space glyph for unsupported chars.
+// Lowercase a-z is rendered as uppercase A-Z.
+static const BitmapGlyph &get_glyph(char ch)
+{
+    if (ch >= 'a' && ch <= 'z')
+        ch = ch - 'a' + 'A';
+    if (ch >= 32 && ch <= 127)
+        return g_font[ch - 32];
+    return g_font[0]; // space
+}
+
+// Measure text width in pixels at given scale
+static int measure_text(const char *text, int scale)
+{
+    int len = (int)strlen(text);
+    if (len == 0) return 0;
+    return (len * GLYPH_W + (len - 1) * CHAR_SPACING) * scale;
+}
+
+// Draw text into an RGBA pixel buffer
+static void draw_text_rgba(std::vector<uint8_t> &pixels, uint32_t width, uint32_t height,
+                           const char *text, int x0, int y0, int scale,
+                           uint8_t r, uint8_t g, uint8_t b)
+{
+    int len = (int)strlen(text);
+    for (int ci = 0; ci < len; ci++) {
+        const BitmapGlyph &glyph = get_glyph(text[ci]);
+        int cx = x0 + ci * (GLYPH_W + CHAR_SPACING) * scale;
+
+        for (int gy = 0; gy < GLYPH_H; gy++) {
+            uint8_t row = glyph.rows[gy];
+            for (int gx = 0; gx < GLYPH_W; gx++) {
+                if (row & (1 << (GLYPH_W - 1 - gx))) {
+                    for (int sy = 0; sy < scale; sy++) {
+                        for (int sx = 0; sx < scale; sx++) {
+                            int px = cx + gx * scale + sx;
+                            int py = y0 + gy * scale + sy;
+                            if (px >= 0 && px < (int)width && py >= 0 && py < (int)height) {
+                                uint32_t idx = ((uint32_t)py * width + (uint32_t)px) * 4;
+                                pixels[idx + 0] = r;
+                                pixels[idx + 1] = g;
+                                pixels[idx + 2] = b;
+                                pixels[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Draw a filled rectangle into an RGBA pixel buffer
+static void fill_rect_rgba(std::vector<uint8_t> &pixels, uint32_t width, uint32_t height,
+                           int rx, int ry, int rw, int rh,
+                           uint8_t r, uint8_t g, uint8_t b)
+{
+    for (int y = ry; y < ry + rh; y++) {
+        for (int x = rx; x < rx + rw; x++) {
+            if (x >= 0 && x < (int)width && y >= 0 && y < (int)height) {
+                uint32_t idx = ((uint32_t)y * width + (uint32_t)x) * 4;
+                pixels[idx + 0] = r;
+                pixels[idx + 1] = g;
+                pixels[idx + 2] = b;
+                pixels[idx + 3] = 255;
+            }
+        }
+    }
+}
 
 /**
- * Generate a classic SMPTE-style test pattern in RGBA with "NO SIGNAL" text.
+ * Generate a classic SMPTE-style test pattern in RGBA with camera info.
  *
  * Layout:
- *   Top 2/3:    7 color bars at 75% (white, yellow, cyan, green, magenta, red, blue)
+ *   Top 2/3:    7 color bars at 75% with camera name in black rect overlay
  *   Mid strip:  Castellations (blue, black, magenta, black, cyan, black, white)
- *   Bottom 1/4: Dark gray background with "NO SIGNAL" in white block letters
+ *   Bottom 1/4: Dark gray background with "NO SIGNAL" + optional IP
  */
-static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t height)
+static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t height,
+                                                       const std::string &camera_name,
+                                                       const std::string &camera_ip)
 {
     std::vector<uint8_t> pixels(width * height * 4);
 
@@ -1097,10 +1340,8 @@ static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t 
         {191, 191, 191},  // White
     };
 
-    uint32_t bar_top = 0;
     uint32_t bar_bottom = height * 2 / 3;
     uint32_t cast_bottom = bar_bottom + height / 12;
-    // Rest is the bottom section
 
     auto set_pixel = [&](uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b) {
         uint32_t idx = (y * width + x) * 4;
@@ -1113,56 +1354,71 @@ static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t 
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             if (y < bar_bottom) {
-                // Top 2/3: color bars
                 int bar_idx = (int)(x * 7 / width);
                 if (bar_idx > 6) bar_idx = 6;
                 set_pixel(x, y, bars[bar_idx][0], bars[bar_idx][1], bars[bar_idx][2]);
             } else if (y < cast_bottom) {
-                // Castellation strip
                 int bar_idx = (int)(x * 7 / width);
                 if (bar_idx > 6) bar_idx = 6;
                 set_pixel(x, y, cast[bar_idx][0], cast[bar_idx][1], cast[bar_idx][2]);
             } else {
-                // Bottom section: dark gray
                 set_pixel(x, y, 40, 40, 40);
             }
         }
     }
 
-    // Draw "NO SIGNAL" text in white block letters
-    const int scale = 6;
-    const int glyph_w = 5;
-    const int glyph_h = 7;
-    const int char_spacing = 1;  // 1 pixel gap between characters (at glyph scale)
-    int text_pixel_w = g_no_signal_len * (glyph_w + char_spacing) * scale;
-    int text_pixel_h = glyph_h * scale;
+    // --- Camera name overlay in top bar area (truncate to fit) ---
+    if (!camera_name.empty()) {
+        const int name_scale = 4;
+        const int max_name_chars = (int)width / ((GLYPH_W + CHAR_SPACING) * name_scale);
+        std::string truncated_name = camera_name.length() > (size_t)max_name_chars
+            ? camera_name.substr(0, max_name_chars - 1) + "~"
+            : camera_name;
+        int name_w = measure_text(truncated_name.c_str(), name_scale);
+        int name_h = GLYPH_H * name_scale;
+        int pad = 10;
+        int rect_w = name_w + pad * 2;
+        int rect_h = name_h + pad * 2;
+        int rect_x = ((int)width - rect_w) / 2;
+        int rect_y = (int)(bar_bottom / 4) - rect_h / 2;  // ~25% from top
+        if (rect_y < 0) rect_y = 4;
 
-    // Center horizontally in bottom section
-    int bottom_section_top = (int)cast_bottom;
-    int bottom_section_h = (int)height - bottom_section_top;
-    int text_x0 = ((int)width - text_pixel_w) / 2;
-    int text_y0 = bottom_section_top + (bottom_section_h - text_pixel_h) / 2;
+        fill_rect_rgba(pixels, width, height, rect_x, rect_y, rect_w, rect_h, 0, 0, 0);
+        draw_text_rgba(pixels, width, height, truncated_name.c_str(),
+                       rect_x + pad, rect_y + pad, name_scale, 255, 255, 255);
+    }
 
-    for (int ci = 0; ci < g_no_signal_len; ci++) {
-        const BitmapGlyph &glyph = g_font_glyphs[g_no_signal_text[ci]];
-        int cx = text_x0 + ci * (glyph_w + char_spacing) * scale;
+    // --- "NO SIGNAL" text centered in bottom section ---
+    {
+        const char *no_signal = "NO SIGNAL";
+        const int ns_scale = 6;
+        int ns_w = measure_text(no_signal, ns_scale);
+        int ns_h = GLYPH_H * ns_scale;
+        int bottom_top = (int)cast_bottom;
+        int bottom_h = (int)height - bottom_top;
 
-        for (int gy = 0; gy < glyph_h; gy++) {
-            uint8_t row = glyph.rows[gy];
-            for (int gx = 0; gx < glyph_w; gx++) {
-                if (row & (1 << (glyph_w - 1 - gx))) {
-                    // Draw scaled pixel block
-                    for (int sy = 0; sy < scale; sy++) {
-                        for (int sx = 0; sx < scale; sx++) {
-                            int px = cx + gx * scale + sx;
-                            int py = text_y0 + gy * scale + sy;
-                            if (px >= 0 && px < (int)width && py >= 0 && py < (int)height) {
-                                set_pixel((uint32_t)px, (uint32_t)py, 255, 255, 255);
-                            }
-                        }
-                    }
-                }
-            }
+        // Vertical layout: center "NO SIGNAL" (+ optional IP) as a group
+        int total_h = ns_h;
+        int ip_scale = 3;
+        int ip_h = 0;
+        int gap = 8;
+        if (!camera_ip.empty()) {
+            ip_h = GLYPH_H * ip_scale;
+            total_h += gap + ip_h;
+        }
+
+        int group_y0 = bottom_top + (bottom_h - total_h) / 2;
+        int ns_x = ((int)width - ns_w) / 2;
+        draw_text_rgba(pixels, width, height, no_signal, ns_x, group_y0, ns_scale,
+                       255, 255, 255);
+
+        // IP address below "NO SIGNAL" in light gray
+        if (!camera_ip.empty()) {
+            int ip_w = measure_text(camera_ip.c_str(), ip_scale);
+            int ip_x = ((int)width - ip_w) / 2;
+            int ip_y = group_y0 + ns_h + gap;
+            draw_text_rgba(pixels, width, height, camera_ip.c_str(),
+                           ip_x, ip_y, ip_scale, 160, 160, 160);
         }
     }
 
@@ -1183,18 +1439,18 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     auto *data = new SourceData();
     data->source = source;
 
-    // Load settings
+    // Load settings (single-threaded construction, but use store() for atomics)
     data->camera_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
-    data->camera_port = (uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT);
-    data->jitter_mode = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
-    data->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
+    data->camera_port.store((uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT));
+    data->jitter_mode.store((int)obs_data_get_int(settings, PROP_JITTER_MODE));
+    data->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
     data->auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
-    data->prefer_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
-    data->debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
-    data->decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
+    data->prefer_zero_copy.store(obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY));
+    data->debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
+    data->decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
 
     blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
-         data->decoder_type, data->camera_port);
+         data->decoder_type.load(), data->camera_port.load());
     return data;
 }
 
@@ -1228,22 +1484,35 @@ static void avolocam_update(void *data, obs_data_t *settings)
     bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
     int new_decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
-    // Check if we need to restart
-    bool needs_restart = (new_ip != src->camera_ip ||
-                          new_port != src->camera_port ||
-                          new_jitter != src->jitter_mode ||
-                          new_token != src->auth_token ||
-                          new_zero_copy != src->prefer_zero_copy ||
-                          new_decoder_type != src->decoder_type);
+    // Snapshot current string values under lock for comparison
+    std::string old_ip, old_token;
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        old_ip = src->camera_ip;
+        old_token = src->auth_token;
+    }
 
-    src->camera_ip = new_ip;
-    src->camera_port = new_port;
-    src->jitter_mode = new_jitter;
-    src->show_latency = obs_data_get_bool(settings, PROP_SHOW_LATENCY);
-    src->auth_token = new_token;
-    src->prefer_zero_copy = new_zero_copy;
-    src->debug_mode = new_debug_mode;
-    src->decoder_type = new_decoder_type;
+    // Check if we need to restart
+    bool needs_restart = (new_ip != old_ip ||
+                          new_port != src->camera_port.load() ||
+                          new_jitter != src->jitter_mode.load() ||
+                          new_token != old_token ||
+                          new_zero_copy != src->prefer_zero_copy.load() ||
+                          new_decoder_type != src->decoder_type.load());
+
+    // Update string fields under lock
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        src->camera_ip = new_ip;
+        src->auth_token = new_token;
+    }
+    // Update atomic fields
+    src->camera_port.store(new_port);
+    src->jitter_mode.store(new_jitter);
+    src->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
+    src->prefer_zero_copy.store(new_zero_copy);
+    src->debug_mode.store(new_debug_mode);
+    src->decoder_type.store(new_decoder_type);
 
     if (needs_restart && src->running.load()) {
         src->stop();
@@ -1310,7 +1579,7 @@ static bool port_changed_callback(void *priv, obs_properties_t *props,
 
     // Exclude this source's own currently-bound port from collision check
     auto *src = static_cast<SourceData *>(priv);
-    uint16_t own_port = (src && src->running.load()) ? src->camera_port : 0;
+    uint16_t own_port = (src && src->running.load()) ? src->camera_port.load() : 0;
 
     bool collision = false;
     if (port > 0) {
@@ -1425,12 +1694,37 @@ static void avolocam_video_tick(void *data, float seconds)
     UNUSED_PARAMETER(seconds);
     auto *src = static_cast<SourceData *>(data);
 
-    // Lazy-init test pattern texture (once, on graphics thread)
+    // Cache source name once per tick (avoid repeated obs_source_get_name calls)
+    const char *name_ptr = obs_source_get_name(src->source);
+    std::string cur_name = name_ptr ? name_ptr : "";
+
+    // Snapshot camera_ip under lock for test pattern comparison
+    std::string ip_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(src->config_mutex_);
+        ip_snapshot = src->camera_ip;
+    }
+
+    // Invalidate test pattern if camera IP or source name changed
+    if (src->test_pattern_created_ &&
+        (ip_snapshot != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
+        obs_enter_graphics();
+        if (src->test_pattern_texture_) {
+            gs_texture_destroy(src->test_pattern_texture_);
+            src->test_pattern_texture_ = nullptr;
+        }
+        obs_leave_graphics();
+        src->test_pattern_created_ = false;
+    }
+
+    // Lazy-init test pattern texture (on graphics thread)
     if (!src->test_pattern_created_) {
-        blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u",
-             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT);
+        blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u (name='%s', ip='%s')",
+             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+             cur_name.c_str(), ip_snapshot.c_str());
         auto pixels = generate_test_pattern_rgba(
-            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT);
+            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+            cur_name, ip_snapshot);
         const uint8_t *ptr = pixels.data();
         obs_enter_graphics();
         src->test_pattern_texture_ = gs_texture_create(
@@ -1438,11 +1732,13 @@ static void avolocam_video_tick(void *data, float seconds)
             GS_RGBA, 1, &ptr, 0);
         obs_leave_graphics();
         src->test_pattern_created_ = true;
+        src->test_pattern_ip_ = ip_snapshot;
+        src->test_pattern_name_ = cur_name;
         blog(LOG_INFO, "[avolocam] Test pattern texture %s",
              src->test_pattern_texture_ ? "created OK" : "FAILED");
     }
 
-    if (src->use_gpu_render_) {
+    if (src->use_gpu_render_.load()) {
         // GPU PATH: open the shared RGBA texture on OBS device (cached)
         void *h = src->latest_shared_handle_.load(std::memory_order_acquire);
         if (h && h != src->cached_shared_handle_) {
@@ -1481,7 +1777,7 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
     auto *src = static_cast<SourceData *>(data);
 
     // GPU path: camera frame available via shared texture
-    if (src->use_gpu_render_ && src->obs_shared_texture_) {
+    if (src->use_gpu_render_.load() && src->obs_shared_texture_) {
         effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
         while (gs_effect_loop(effect, "Draw")) {
             obs_source_draw(src->obs_shared_texture_, 0, 0, 0, 0, false);
