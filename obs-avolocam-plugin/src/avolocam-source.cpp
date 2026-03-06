@@ -31,6 +31,7 @@
 #include <condition_variable>
 #include <string>
 #include <cstdio>
+#include <cstring>
 
 #ifdef _WIN32
 #include <mfapi.h>
@@ -1234,7 +1235,7 @@ static int measure_text(const char *text, int scale)
 {
     int len = (int)strlen(text);
     if (len == 0) return 0;
-    return len * (GLYPH_W + CHAR_SPACING) * scale;
+    return (len * GLYPH_W + (len - 1) * CHAR_SPACING) * scale;
 }
 
 // Draw text into an RGBA pixel buffer
@@ -1351,10 +1352,14 @@ static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t 
         }
     }
 
-    // --- Camera name overlay in top bar area ---
+    // --- Camera name overlay in top bar area (truncate to fit) ---
     if (!camera_name.empty()) {
         const int name_scale = 4;
-        int name_w = measure_text(camera_name.c_str(), name_scale);
+        const int max_name_chars = (int)width / ((GLYPH_W + CHAR_SPACING) * name_scale);
+        std::string truncated_name = camera_name.length() > (size_t)max_name_chars
+            ? camera_name.substr(0, max_name_chars - 1) + "~"
+            : camera_name;
+        int name_w = measure_text(truncated_name.c_str(), name_scale);
         int name_h = GLYPH_H * name_scale;
         int pad = 10;
         int rect_w = name_w + pad * 2;
@@ -1364,7 +1369,7 @@ static std::vector<uint8_t> generate_test_pattern_rgba(uint32_t width, uint32_t 
         if (rect_y < 0) rect_y = 4;
 
         fill_rect_rgba(pixels, width, height, rect_x, rect_y, rect_w, rect_h, 0, 0, 0);
-        draw_text_rgba(pixels, width, height, camera_name.c_str(),
+        draw_text_rgba(pixels, width, height, truncated_name.c_str(),
                        rect_x + pad, rect_y + pad, name_scale, 255, 255, 255);
     }
 
