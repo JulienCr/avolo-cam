@@ -14,7 +14,7 @@ actor TelemetryCollector {
     struct SystemTelemetry {
         let battery: Double
         let temperature: Double
-        let wifiRssi: Int
+        let wifiRssi: Int?
         let chargingState: ChargingState
         let thermalState: ProcessInfo.ThermalState
         let networkBitrate: Int  // bits per second
@@ -93,31 +93,9 @@ actor TelemetryCollector {
 
     // MARK: - WiFi RSSI
 
-    private func getWiFiRSSI() -> Int {
-        // Note: Getting actual WiFi RSSI requires private APIs or is unavailable
-        // Return estimated value based on network status
-        // In production, consider using Network.framework for more accurate info
-
-        // Placeholder: return -50 dBm (good signal)
-        return -50
-
-        // Alternative approach using CNCopyCurrentNetworkInfo (requires entitlements):
-        /*
-        guard let interfaces = CNCopySupportedInterfaces() as? [String] else {
-            return -50
-        }
-
-        for interface in interfaces {
-            guard let info = CNCopyCurrentNetworkInfo(interface as CFString) as? [String: Any] else {
-                continue
-            }
-
-            // Note: RSSI not available in iOS 13+
-            // Would need to use NEHotspotNetwork or private APIs
-        }
-
-        return -50
-        */
+    // iOS does not expose WiFi RSSI via public API. Returns nil.
+    private func getWiFiRSSI() -> Int? {
+        return nil
     }
 
     // MARK: - Network Bitrate

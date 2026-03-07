@@ -312,7 +312,8 @@ actor SRTManager {
 
         // Check if we have a connected client
         guard let client = connectedClient else {
-            // No client connected yet, drop frame silently
+            // No client connected, count as dropped frame
+            droppedFrames += 1
             return
         }
 

@@ -148,12 +148,14 @@ struct TelemetryMenuView: View {
                             color: tempColor(telemetry.tempC)
                         )
 
-                        telemetryCard(
-                            title: "WiFi Signal",
-                            value: "\(telemetry.wifiRssi) dBm",
-                            icon: wifiIcon(telemetry.wifiRssi),
-                            color: wifiColor(telemetry.wifiRssi)
-                        )
+                        if let wifiRssi = telemetry.wifiRssi {
+                            telemetryCard(
+                                title: "WiFi Signal",
+                                value: "\(wifiRssi) dBm",
+                                icon: wifiIcon(wifiRssi),
+                                color: wifiColor(wifiRssi)
+                            )
+                        }
 
                         if let chargingState = telemetry.chargingState {
                             telemetryCard(

@@ -145,7 +145,7 @@ struct Telemetry: Codable, Sendable {
     let bitrate: Int
     let battery: Double
     let tempC: Double
-    let wifiRssi: Int
+    let wifiRssi: Int?
     let cpuUsage: Double
     let queueMs: Int?
     let droppedFrames: Int?
@@ -171,7 +171,7 @@ extension Telemetry {
             bitrate: 0,
             battery: 1.0,
             tempC: 25.0,
-            wifiRssi: -50,
+            wifiRssi: nil,
             cpuUsage: 0,
             queueMs: nil,
             droppedFrames: nil,
@@ -304,7 +304,7 @@ struct WebSocketTelemetryMessage: Codable, Sendable {
     let queueMs: Int
     let battery: Double
     let tempC: Double
-    let wifiRssi: Int
+    let wifiRssi: Int?
     let cpuUsage: Double
     let ndiState: NDIState
     let droppedFrames: Int
