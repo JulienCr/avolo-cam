@@ -38,13 +38,15 @@ void obs_module_unload(void)
 {
     ALOG(LOG_INFO, "Plugin unloading...");
 
-    // Stop and release global mDNS discovery to avoid thread leak
+    // Stop and release global mDNS discovery to avoid thread leak.
+    // Swap under lock, then stop outside to avoid blocking the mutex during thread joins.
+    decltype(avolocam::g_discovery) local_discovery;
     {
         std::lock_guard<std::mutex> lock(avolocam::g_discovery_mutex);
-        if (avolocam::g_discovery) {
-            avolocam::g_discovery->stop();
-            avolocam::g_discovery.reset();
-        }
+        local_discovery.swap(avolocam::g_discovery);
+    }
+    if (local_discovery) {
+        local_discovery->stop();
     }
 
     ALOG(LOG_INFO, "Plugin unloaded");

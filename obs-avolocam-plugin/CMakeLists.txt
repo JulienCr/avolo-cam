@@ -60,6 +60,14 @@ endif()
 if(WIN32)
     # D3D11 for hardware decoding (FFmpeg D3D11VA)
     set(D3D11_LIBRARIES d3d11 dxgi)
+
+    # FFmpeg D3D11VA is required on Windows — PlatformDecoder::create() is only
+    # implemented in ffmpeg-d3d11va-decoder.cpp. Fail early instead of at link time.
+    if(DEFINED FFMPEG_D3D11VA_FOUND AND NOT FFMPEG_D3D11VA_FOUND)
+        message(FATAL_ERROR
+            "FFmpeg D3D11VA was not found but is required on Windows to build "
+            "obs-avolocam. Install FFmpeg with D3D11VA support or check your configuration.")
+    endif()
     # Bonjour SDK for mDNS discovery (requires Bonjour SDK installed)
     # dnssd.lib is provided by Bonjour SDK for Windows
 

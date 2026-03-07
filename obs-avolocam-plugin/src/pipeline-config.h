@@ -16,9 +16,6 @@ namespace avolocam {
     constexpr uint64_t TALLY_POLL_INTERVAL_NS  = 100ULL * 1000 * 1000;
     constexpr uint64_t TALLY_HEARTBEAT_NS      = 2000ULL * 1000 * 1000;
 
-    // Condition variable wait timeout (1ms for fastest wakeup)
-    constexpr int DECODE_CV_WAIT_MS = 1;
-
     // UDP buffer
     constexpr int UDP_RCVBUF_SIZE = 4 * 1024 * 1024;
     constexpr size_t UDP_PACKET_BUFFER_SIZE = 65536;

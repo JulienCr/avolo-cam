@@ -24,9 +24,7 @@ void SourceData::decode_loop() {
         {
             std::unique_lock<std::mutex> lock(decode_queue.mutex);
             if (decode_queue.queue.empty()) {
-                // 1ms wait with predicate for fastest wakeup
-                decode_queue.cv.wait_for(lock,
-                    std::chrono::milliseconds(DECODE_CV_WAIT_MS),
+                decode_queue.cv.wait(lock,
                     [this]() { return !decode_queue.queue.empty() || !running.load(); });
             }
 
