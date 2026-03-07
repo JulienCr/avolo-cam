@@ -6,11 +6,14 @@
 
 #ifdef _WIN32
 
-#include <obs-module.h>
-#include "logging.h"
+#include <cstring>
+
 #include <d3d11_3.h>
 #include <d3dcompiler.h>
-#include <cstring>
+
+#include <obs-module.h>
+
+#include "logging.h"
 
 #pragma comment(lib, "d3dcompiler.lib")
 

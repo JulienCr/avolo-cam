@@ -16,11 +16,6 @@
 
 #ifdef _WIN32
 
-#include <obs-module.h>
-#include "logging.h"
-#include <graphics/graphics.h>
-#include <media-io/video-io.h>
-#include <util/platform.h>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -28,7 +23,14 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+
+#include <obs-module.h>
+#include <graphics/graphics.h>
+#include <media-io/video-io.h>
+#include <util/platform.h>
 #include <util/windows/ComPtr.hpp>
+
+#include "logging.h"
 
 namespace avolocam {
 

@@ -11,9 +11,11 @@
 
 #pragma once
 
-#include "decoder/platform-decoder.h"
-#include <obs-module.h>
 #include <cstdint>
+
+#include <obs-module.h>
+
+#include "decoder/platform-decoder.h"
 
 #ifdef _WIN32
 #include <util/windows/ComPtr.hpp>

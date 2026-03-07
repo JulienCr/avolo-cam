@@ -6,9 +6,12 @@
 
 #ifdef _WIN32
 
-#include <winsock2.h>
 #include <mutex>
+
+#include <winsock2.h>
+
 #include <obs-module.h>
+
 #include "logging.h"
 
 #pragma comment(lib, "ws2_32.lib")

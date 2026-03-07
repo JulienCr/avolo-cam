@@ -8,14 +8,17 @@
  */
 
 #include "mdns-discovery.h"
-#include <obs-module.h>
-#include "logging.h"
-#include <util/platform.h>
+
+#include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <thread>
-#include <atomic>
-#include <algorithm>
 #include <vector>
+
+#include <obs-module.h>
+#include <util/platform.h>
+
+#include "logging.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>

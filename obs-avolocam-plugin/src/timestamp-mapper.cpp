@@ -3,10 +3,13 @@
  */
 
 #include "timestamp-mapper.h"
-#include <obs-module.h>
-#include "logging.h"
+
 #include <algorithm>
 #include <cmath>
+
+#include <obs-module.h>
+
+#include "logging.h"
 
 namespace avolocam {
 

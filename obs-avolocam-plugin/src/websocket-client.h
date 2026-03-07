@@ -9,14 +9,15 @@
 
 #pragma once
 
-#include "timestamp-mapper.h"
-#include <string>
-#include <functional>
 #include <atomic>
-#include <thread>
-#include <mutex>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
+
+#include "timestamp-mapper.h"
 
 namespace avolocam {
 

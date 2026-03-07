@@ -11,10 +11,11 @@
 
 #pragma once
 
-#include "rtp-depacketizer.h"
+#include <atomic>
 #include <cstdint>
 #include <functional>
-#include <atomic>
+
+#include "rtp-depacketizer.h"
 
 namespace avolocam {
 

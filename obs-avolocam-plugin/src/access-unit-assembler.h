@@ -7,11 +7,12 @@
 
 #pragma once
 
-#include "rtp-depacketizer.h"
 #include <cstdint>
-#include <vector>
-#include <optional>
 #include <map>
+#include <optional>
+#include <vector>
+
+#include "rtp-depacketizer.h"
 
 namespace avolocam {
 

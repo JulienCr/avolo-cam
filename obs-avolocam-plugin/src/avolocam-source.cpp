@@ -6,33 +6,35 @@
  */
 
 #include "avolocam-source.h"
-#include "udp-receiver.h"
-#include "jitter-buffer.h"
-#include "rtp-depacketizer.h"
-#include "access-unit-assembler.h"
-#include "sync-state-machine.h"
-#include "decoder/platform-decoder.h"
-#include "mdns-discovery.h"
-#include "timestamp-mapper.h"
-#include "texture-output.h"
-#include "gpu-converter.h"
-#include "websocket-client.h"
-#include "logging.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <thread>
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
 #include <util/platform.h>
 #include <util/threading.h>
-#include <memory>
-#include <atomic>
-#include <thread>
-#include <mutex>
-#include <deque>
-#include <set>
-#include <condition_variable>
-#include <string>
-#include <cstdio>
-#include <cstring>
+
+#include "access-unit-assembler.h"
+#include "decoder/platform-decoder.h"
+#include "gpu-converter.h"
+#include "jitter-buffer.h"
+#include "logging.h"
+#include "mdns-discovery.h"
+#include "rtp-depacketizer.h"
+#include "sync-state-machine.h"
+#include "texture-output.h"
+#include "timestamp-mapper.h"
+#include "udp-receiver.h"
+#include "websocket-client.h"
 
 #ifdef _WIN32
 #include <mfapi.h>
