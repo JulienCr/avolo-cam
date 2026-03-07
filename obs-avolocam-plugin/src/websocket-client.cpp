@@ -7,6 +7,7 @@
 
 #include "websocket-client.h"
 #include <obs-module.h>
+#include "logging.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -127,7 +128,7 @@ WebSocketClient::~WebSocketClient()
 bool WebSocketClient::connect(const std::string &url, const std::string &auth_token)
 {
     if (state_ != WSState::DISCONNECTED) {
-        blog(LOG_WARNING, "[avolocam-ws] Already connected or connecting");
+        ALOG_WS(LOG_INFO, "Already connected or connecting");
         return false;
     }
 
@@ -143,6 +144,7 @@ bool WebSocketClient::connect(const std::string &url, const std::string &auth_to
  */
 bool WebSocketClient::do_connect_socket()
 {
+    disconnecting_ = false;
     set_state(WSState::CONNECTING);
 
     // Parse URL
@@ -150,12 +152,12 @@ bool WebSocketClient::do_connect_socket()
     uint16_t port;
     std::string path;
     if (!parse_url(url_, host, port, path)) {
-        blog(LOG_ERROR, "[avolocam-ws] Invalid URL: %s", url_.c_str());
+        ALOG_WS(LOG_ERROR, "Invalid URL: %s", url_.c_str());
         set_state(WSState::ERRORED);
         return false;
     }
 
-    blog(LOG_INFO, "[avolocam-ws] Connecting to %s:%d%s", host.c_str(), port, path.c_str());
+    ALOG_WS(LOG_INFO, "Connecting to %s:%d%s", host.c_str(), port, path.c_str());
 
     // Resolve hostname
     struct addrinfo hints = {};
@@ -168,7 +170,7 @@ bool WebSocketClient::do_connect_socket()
 
     int res = getaddrinfo(host.c_str(), port_str, &hints, &result);
     if (res != 0 || !result) {
-        blog(LOG_ERROR, "[avolocam-ws] Failed to resolve host: %s", host.c_str());
+        ALOG_WS(LOG_ERROR, "Failed to resolve host: %s", host.c_str());
         set_state(WSState::ERRORED);
         return false;
     }
@@ -181,7 +183,7 @@ bool WebSocketClient::do_connect_socket()
     socket_ = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_ < 0) {
 #endif
-        blog(LOG_ERROR, "[avolocam-ws] Failed to create socket");
+        ALOG_WS(LOG_ERROR, "Failed to create socket");
         freeaddrinfo(result);
         set_state(WSState::ERRORED);
         return false;
@@ -189,7 +191,7 @@ bool WebSocketClient::do_connect_socket()
 
     // Connect
     if (::connect(socket_, result->ai_addr, (socklen_t)result->ai_addrlen) != 0) {
-        blog(LOG_ERROR, "[avolocam-ws] Failed to connect: error %d", SOCKET_ERROR_CODE);
+        ALOG_WS(LOG_ERROR, "Failed to connect: error %d", SOCKET_ERROR_CODE);
         CLOSE_SOCKET(socket_);
 #ifdef _WIN32
         socket_ = INVALID_SOCKET;
@@ -219,12 +221,12 @@ bool WebSocketClient::do_connect_socket()
 
     // Perform WebSocket handshake
     if (!perform_handshake()) {
-        blog(LOG_ERROR, "[avolocam-ws] WebSocket handshake failed");
+        ALOG_WS(LOG_ERROR, "WebSocket handshake failed");
         do_disconnect();
         return false;
     }
 
-    blog(LOG_INFO, "[avolocam-ws] Connected successfully");
+    ALOG_WS(LOG_INFO, "Connected successfully");
     set_state(WSState::CONNECTED);
 
     return true;
@@ -265,6 +267,9 @@ void WebSocketClient::disconnect()
 
 void WebSocketClient::do_disconnect()
 {
+    if (disconnecting_.exchange(true))
+        return;
+
 #ifdef _WIN32
     if (socket_ != INVALID_SOCKET) {
         // Send close frame
@@ -283,6 +288,7 @@ void WebSocketClient::do_disconnect()
 #endif
 
     set_state(WSState::DISCONNECTED);
+    disconnecting_ = false;
 }
 
 bool WebSocketClient::is_connected() const
@@ -314,7 +320,7 @@ void WebSocketClient::request_idr()
 
     std::string msg = R"({"op":"request_idr"})";
     send_text(msg);
-    blog(LOG_INFO, "[avolocam-ws] Requested IDR frame");
+    ALOG_WS(LOG_INFO, "Requested IDR frame");
 }
 
 void WebSocketClient::send_command(const std::string &command)
@@ -378,7 +384,7 @@ bool WebSocketClient::perform_handshake()
     // Check for 101 Switching Protocols
     if (strstr(response, "101") == nullptr ||
         strstr(response, "Upgrade") == nullptr) {
-        blog(LOG_ERROR, "[avolocam-ws] Invalid handshake response: %s", response);
+        ALOG_WS(LOG_ERROR, "Invalid handshake response: %s", response);
         return false;
     }
 
@@ -387,7 +393,7 @@ bool WebSocketClient::perform_handshake()
 
 void WebSocketClient::receive_loop()
 {
-    blog(LOG_INFO, "[avolocam-ws] Receive thread started");
+    ALOG_WS(LOG_INFO, "Receive thread started");
 
     std::vector<uint8_t> payload;
     uint8_t opcode;
@@ -406,7 +412,7 @@ void WebSocketClient::receive_loop()
 
         if (!read_frame(payload, opcode)) {
             if (running_.load()) {
-                blog(LOG_WARNING, "[avolocam-ws] Read error, disconnecting");
+                ALOG_WS(LOG_WARNING, "Read error, disconnecting");
                 do_disconnect();
             }
             continue;
@@ -417,7 +423,7 @@ void WebSocketClient::receive_loop()
         messages_received_++;
 
         if (messages_received_ == 1) {
-            blog(LOG_INFO, "[avolocam-ws] First message received (opcode=%d, len=%zu)",
+            ALOG_WS(LOG_INFO, "First message received (opcode=%d, len=%zu)",
                  opcode, payload.size());
         }
 
@@ -438,7 +444,7 @@ void WebSocketClient::receive_loop()
             // Ignore pong
             break;
         case WS_OPCODE_CLOSE:
-            blog(LOG_INFO, "[avolocam-ws] Server sent close frame");
+            ALOG_WS(LOG_INFO, "Server sent close frame");
             do_disconnect();
             break;
         default:
@@ -446,7 +452,7 @@ void WebSocketClient::receive_loop()
         }
     }
 
-    blog(LOG_INFO, "[avolocam-ws] Receive thread exiting");
+    ALOG_WS(LOG_INFO, "Receive thread exiting");
 }
 
 bool WebSocketClient::read_frame(std::vector<uint8_t> &payload, uint8_t &opcode)
@@ -638,7 +644,7 @@ void WebSocketClient::set_state(WSState new_state)
 {
     WSState old_state = state_.exchange(new_state);
     if (old_state != new_state) {
-        blog(LOG_INFO, "[avolocam-ws] State: %s -> %s",
+        ALOG_WS(LOG_INFO, "State: %s -> %s",
              ws_state_name(old_state), ws_state_name(new_state));
 
         std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -664,7 +670,7 @@ void WebSocketClient::attempt_reconnect()
         delay = max_reconnect_delay_ms_;
     }
 
-    blog(LOG_INFO, "[avolocam-ws] Reconnect attempt %llu in %d ms",
+    ALOG_WS(LOG_INFO, "Reconnect attempt %llu in %d ms",
          (unsigned long long)reconnect_attempts_.load(), delay);
 
     // Sleep in small chunks to allow faster shutdown

@@ -13,6 +13,7 @@
 #include <vector>
 #include <optional>
 #include <map>
+#include <functional>
 
 namespace avolocam {
 
@@ -79,6 +80,12 @@ public:
     void reset();
 
     /**
+     * Set callback for packet loss detection (called from handle_fu_a on gap)
+     */
+    using PacketLossCallback = std::function<void(int)>;
+    void set_packet_loss_callback(PacketLossCallback callback);
+
+    /**
      * Get statistics
      */
     uint64_t nal_units_output() const { return nal_units_output_; }
@@ -96,6 +103,9 @@ private:
     };
 
     std::map<uint32_t, FuaState> fua_states_;  // Keyed by SSRC
+
+    // Packet loss callback
+    PacketLossCallback packet_loss_callback_;
 
     // Statistics
     uint64_t nal_units_output_ = 0;

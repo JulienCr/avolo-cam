@@ -9,14 +9,15 @@
 
 #pragma once
 
-#include "timestamp-mapper.h"
-#include <string>
-#include <functional>
 #include <atomic>
-#include <thread>
-#include <mutex>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
+
+#include "timestamp-mapper.h"
 
 namespace avolocam {
 
@@ -144,17 +145,14 @@ private:
 
     std::atomic<WSState> state_{WSState::DISCONNECTED};
     std::atomic<bool> running_{false};
+    std::atomic<bool> disconnecting_{false};
     std::atomic<bool> auto_reconnect_{true};
     int max_reconnect_attempts_ = 5;
     int initial_reconnect_delay_ms_ = 500;
     int max_reconnect_delay_ms_ = 10000;
 
-    // Socket handle (platform-specific)
-#ifdef _WIN32
-    uintptr_t socket_ = (uintptr_t)~0;  // INVALID_SOCKET
-#else
-    int socket_ = -1;
-#endif
+    // Socket handle (platform-specific, SOCKET on Win32 is ~uintptr_t)
+    uintptr_t socket_ = ~(uintptr_t)0;
 
     // Threading
     std::thread recv_thread_;

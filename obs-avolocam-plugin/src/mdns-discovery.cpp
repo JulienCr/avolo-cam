@@ -8,13 +8,17 @@
  */
 
 #include "mdns-discovery.h"
-#include <obs-module.h>
-#include <util/platform.h>
+
+#include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <thread>
-#include <atomic>
-#include <algorithm>
 #include <vector>
+
+#include <obs-module.h>
+#include <util/platform.h>
+
+#include "logging.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -124,8 +128,8 @@ struct MdnsDiscovery::Impl {
 #elif defined(_WIN32) && !defined(NO_MDNS_DISCOVERY)
         return start_windows();
 #else
-        blog(LOG_WARNING, "[avolocam] mDNS discovery not available (Bonjour SDK not installed or platform not supported)");
-        blog(LOG_INFO, "[avolocam] Use manual camera entry via IP address instead");
+        ALOG_MDNS(LOG_INFO, "mDNS discovery not available (Bonjour SDK not installed or platform not supported)");
+        ALOG_MDNS(LOG_INFO, "Use manual camera entry via IP address instead");
         return false;
 #endif
     }
@@ -159,7 +163,7 @@ struct MdnsDiscovery::Impl {
             this);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceBrowse failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceBrowse failed: %d", err);
             return false;
         }
 
@@ -184,7 +188,7 @@ struct MdnsDiscovery::Impl {
             }
         });
 
-        blog(LOG_INFO, "[avolocam] mDNS discovery started (macOS)");
+        ALOG_MDNS(LOG_INFO, "mDNS discovery started (macOS)");
         return true;
     }
 
@@ -223,17 +227,17 @@ struct MdnsDiscovery::Impl {
         auto *impl = static_cast<Impl*>(context);
 
         if (errorCode != kDNSServiceErr_NoError) {
-            blog(LOG_WARNING, "[avolocam] Browse callback error: %d", errorCode);
+            ALOG_MDNS(LOG_WARNING, "Browse callback error: %d", errorCode);
             return;
         }
 
         std::string name = serviceName;
 
         if (flags & kDNSServiceFlagsAdd) {
-            blog(LOG_INFO, "[avolocam] Discovered camera: %s", serviceName);
+            ALOG_MDNS(LOG_INFO, "Discovered camera: %s", serviceName);
             impl->resolve_service(name, interfaceIndex, replyDomain);
         } else {
-            blog(LOG_INFO, "[avolocam] Camera removed: %s", serviceName);
+            ALOG_MDNS(LOG_INFO, "Camera removed: %s", serviceName);
             impl->remove_camera(name);
         }
     }
@@ -253,7 +257,7 @@ struct MdnsDiscovery::Impl {
             this);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceResolve failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceResolve failed: %d", err);
             return;
         }
 
@@ -295,7 +299,7 @@ struct MdnsDiscovery::Impl {
         auto *impl = static_cast<Impl*>(context);
 
         if (errorCode != kDNSServiceErr_NoError) {
-            blog(LOG_WARNING, "[avolocam] Resolve callback error: %d", errorCode);
+            ALOG_MDNS(LOG_WARNING, "Resolve callback error: %d", errorCode);
             return;
         }
 
@@ -339,7 +343,7 @@ struct MdnsDiscovery::Impl {
             ctx);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceGetAddrInfo failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceGetAddrInfo failed: %d", err);
             delete ctx;
             return;
         }
@@ -438,7 +442,7 @@ struct MdnsDiscovery::Impl {
             this);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceBrowse failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceBrowse failed: %d", err);
             CloseHandle(stop_event_);
             stop_event_ = nullptr;
             return false;
@@ -474,7 +478,7 @@ struct MdnsDiscovery::Impl {
             WSACloseEvent(read_event);
         });
 
-        blog(LOG_INFO, "[avolocam] mDNS discovery started (Windows)");
+        ALOG_MDNS(LOG_INFO, "mDNS discovery started (Windows)");
         return true;
     }
 
@@ -527,7 +531,7 @@ struct MdnsDiscovery::Impl {
         std::string name = serviceName;
 
         if (flags & kDNSServiceFlagsAdd) {
-            blog(LOG_INFO, "[avolocam] Discovered camera: %s", serviceName);
+            ALOG_MDNS(LOG_INFO, "Discovered camera: %s", serviceName);
             impl->resolve_service_win(name, interfaceIndex, replyDomain);
         } else {
             impl->remove_camera(name);
@@ -558,7 +562,7 @@ struct MdnsDiscovery::Impl {
             ctx);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceResolve failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceResolve failed: %d", err);
             delete ctx;
             return;
         }
@@ -581,7 +585,7 @@ struct MdnsDiscovery::Impl {
             if (result == WAIT_OBJECT_0) {
                 DNSServiceProcessResult(resolve_ref);
             } else {
-                blog(LOG_WARNING, "[avolocam] Resolve timeout for: %s", ctx->name.c_str());
+                ALOG_MDNS(LOG_WARNING, "Resolve timeout for: %s", ctx->name.c_str());
             }
 
             WSACloseEvent(read_event);
@@ -623,7 +627,7 @@ struct MdnsDiscovery::Impl {
         auto *ctx = static_cast<ResolveContext*>(context);
 
         if (errorCode != kDNSServiceErr_NoError) {
-            blog(LOG_WARNING, "[avolocam] Resolve callback error: %d", errorCode);
+            ALOG_MDNS(LOG_WARNING, "Resolve callback error: %d", errorCode);
             return;
         }
 
@@ -677,7 +681,7 @@ struct MdnsDiscovery::Impl {
             ctx);
 
         if (err != kDNSServiceErr_NoError) {
-            blog(LOG_ERROR, "[avolocam] DNSServiceGetAddrInfo failed: %d", err);
+            ALOG_MDNS(LOG_ERROR, "DNSServiceGetAddrInfo failed: %d", err);
             delete ctx;
             return;
         }
@@ -694,7 +698,7 @@ struct MdnsDiscovery::Impl {
             if (result == WAIT_OBJECT_0) {
                 DNSServiceProcessResult(getaddr_ref);
             } else {
-                blog(LOG_WARNING, "[avolocam] GetAddrInfo timeout for: %s", ctx->name.c_str());
+                ALOG_MDNS(LOG_WARNING, "GetAddrInfo timeout for: %s", ctx->name.c_str());
             }
 
             WSACloseEvent(read_event);
@@ -728,7 +732,7 @@ struct MdnsDiscovery::Impl {
         auto *ctx = static_cast<GetAddrContextWin*>(context);
 
         if (errorCode != kDNSServiceErr_NoError) {
-            blog(LOG_WARNING, "[avolocam] GetAddrInfo callback error: %d", errorCode);
+            ALOG_MDNS(LOG_WARNING, "GetAddrInfo callback error: %d", errorCode);
             return;
         }
 
@@ -772,7 +776,7 @@ struct MdnsDiscovery::Impl {
             camera.version = it->second;
         }
 
-        blog(LOG_INFO, "[avolocam] Camera resolved: %s at %s:%d (UDP: %d)",
+        ALOG_MDNS(LOG_INFO, "Camera resolved: %s at %s:%d (UDP: %d)",
              name.c_str(), ip.c_str(), port, camera.flash_udp_port);
 
         DiscoveryEvent event;

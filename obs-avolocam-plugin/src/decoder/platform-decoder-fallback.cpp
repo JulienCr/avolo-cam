@@ -11,14 +11,15 @@
 #if !defined(__APPLE__) && !defined(_WIN32) && !defined(HAVE_FFMPEG)
 
 #include <obs-module.h>
+#include "../logging.h"
 
 namespace avolocam {
 
 std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
 {
     (void)config;
-    blog(LOG_ERROR, "[avolocam] No platform decoder available for this platform");
-    blog(LOG_ERROR, "[avolocam] Consider building with FFmpeg support (ENABLE_FFMPEG_FALLBACK=ON)");
+    ALOG(LOG_ERROR, "No platform decoder available for this platform");
+    ALOG(LOG_ERROR, "Consider building with FFmpeg support (ENABLE_FFMPEG_FALLBACK=ON)");
     return nullptr;
 }
 

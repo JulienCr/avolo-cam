@@ -6,9 +6,13 @@
 
 #ifdef _WIN32
 
-#include <winsock2.h>
 #include <mutex>
+
+#include <winsock2.h>
+
 #include <obs-module.h>
+
+#include "logging.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -23,10 +27,10 @@ bool ensure_winsock_initialized()
         WSADATA wsa_data;
         int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
         if (result != 0) {
-            blog(LOG_ERROR, "[avolocam] WSAStartup failed: %d", result);
+            ALOG(LOG_ERROR, "WSAStartup failed: %d", result);
         } else {
             g_winsock_initialized = true;
-            blog(LOG_INFO, "[avolocam] Winsock initialized (shared)");
+            ALOG(LOG_INFO, "Winsock initialized (shared)");
         }
     });
     return g_winsock_initialized;

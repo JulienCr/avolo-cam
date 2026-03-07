@@ -5,6 +5,8 @@ project(obs-avolocam VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(ENABLE_TESTS "Build unit tests" OFF)
+
 # On Apple Silicon, compile for arm64 to match OBS.app
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64")
@@ -126,23 +128,38 @@ if(WIN32)
     endif()
 endif()
 
-# Source files
+# Testable core components (no OBS/D3D11/network dependencies)
+set(CORE_SOURCES
+    src/rtp-depacketizer.cpp src/rtp-depacketizer.h
+    src/jitter-buffer.cpp src/jitter-buffer.h
+    src/access-unit-assembler.cpp src/access-unit-assembler.h
+    src/sync-state-machine.cpp src/sync-state-machine.h
+    src/timestamp-mapper.cpp src/timestamp-mapper.h
+)
+add_library(avocam-core OBJECT ${CORE_SOURCES})
+target_include_directories(avocam-core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OBS_LIBOBS_DIR}
+    ${OBS_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_target_properties(avocam-core PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
+# Source files (plugin-specific, excluding core components)
 set(SOURCES
     src/plugin-main.cpp
     src/avolocam-source.cpp
     src/avolocam-source.h
+    src/avolocam-source-data.h
+    src/avolocam-pipeline.cpp
+    src/avolocam-receive.cpp
+    src/avolocam-decode.cpp
+    src/test-pattern.h
+    src/test-pattern.cpp
+    src/source-error.cpp
+    src/source-error.h
     src/udp-receiver.cpp
     src/udp-receiver.h
-    src/jitter-buffer.cpp
-    src/jitter-buffer.h
-    src/rtp-depacketizer.cpp
-    src/rtp-depacketizer.h
-    src/access-unit-assembler.cpp
-    src/access-unit-assembler.h
-    src/sync-state-machine.cpp
-    src/sync-state-machine.h
-    src/timestamp-mapper.cpp
-    src/timestamp-mapper.h
     src/mdns-discovery.cpp
     src/mdns-discovery.h
     src/websocket-client.cpp
@@ -248,7 +265,7 @@ if(NOT APPLE AND NOT WIN32 AND NOT FFmpeg_FOUND)
 endif()
 
 # Create the plugin
-add_library(obs-avolocam MODULE ${SOURCES})
+add_library(obs-avolocam MODULE ${SOURCES} $<TARGET_OBJECTS:avocam-core>)
 
 # Include directories - use local OBS headers
 target_include_directories(obs-avolocam PRIVATE
@@ -397,3 +414,9 @@ install(DIRECTORY data/
     DESTINATION "${PLUGIN_INSTALL_DIR}/obs-avolocam/data"
     OPTIONAL
 )
+
+# Unit tests
+if(ENABLE_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

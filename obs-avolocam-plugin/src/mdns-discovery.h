@@ -12,13 +12,13 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
-#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace avolocam {
 

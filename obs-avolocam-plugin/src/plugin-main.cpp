@@ -8,6 +8,7 @@
 
 #include <obs-module.h>
 #include "avolocam-source.h"
+#include "logging.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-avolocam", "en-US")
@@ -22,17 +23,17 @@ static const char *g_build_timestamp = __DATE__ " " __TIME__;
 
 bool obs_module_load(void)
 {
-    blog(LOG_INFO, "[avolocam] Plugin built: %s", g_build_timestamp);
-    blog(LOG_INFO, "[avolocam] Plugin loading...");
+    ALOG(LOG_INFO, "Plugin built: %s", g_build_timestamp);
+    ALOG(LOG_INFO, "Plugin loading...");
 
     // Register the video source
     avolocam_source_register();
 
-    blog(LOG_INFO, "[avolocam] Plugin loaded successfully");
+    ALOG(LOG_INFO, "Plugin loaded successfully");
     return true;
 }
 
 void obs_module_unload(void)
 {
-    blog(LOG_INFO, "[avolocam] Plugin unloading...");
+    ALOG(LOG_INFO, "Plugin unloading...");
 }

@@ -4,6 +4,7 @@
 
 #include "rtp-depacketizer.h"
 #include <cstring>
+#include <cstdlib>
 
 namespace avolocam {
 
@@ -16,6 +17,10 @@ RtpDepacketizer::~RtpDepacketizer() = default;
 
 void RtpDepacketizer::reset() {
     fua_states_.clear();
+}
+
+void RtpDepacketizer::set_packet_loss_callback(PacketLossCallback callback) {
+    packet_loss_callback_ = std::move(callback);
 }
 
 std::optional<RtpDepacketizer::RtpHeader> RtpDepacketizer::parse_rtp_header(
@@ -213,6 +218,7 @@ std::vector<NalUnit> RtpDepacketizer::handle_fu_a(
         state.in_progress = false;
         state.buffer.clear();
         fragments_dropped_++;
+        if (packet_loss_callback_) packet_loss_callback_(std::abs(seq_diff));
         return result;
     }
     state.expected_seq = rtp.sequence + 1;

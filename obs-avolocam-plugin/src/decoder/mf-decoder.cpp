@@ -3,6 +3,7 @@
  */
 
 #include "mf-decoder.h"
+#include "../logging.h"
 
 #ifdef HAVE_FFMPEG_D3D11VA
 #include "ffmpeg-d3d11va-decoder.h"
@@ -39,9 +40,9 @@ namespace avolocam {
 // GPU hardware session limits (typically 4-8 on NVIDIA, fewer on Intel).
 // Each MFDecoder creating its own D3D11Device + MFT instance risks exceeding
 // the limit and crashing the GPU driver.
-static ID3D11Device *g_shared_d3d_device = nullptr;
-static ID3D11DeviceContext *g_shared_d3d_context = nullptr;
-static IMFDXGIDeviceManager *g_shared_device_manager = nullptr;
+static ComPtr<ID3D11Device> g_shared_d3d_device;
+static ComPtr<ID3D11DeviceContext> g_shared_d3d_context;
+static ComPtr<IMFDXGIDeviceManager> g_shared_device_manager;
 static UINT g_shared_device_manager_token = 0;
 static int g_shared_d3d_refcount = 0;
 static std::mutex g_shared_d3d_mutex;
@@ -55,14 +56,14 @@ static const GUID MFVideoFormat_NV12 = {0x3231564E, 0x0000, 0x0010,
 MFDecoder::MFDecoder(const DecoderConfig &config)
     : config_(config)
 {
-    blog(LOG_INFO, "[avolocam] Creating Media Foundation decoder");
+    ALOG_MF(LOG_INFO, "Creating Media Foundation decoder");
 
     // Initialize Media Foundation
     HRESULT hr = MFStartup(MF_VERSION);
     if (SUCCEEDED(hr)) {
         mf_initialized_ = true;
     } else {
-        blog(LOG_ERROR, "[avolocam] MFStartup failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "MFStartup failed: 0x%08X", hr);
     }
 }
 
@@ -77,53 +78,26 @@ MFDecoder::~MFDecoder()
         std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
 
         // Release instance COM references (AddRef'd copies of shared device)
-        if (device_manager_) {
-            device_manager_->Release();
-            device_manager_ = nullptr;
-        }
-        if (d3d_context_) {
-            d3d_context_->Release();
-            d3d_context_ = nullptr;
-        }
-        if (d3d_device_) {
-            d3d_device_->Release();
-            d3d_device_ = nullptr;
-        }
+        device_manager_.Clear();
+        d3d_context_.Clear();
+        d3d_device_.Clear();
 
         g_shared_d3d_refcount--;
-        blog(LOG_INFO, "[avolocam] Released shared D3D11 device reference (refcount=%d)",
+        ALOG_MF(LOG_INFO, "Released shared D3D11 device reference (refcount=%d)",
              g_shared_d3d_refcount);
 
         if (g_shared_d3d_refcount <= 0) {
-            if (g_shared_device_manager) {
-                g_shared_device_manager->Release();
-                g_shared_device_manager = nullptr;
-            }
-            if (g_shared_d3d_context) {
-                g_shared_d3d_context->Release();
-                g_shared_d3d_context = nullptr;
-            }
-            if (g_shared_d3d_device) {
-                g_shared_d3d_device->Release();
-                g_shared_d3d_device = nullptr;
-            }
+            g_shared_device_manager.Clear();
+            g_shared_d3d_context.Clear();
+            g_shared_d3d_device.Clear();
             g_shared_d3d_refcount = 0;
-            blog(LOG_INFO, "[avolocam] Shared D3D11 device destroyed (last reference)");
+            ALOG_MF(LOG_INFO, "Shared D3D11 device destroyed (last reference)");
         }
     } else {
         // Non-shared device: release normally without lock
-        if (device_manager_) {
-            device_manager_->Release();
-            device_manager_ = nullptr;
-        }
-        if (d3d_context_) {
-            d3d_context_->Release();
-            d3d_context_ = nullptr;
-        }
-        if (d3d_device_) {
-            d3d_device_->Release();
-            d3d_device_ = nullptr;
-        }
+        device_manager_.Clear();
+        d3d_context_.Clear();
+        d3d_device_.Clear();
     }
 
     if (mf_initialized_) {
@@ -131,16 +105,13 @@ MFDecoder::~MFDecoder()
         mf_initialized_ = false;
     }
 
-    blog(LOG_INFO, "[avolocam] Media Foundation decoder destroyed");
+    ALOG_MF(LOG_INFO, "Media Foundation decoder destroyed");
 }
 
 void MFDecoder::release_staging_textures()
 {
     for (int i = 0; i < 2; i++) {
-        if (staging_textures_[i]) {
-            staging_textures_[i]->Release();
-            staging_textures_[i] = nullptr;
-        }
+        staging_textures_[i].Clear();
     }
     staging_write_idx_ = 0;
     staging_read_idx_ = -1;
@@ -172,7 +143,7 @@ bool MFDecoder::create_staging_textures(uint32_t width, uint32_t height)
     for (int i = 0; i < 2; i++) {
         HRESULT hr = d3d_device_->CreateTexture2D(&desc, nullptr, &staging_textures_[i]);
         if (FAILED(hr)) {
-            blog(LOG_ERROR, "[avolocam] Failed to create staging texture %d: 0x%08X", i, hr);
+            ALOG_MF(LOG_ERROR, "Failed to create staging texture %d: 0x%08X", i, hr);
             release_staging_textures();
             return false;
         }
@@ -180,7 +151,7 @@ bool MFDecoder::create_staging_textures(uint32_t width, uint32_t height)
 
     staging_width_ = width;
     staging_height_ = height;
-    blog(LOG_INFO, "[avolocam] Created async staging textures %ux%u", width, height);
+    ALOG_MF(LOG_INFO, "Created async staging textures %ux%u", width, height);
     return true;
 }
 
@@ -193,18 +164,16 @@ bool MFDecoder::create_d3d11_device()
     std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
 
     // Reuse existing shared device if available
+    // operator= does AddRef via Replace — correct for shared ownership
     if (g_shared_d3d_device && g_shared_d3d_context && g_shared_device_manager) {
         d3d_device_ = g_shared_d3d_device;
-        d3d_device_->AddRef();
         d3d_context_ = g_shared_d3d_context;
-        d3d_context_->AddRef();
         device_manager_ = g_shared_device_manager;
-        device_manager_->AddRef();
         device_manager_token_ = g_shared_device_manager_token;
         g_shared_d3d_refcount++;
         using_shared_device_ = true;
 
-        blog(LOG_INFO, "[avolocam] Reusing shared D3D11 device (refcount=%d)",
+        ALOG_MF(LOG_INFO, "Reusing shared D3D11 device (refcount=%d)",
              g_shared_d3d_refcount);
         return true;
     }
@@ -236,53 +205,44 @@ bool MFDecoder::create_d3d11_device()
         &d3d_context_);
 
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] D3D11CreateDevice failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "D3D11CreateDevice failed: 0x%08X", hr);
         return false;
     }
 
     // Enable multithread protection
-    ID3D10Multithread *mt = nullptr;
-    hr = d3d_device_->QueryInterface(__uuidof(ID3D10Multithread), (void **)&mt);
-    if (SUCCEEDED(hr)) {
+    ComQIPtr<ID3D10Multithread> mt(d3d_device_);
+    if (mt) {
         mt->SetMultithreadProtected(TRUE);
-        mt->Release();
     }
 
     // Create DXGI device manager
     hr = MFCreateDXGIDeviceManager(&device_manager_token_, &device_manager_);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] MFCreateDXGIDeviceManager failed: 0x%08X", hr);
-        d3d_context_->Release();
-        d3d_context_ = nullptr;
-        d3d_device_->Release();
-        d3d_device_ = nullptr;
+        ALOG_MF(LOG_WARNING, "MFCreateDXGIDeviceManager failed: 0x%08X", hr);
+        d3d_context_.Clear();
+        d3d_device_.Clear();
         return false;
     }
 
     hr = device_manager_->ResetDevice(d3d_device_, device_manager_token_);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] ResetDevice failed: 0x%08X", hr);
-        device_manager_->Release();
-        device_manager_ = nullptr;
-        d3d_context_->Release();
-        d3d_context_ = nullptr;
-        d3d_device_->Release();
-        d3d_device_ = nullptr;
+        ALOG_MF(LOG_WARNING, "ResetDevice failed: 0x%08X", hr);
+        device_manager_.Clear();
+        d3d_context_.Clear();
+        d3d_device_.Clear();
         return false;
     }
 
     // Store as shared device for other instances
+    // operator= does AddRef via Replace — globals get their own reference
     g_shared_d3d_device = d3d_device_;
-    g_shared_d3d_device->AddRef();
     g_shared_d3d_context = d3d_context_;
-    g_shared_d3d_context->AddRef();
     g_shared_device_manager = device_manager_;
-    g_shared_device_manager->AddRef();
     g_shared_device_manager_token = device_manager_token_;
     g_shared_d3d_refcount = 1;
     using_shared_device_ = true;
 
-    blog(LOG_INFO, "[avolocam] Created shared D3D11 device for hardware decoding (refcount=1)");
+    ALOG_MF(LOG_INFO, "Created shared D3D11 device for hardware decoding (refcount=1)");
     return true;
 }
 
@@ -294,7 +254,7 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
     }
 
     if (!sps || sps_size == 0 || !pps || pps_size == 0) {
-        blog(LOG_ERROR, "[avolocam] Invalid SPS/PPS data");
+        ALOG_MF(LOG_ERROR, "Invalid SPS/PPS data");
         return false;
     }
 
@@ -304,7 +264,7 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Parse SPS for dimensions
     if (!parse_sps_dimensions(sps, sps_size)) {
-        blog(LOG_ERROR, "[avolocam] Failed to parse SPS");
+        ALOG_MF(LOG_ERROR, "Failed to parse SPS");
         return false;
     }
 
@@ -315,14 +275,14 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Create decoder
     if (!create_decoder()) {
-        blog(LOG_ERROR, "[avolocam] Failed to create decoder");
+        ALOG_MF(LOG_ERROR, "Failed to create decoder");
         return false;
     }
 
     initialized_ = true;
     {
         std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
-        blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d, "
+        ALOG_MF(LOG_INFO, "Decoder initialized: %ux%u, hardware=%d, "
              "active_hw_sessions=%d",
              width_, height_, hardware_enabled_,
              hardware_enabled_ ? g_shared_d3d_refcount : 0);
@@ -343,7 +303,7 @@ bool MFDecoder::create_decoder()
         flags |= MFT_ENUM_FLAG_HARDWARE;
     }
 
-    IMFActivate **activates = nullptr;
+    IMFActivate **activates_raw = nullptr;
     UINT32 num_activates = 0;
 
     HRESULT hr = MFTEnumEx(
@@ -351,71 +311,68 @@ bool MFDecoder::create_decoder()
         flags,
         &input_type,
         &output_type,
-        &activates,
+        &activates_raw,
         &num_activates);
 
     if (FAILED(hr) || num_activates == 0) {
         if (hardware_enabled_) {
             // Hardware decoder not found — fall back to software
-            blog(LOG_WARNING, "[avolocam] No hardware H.264 decoder found (0x%08X), "
+            ALOG_MF(LOG_WARNING, "No hardware H.264 decoder found (0x%08X), "
                  "falling back to software decoder", hr);
             hardware_enabled_ = false;
             return create_decoder();  // Retry without MFT_ENUM_FLAG_HARDWARE
         }
-        blog(LOG_ERROR, "[avolocam] No H.264 decoder found: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "No H.264 decoder found: 0x%08X", hr);
         return false;
     }
 
     // Activate first decoder
-    hr = activates[0]->ActivateObject(__uuidof(IMFTransform), (void **)&decoder_);
+    hr = activates_raw[0]->ActivateObject(__uuidof(IMFTransform), (void **)&decoder_);
 
-    // Free activates
+    // Free activates (MFTEnumEx returns raw CoTaskMem array with refcount=1 each)
     for (UINT32 i = 0; i < num_activates; i++) {
-        activates[i]->Release();
+        activates_raw[i]->Release();
     }
-    CoTaskMemFree(activates);
+    CoTaskMemFree(activates_raw);
 
     if (FAILED(hr)) {
         if (hardware_enabled_) {
             // ActivateObject failed — GPU hardware session limit likely reached
-            blog(LOG_WARNING, "[avolocam] Hardware decoder ActivateObject failed (0x%08X). "
+            ALOG_MF(LOG_WARNING, "Hardware decoder ActivateObject failed (0x%08X). "
                  "GPU session limit may be reached. Falling back to software decoder.", hr);
             hardware_enabled_ = false;
             return create_decoder();  // Retry with software
         }
-        blog(LOG_ERROR, "[avolocam] ActivateObject failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "ActivateObject failed: 0x%08X", hr);
         return false;
     }
 
     // Enable low-latency mode via MFT attributes (required for real-time streaming)
     // This prevents the decoder from buffering 16+ frames before output
     if (config_.low_latency) {
-        IMFAttributes *attrs = nullptr;
+        ComPtr<IMFAttributes> attrs;
         hr = decoder_->GetAttributes(&attrs);
         if (SUCCEEDED(hr) && attrs) {
             // MF_LOW_LATENCY has same GUID as CODECAPI_AVLowLatencyMode
             hr = attrs->SetUINT32(MF_LOW_LATENCY, TRUE);
             if (SUCCEEDED(hr)) {
-                blog(LOG_INFO, "[avolocam] MF_LOW_LATENCY enabled via attributes");
+                ALOG_MF(LOG_INFO, "MF_LOW_LATENCY enabled via attributes");
             } else {
-                blog(LOG_WARNING, "[avolocam] Failed to set MF_LOW_LATENCY: 0x%08X", hr);
+                ALOG_MF(LOG_WARNING, "Failed to set MF_LOW_LATENCY: 0x%08X", hr);
             }
-            attrs->Release();
         } else {
-            blog(LOG_WARNING, "[avolocam] GetAttributes failed: 0x%08X, trying ICodecAPI", hr);
+            ALOG_MF(LOG_WARNING, "GetAttributes failed: 0x%08X, trying ICodecAPI", hr);
             // Fallback to ICodecAPI for older decoders
-            ICodecAPI *codec_api = nullptr;
-            hr = decoder_->QueryInterface(__uuidof(ICodecAPI), (void **)&codec_api);
-            if (SUCCEEDED(hr) && codec_api) {
+            ComQIPtr<ICodecAPI> codec_api(decoder_);
+            if (codec_api) {
                 VARIANT var;
                 VariantInit(&var);
                 var.vt = VT_UI4;  // H.264 decoder uses VT_UI4, not VT_BOOL
                 var.ulVal = 1;
                 hr = codec_api->SetValue(&CODECAPI_AVLowLatencyMode, &var);
                 if (SUCCEEDED(hr)) {
-                    blog(LOG_INFO, "[avolocam] Low-latency mode enabled via ICodecAPI");
+                    ALOG_MF(LOG_INFO, "Low-latency mode enabled via ICodecAPI");
                 }
-                codec_api->Release();
             }
         }
     }
@@ -423,34 +380,34 @@ bool MFDecoder::create_decoder()
     // Set D3D11 device manager if hardware decoding
     if (hardware_enabled_ && device_manager_) {
         hr = decoder_->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
-                                       (ULONG_PTR)device_manager_);
+                                       (ULONG_PTR)device_manager_.Get());
         if (FAILED(hr)) {
-            blog(LOG_WARNING, "[avolocam] Failed to set D3D manager: 0x%08X", hr);
+            ALOG_MF(LOG_WARNING, "Failed to set D3D manager: 0x%08X", hr);
             hardware_enabled_ = false;
         }
     }
 
     // Configure input type
     if (!configure_input_type()) {
-        blog(LOG_ERROR, "[avolocam] Failed to configure input type");
+        ALOG_MF(LOG_ERROR, "Failed to configure input type");
         return false;
     }
 
     // Configure output type
     if (!configure_output_type()) {
-        blog(LOG_ERROR, "[avolocam] Failed to configure output type");
+        ALOG_MF(LOG_ERROR, "Failed to configure output type");
         return false;
     }
 
     // Start streaming
     hr = decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] Failed to notify begin streaming: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "Failed to notify begin streaming: 0x%08X", hr);
     }
 
     hr = decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] Failed to notify start of stream: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "Failed to notify start of stream: 0x%08X", hr);
     }
 
     input_started_ = true;
@@ -464,41 +421,37 @@ void MFDecoder::destroy_decoder()
             decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
             decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
         }
-        decoder_->Release();
-        decoder_ = nullptr;
+        decoder_.Clear();
     }
-    if (output_type_) {
-        output_type_->Release();
-        output_type_ = nullptr;
-    }
+    output_type_.Clear();
     input_started_ = false;
     drain_mode_ = false;
 }
 
 bool MFDecoder::configure_input_type()
 {
-    IMFMediaType *media_type = nullptr;
+    ComPtr<IMFMediaType> media_type;
     HRESULT hr = MFCreateMediaType(&media_type);
     if (FAILED(hr)) return false;
 
     hr = media_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     hr = media_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     hr = MFSetAttributeSize(media_type, MF_MT_FRAME_SIZE, width_, height_);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     hr = MFSetAttributeRatio(media_type, MF_MT_FRAME_RATE, 30, 1);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     hr = MFSetAttributeRatio(media_type, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     // Set interlace mode to progressive
     hr = media_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    if (FAILED(hr)) { media_type->Release(); return false; }
+    if (FAILED(hr)) return false;
 
     // Build AVCC extradata (decoder configuration record)
     std::vector<uint8_t> extradata = build_avcc_extradata();
@@ -507,10 +460,8 @@ bool MFDecoder::configure_input_type()
     }
 
     hr = decoder_->SetInputType(0, media_type, 0);
-    media_type->Release();
-
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] SetInputType failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "SetInputType failed: 0x%08X", hr);
         return false;
     }
 
@@ -519,15 +470,11 @@ bool MFDecoder::configure_input_type()
 
 bool MFDecoder::configure_output_type()
 {
-    // Release any previously stored output type
-    if (output_type_) {
-        output_type_->Release();
-        output_type_ = nullptr;
-    }
+    output_type_.Clear();
 
     // Get available output types
     for (DWORD i = 0; ; i++) {
-        IMFMediaType *media_type = nullptr;
+        ComPtr<IMFMediaType> media_type;
         HRESULT hr = decoder_->GetOutputAvailableType(0, i, &media_type);
         if (hr == MF_E_NO_MORE_TYPES) break;
         if (FAILED(hr)) break;
@@ -537,17 +484,14 @@ bool MFDecoder::configure_output_type()
         if (SUCCEEDED(hr) && subtype == MFVideoFormat_NV12) {
             hr = decoder_->SetOutputType(0, media_type, 0);
             if (SUCCEEDED(hr)) {
-                // Store the output type for stride queries
-                output_type_ = media_type;
+                // Store the output type for stride queries (move avoids AddRef/Release)
+                output_type_ = std::move(media_type);
                 return true;
             }
-            media_type->Release();
-        } else {
-            media_type->Release();
         }
     }
 
-    blog(LOG_ERROR, "[avolocam] No suitable output type found");
+    ALOG_MF(LOG_ERROR, "No suitable output type found");
     return false;
 }
 
@@ -607,37 +551,26 @@ bool MFDecoder::parse_sps_dimensions(const uint8_t *sps, size_t size)
     return true;
 }
 
-IMFSample *MFDecoder::create_sample(const uint8_t *data, size_t size)
+ComPtr<IMFSample> MFDecoder::create_sample(const uint8_t *data, size_t size)
 {
-    IMFMediaBuffer *buffer = nullptr;
+    ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = MFCreateMemoryBuffer((DWORD)size, &buffer);
     if (FAILED(hr)) return nullptr;
 
     BYTE *buffer_data = nullptr;
     hr = buffer->Lock(&buffer_data, nullptr, nullptr);
-    if (FAILED(hr)) {
-        buffer->Release();
-        return nullptr;
-    }
+    if (FAILED(hr)) return nullptr;
 
     memcpy(buffer_data, data, size);
     buffer->Unlock();
     buffer->SetCurrentLength((DWORD)size);
 
-    IMFSample *sample = nullptr;
+    ComPtr<IMFSample> sample;
     hr = MFCreateSample(&sample);
-    if (FAILED(hr)) {
-        buffer->Release();
-        return nullptr;
-    }
+    if (FAILED(hr)) return nullptr;
 
     hr = sample->AddBuffer(buffer);
-    buffer->Release();
-
-    if (FAILED(hr)) {
-        sample->Release();
-        return nullptr;
-    }
+    if (FAILED(hr)) return nullptr;
 
     return sample;
 }
@@ -646,11 +579,10 @@ bool MFDecoder::process_input(const uint8_t *data, size_t size)
 {
     uint64_t start = get_time_ns();
 
-    IMFSample *sample = create_sample(data, size);
+    ComPtr<IMFSample> sample = create_sample(data, size);
     if (!sample) return false;
 
     HRESULT hr = decoder_->ProcessInput(0, sample, 0);
-    sample->Release();
 
     timing_stats_.process_input_ns = get_time_ns() - start;
 
@@ -677,25 +609,18 @@ bool MFDecoder::process_output(DecodedFrame &out)
     // Check if decoder allocates its own samples
     bool decoder_allocates = (stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
 
-    IMFSample *output_sample = nullptr;
+    ComPtr<IMFSample> output_sample;
     if (!decoder_allocates) {
         // We need to provide output buffer
-        IMFMediaBuffer *buffer = nullptr;
+        ComPtr<IMFMediaBuffer> buffer;
         hr = MFCreateMemoryBuffer(stream_info.cbSize, &buffer);
         if (FAILED(hr)) return false;
 
         hr = MFCreateSample(&output_sample);
-        if (FAILED(hr)) {
-            buffer->Release();
-            return false;
-        }
+        if (FAILED(hr)) return false;
 
         hr = output_sample->AddBuffer(buffer);
-        buffer->Release();
-        if (FAILED(hr)) {
-            output_sample->Release();
-            return false;
-        }
+        if (FAILED(hr)) return false;
     }
 
     output.pSample = output_sample;
@@ -705,14 +630,23 @@ bool MFDecoder::process_output(DecodedFrame &out)
     hr = decoder_->ProcessOutput(0, 1, &output, &status);
     uint64_t process_time = get_time_ns() - process_start;
 
+    // ProcessOutput may return a different sample than what we provided.
+    // Use .Set() to take ownership without AddRef (ProcessOutput already AddRef'd).
+    ComPtr<IMFSample> result_sample;
+    if (output.pSample != output_sample) {
+        // Decoder provided its own sample — take ownership
+        result_sample.Set(output.pSample);
+    } else {
+        // Same sample we provided — output_sample already owns it
+        result_sample = std::move(output_sample);
+    }
+
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-        if (output_sample) output_sample->Release();
         return false;
     }
 
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
         // Output format changed, reconfigure
-        if (output.pSample) output.pSample->Release();
         if (!configure_output_type()) {
             return false;
         }
@@ -721,22 +655,18 @@ bool MFDecoder::process_output(DecodedFrame &out)
     }
 
     if (FAILED(hr)) {
-        if (output.pSample) output.pSample->Release();
-        blog(LOG_WARNING, "[avolocam] ProcessOutput failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "ProcessOutput failed: 0x%08X", hr);
         return false;
     }
 
-    // Get the output sample
-    IMFSample *result_sample = output.pSample;
     if (!result_sample) {
         return false;
     }
 
     // Get buffer from sample
-    IMFMediaBuffer *media_buffer = nullptr;
+    ComPtr<IMFMediaBuffer> media_buffer;
     hr = result_sample->ConvertToContiguousBuffer(&media_buffer);
     if (FAILED(hr)) {
-        result_sample->Release();
         return false;
     }
 
@@ -748,10 +678,9 @@ bool MFDecoder::process_output(DecodedFrame &out)
     }
 
     // Try to get 2D buffer interface
-    IMF2DBuffer *buffer_2d = nullptr;
-    hr = media_buffer->QueryInterface(__uuidof(IMF2DBuffer), (void **)&buffer_2d);
+    ComQIPtr<IMF2DBuffer> buffer_2d(media_buffer);
 
-    if (SUCCEEDED(hr) && buffer_2d) {
+    if (buffer_2d) {
         // Use 2D buffer for stride information
         BYTE *data = nullptr;
         LONG pitch = 0;
@@ -796,7 +725,6 @@ bool MFDecoder::process_output(DecodedFrame &out)
             out.uv_stride = (uint32_t)pitch;
             out.owns_memory = true;
         }
-        buffer_2d->Release();
     } else {
         // Fall back to linear buffer
         BYTE *data = nullptr;
@@ -839,9 +767,6 @@ bool MFDecoder::process_output(DecodedFrame &out)
         }
     }
 
-    media_buffer->Release();
-    result_sample->Release();
-
     // Update timing stats
     timing_stats_.process_output_ns = process_time;
     timing_stats_.lock_buffer_ns = lock_time;
@@ -868,18 +793,17 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
 
     bool decoder_allocates = (stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
 
-    IMFSample *output_sample = nullptr;
+    ComPtr<IMFSample> output_sample;
     if (!decoder_allocates) {
-        IMFMediaBuffer *buffer = nullptr;
+        ComPtr<IMFMediaBuffer> buffer;
         hr = MFCreateMemoryBuffer(stream_info.cbSize, &buffer);
         if (FAILED(hr)) return false;
 
         hr = MFCreateSample(&output_sample);
-        if (FAILED(hr)) { buffer->Release(); return false; }
+        if (FAILED(hr)) return false;
 
         hr = output_sample->AddBuffer(buffer);
-        buffer->Release();
-        if (FAILED(hr)) { output_sample->Release(); return false; }
+        if (FAILED(hr)) return false;
     }
 
     output.pSample = output_sample;
@@ -887,39 +811,44 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
     DWORD status = 0;
     hr = decoder_->ProcessOutput(0, 1, &output, &status);
 
+    // Wrap output.pSample — decoder may have replaced it with its own sample.
+    // Use .Set() to take ownership without AddRef (ProcessOutput already AddRef'd).
+    ComPtr<IMFSample> result_sample;
+    if (output.pSample != output_sample) {
+        // Decoder provided its own sample — take ownership
+        result_sample.Set(output.pSample);
+    } else {
+        // Same sample we provided — output_sample already owns it
+        result_sample = std::move(output_sample);
+    }
+
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-        if (output_sample) output_sample->Release();
         return false;
     }
 
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
-        if (output.pSample) output.pSample->Release();
         if (!configure_output_type()) return false;
         return process_output_async(out);
     }
 
     if (FAILED(hr)) {
-        if (output.pSample) output.pSample->Release();
         return false;
     }
 
-    IMFSample *result_sample = output.pSample;
     if (!result_sample) return false;
 
     // Get buffer and try to get DXGI buffer for GPU texture
-    IMFMediaBuffer *media_buffer = nullptr;
+    ComPtr<IMFMediaBuffer> media_buffer;
     hr = result_sample->GetBufferByIndex(0, &media_buffer);
     if (FAILED(hr)) {
-        result_sample->Release();
         return false;
     }
 
     // Try DXGI buffer for async copy
-    IMFDXGIBuffer *dxgi_buffer = nullptr;
-    hr = media_buffer->QueryInterface(__uuidof(IMFDXGIBuffer), (void **)&dxgi_buffer);
+    ComQIPtr<IMFDXGIBuffer> dxgi_buffer(media_buffer);
 
-    if (SUCCEEDED(hr) && dxgi_buffer && d3d_context_) {
-        ID3D11Texture2D *decoder_texture = nullptr;
+    if (dxgi_buffer && d3d_context_) {
+        ComPtr<ID3D11Texture2D> decoder_texture;
         UINT subresource = 0;
 
         hr = dxgi_buffer->GetResource(__uuidof(ID3D11Texture2D), (void **)&decoder_texture);
@@ -931,10 +860,6 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
 
             // Create staging textures if needed
             if (!create_staging_textures(desc.Width, desc.Height)) {
-                decoder_texture->Release();
-                dxgi_buffer->Release();
-                media_buffer->Release();
-                result_sample->Release();
                 // Fall back to sync path
                 return process_output(out);
             }
@@ -945,11 +870,6 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
                 0, 0, 0,
                 decoder_texture, subresource,
                 nullptr);
-
-            decoder_texture->Release();
-            dxgi_buffer->Release();
-            media_buffer->Release();
-            result_sample->Release();
 
             // If we have a previous frame ready, read it
             if (staging_read_idx_ >= 0) {
@@ -1003,12 +923,9 @@ bool MFDecoder::process_output_async(DecodedFrame &out)
             staging_write_idx_ = 1 - staging_write_idx_;
             return false;  // No frame ready yet
         }
-        if (dxgi_buffer) dxgi_buffer->Release();
     }
 
     // Fall back to synchronous path
-    media_buffer->Release();
-    result_sample->Release();
     return process_output(out);
 }
 
@@ -1020,7 +937,7 @@ bool MFDecoder::decode(const uint8_t *data, size_t size, DecodedFrame &out)
 
     // Process input
     if (!process_input(data, size)) {
-        blog(LOG_WARNING, "[avolocam] Failed to process input");
+        ALOG_MF(LOG_WARNING, "Failed to process input");
         // Still try to get output
     }
 
@@ -1109,11 +1026,11 @@ bool MFDecoder::supports_gpu_output() const
 bool MFDecoder::set_gpu_output(bool enable)
 {
     if (enable && !supports_gpu_output()) {
-        blog(LOG_WARNING, "[avolocam] GPU output requested but not supported");
+        ALOG_MF(LOG_WARNING, "GPU output requested but not supported");
         return false;
     }
     gpu_output_enabled_ = enable;
-    blog(LOG_INFO, "[avolocam] GPU output %s", enable ? "enabled" : "disabled");
+    ALOG_MF(LOG_INFO, "GPU output %s", enable ? "enabled" : "disabled");
     return true;
 }
 
@@ -1145,8 +1062,11 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
         return false;
     }
 
+    // Wrap output.pSample — take ownership without AddRef
+    ComPtr<IMFSample> result_sample;
+    result_sample.Set(output.pSample);
+
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
-        if (output.pSample) output.pSample->Release();
         if (!configure_output_type()) {
             return false;
         }
@@ -1154,30 +1074,26 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
     }
 
     if (FAILED(hr)) {
-        if (output.pSample) output.pSample->Release();
-        blog(LOG_WARNING, "[avolocam] ProcessOutput (GPU) failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "ProcessOutput (GPU) failed: 0x%08X", hr);
         return false;
     }
 
-    IMFSample *result_sample = output.pSample;
     if (!result_sample) {
         return false;
     }
 
     // Get the buffer
-    IMFMediaBuffer *media_buffer = nullptr;
+    ComPtr<IMFMediaBuffer> media_buffer;
     hr = result_sample->GetBufferByIndex(0, &media_buffer);
     if (FAILED(hr)) {
-        result_sample->Release();
         return false;
     }
 
     // Try to get DXGI buffer for GPU texture access
-    IMFDXGIBuffer *dxgi_buffer = nullptr;
-    hr = media_buffer->QueryInterface(__uuidof(IMFDXGIBuffer), (void **)&dxgi_buffer);
+    ComQIPtr<IMFDXGIBuffer> dxgi_buffer(media_buffer);
 
-    if (SUCCEEDED(hr) && dxgi_buffer) {
-        ID3D11Texture2D *texture = nullptr;
+    if (dxgi_buffer) {
+        ComPtr<ID3D11Texture2D> texture;
         UINT subresource = 0;
 
         hr = dxgi_buffer->GetResource(__uuidof(ID3D11Texture2D), (void **)&texture);
@@ -1195,16 +1111,13 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
             out.has_gpu_texture = true;
             out.owns_memory = false;
 
-            // GetResource() added a ref on the texture. Release it now —
-            // the texture stays alive through the IMFSample (result_sample)
-            // which holds its own reference via the IMFMediaBuffer chain.
-            texture->Release();
+            // texture ComPtr will Release the extra ref from GetResource()
+            // when it goes out of scope — the texture stays alive through
+            // the IMFSample which holds its own reference via IMFMediaBuffer.
 
-            // Keep sample reference for texture lifetime
-            out.platform_handle = result_sample;
-
-            dxgi_buffer->Release();
-            media_buffer->Release();
+            // Transfer sample ownership to caller for texture lifetime.
+            // Detach() releases ComPtr ownership without calling Release.
+            out.platform_handle = result_sample.Detach();
 
             // Update timing stats
             timing_stats_.process_output_ns = process_time;
@@ -1216,43 +1129,39 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
 
             return true;
         }
-        dxgi_buffer->Release();
     }
 
     // GPU extraction failed, fall back to CPU
-    media_buffer->Release();
-    result_sample->Release();
-
-    blog(LOG_DEBUG, "[avolocam] GPU texture extraction failed, falling back to CPU");
+    ALOG_MF(LOG_DEBUG, "GPU texture extraction failed, falling back to CPU");
     return process_output(out);
 }
 
 // Factory method implementation for Windows
 std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
 {
-    blog(LOG_INFO, "[avolocam] Creating platform decoder (Windows), type=%d",
+    ALOG_MF(LOG_INFO, "Creating platform decoder (Windows), type=%d",
          static_cast<int>(config.decoder_type));
 
     switch (config.decoder_type) {
 #ifdef HAVE_FFMPEG_D3D11VA
     case DecoderType::FFMPEG_D3D11VA:
-        blog(LOG_INFO, "[avolocam] Explicitly requested FFmpeg D3D11VA decoder");
+        ALOG_MF(LOG_INFO, "Explicitly requested FFmpeg D3D11VA decoder");
         if (FFmpegD3D11VADecoder::is_available()) {
             return std::make_unique<FFmpegD3D11VADecoder>(config);
         }
-        blog(LOG_WARNING, "[avolocam] FFmpeg D3D11VA not available, falling back to MF");
+        ALOG_MF(LOG_WARNING, "FFmpeg D3D11VA not available, falling back to MF");
         return std::make_unique<MFDecoder>(config);
 #endif
 
     case DecoderType::MEDIA_FOUNDATION:
-        blog(LOG_INFO, "[avolocam] Explicitly requested Media Foundation decoder");
+        ALOG_MF(LOG_INFO, "Explicitly requested Media Foundation decoder");
         return std::make_unique<MFDecoder>(config);
 
     case DecoderType::AUTO:
     default:
         // AUTO: Use MF by default on Windows (proven stable)
         // User can explicitly select FFmpeg D3D11VA via UI if desired
-        blog(LOG_INFO, "[avolocam] AUTO: Using Media Foundation decoder");
+        ALOG_MF(LOG_INFO, "AUTO: Using Media Foundation decoder");
         return std::make_unique<MFDecoder>(config);
     }
 }
