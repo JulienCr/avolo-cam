@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <string>
 
+#include "source-error.h"
+
 namespace avolocam {
 
 /**
@@ -25,9 +27,9 @@ public:
     /**
      * Bind to a UDP port for listening
      * @param port Port number to bind to
-     * @return true on success
+     * @return Result<void> with SourceError on failure
      */
-    bool bind(uint16_t port);
+    Result<void> bind(uint16_t port);
 
     /**
      * Receive a UDP packet (blocking with timeout)

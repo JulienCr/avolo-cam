@@ -13,10 +13,13 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(avocam-tests
     rtp_test_helpers.h
+    obs_stubs.cpp
     test_rtp_depacketizer.cpp
     test_jitter_buffer.cpp
     test_access_unit_assembler.cpp
     test_sync_state_machine.cpp
+    test_timestamp_mapper.cpp
+    test_pipeline_integration.cpp
 )
 
 target_link_libraries(avocam-tests PRIVATE

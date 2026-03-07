@@ -26,6 +26,7 @@
 #endif
 
 #include <cstring>
+#include "pipeline-config.h"
 
 namespace avolocam {
 
@@ -51,7 +52,7 @@ UdpReceiver::~UdpReceiver() {
     delete impl_;
 }
 
-bool UdpReceiver::bind(uint16_t port) {
+Result<void> UdpReceiver::bind(uint16_t port) {
     if (impl_->socket != INVALID_SOCKET_VAL) {
         close();
     }
@@ -59,7 +60,7 @@ bool UdpReceiver::bind(uint16_t port) {
     // Create UDP socket
     impl_->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (impl_->socket == INVALID_SOCKET_VAL) {
-        return false;
+        return {SourceError::SOCKET_CREATE_FAILED};
     }
 
     // NOTE: SO_REUSEADDR intentionally NOT set.
@@ -69,7 +70,7 @@ bool UdpReceiver::bind(uint16_t port) {
     // giving an explicit error instead of silent corruption.
 
     // Increase receive buffer size for high bitrate streams
-    int rcvbuf = 4 * 1024 * 1024;  // 4MB
+    int rcvbuf = UDP_RCVBUF_SIZE;
     setsockopt(impl_->socket, SOL_SOCKET, SO_RCVBUF,
                reinterpret_cast<const char*>(&rcvbuf), sizeof(rcvbuf));
 
@@ -90,11 +91,11 @@ bool UdpReceiver::bind(uint16_t port) {
                sizeof(addr)) < 0) {
         CLOSE_SOCKET(impl_->socket);
         impl_->socket = INVALID_SOCKET_VAL;
-        return false;
+        return {SourceError::BIND_FAILED};
     }
 
     impl_->bound_port = port;
-    return true;
+    return {};
 }
 
 int UdpReceiver::receive(uint8_t *buffer, size_t max_size, int timeout_ms) {

@@ -134,9 +134,15 @@ set(CORE_SOURCES
     src/jitter-buffer.cpp src/jitter-buffer.h
     src/access-unit-assembler.cpp src/access-unit-assembler.h
     src/sync-state-machine.cpp src/sync-state-machine.h
+    src/timestamp-mapper.cpp src/timestamp-mapper.h
 )
 add_library(avocam-core OBJECT ${CORE_SOURCES})
-target_include_directories(avocam-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(avocam-core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OBS_LIBOBS_DIR}
+    ${OBS_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
 set_target_properties(avocam-core PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
 # Source files (plugin-specific, excluding core components)
@@ -144,10 +150,16 @@ set(SOURCES
     src/plugin-main.cpp
     src/avolocam-source.cpp
     src/avolocam-source.h
+    src/avolocam-source-data.h
+    src/avolocam-pipeline.cpp
+    src/avolocam-receive.cpp
+    src/avolocam-decode.cpp
+    src/test-pattern.h
+    src/test-pattern.cpp
+    src/source-error.cpp
+    src/source-error.h
     src/udp-receiver.cpp
     src/udp-receiver.h
-    src/timestamp-mapper.cpp
-    src/timestamp-mapper.h
     src/mdns-discovery.cpp
     src/mdns-discovery.h
     src/websocket-client.cpp
