@@ -79,44 +79,113 @@ static std::mutex g_ports_mutex;
 struct SourceData {
     obs_source_t *source = nullptr;
 
-    // Configuration (thread-safe: atomics for simple types, config_mutex_ for strings)
-    std::string camera_ip;               // protected by config_mutex_
-    std::atomic<uint16_t> camera_port{5000};
-    std::atomic<int> jitter_mode{JITTER_STABLE};
-    std::atomic<bool> show_latency{false};
-    std::string auth_token;              // protected by config_mutex_
-    std::atomic<bool> prefer_zero_copy{true};
-    std::atomic<bool> debug_mode{false};
-    std::atomic<int> decoder_type{DECODER_TYPE_AUTO};
-    std::mutex config_mutex_;            // protects camera_ip, auth_token
+    // --- Config: User-facing settings (thread-safe) ---
+    struct Config {
+        std::string camera_ip;               // protected by mutex
+        std::atomic<uint16_t> camera_port{5000};
+        std::atomic<int> jitter_mode{JITTER_STABLE};
+        std::atomic<bool> show_latency{false};
+        std::string auth_token;              // protected by mutex
+        std::atomic<bool> prefer_zero_copy{true};
+        std::atomic<bool> debug_mode{false};
+        std::atomic<int> decoder_type{DECODER_TYPE_AUTO};
+        std::mutex mutex;                    // protects camera_ip, auth_token
+        std::atomic<bool> flash_mode{false}; // derived from jitter_mode
+    };
+    Config config;
 
-    // Pipeline components
-    std::unique_ptr<UdpReceiver> receiver;
-    std::unique_ptr<JitterBuffer> jitter_buffer;
-    std::unique_ptr<RtpDepacketizer> depacketizer;
-    std::unique_ptr<AccessUnitAssembler> assembler;
-    std::unique_ptr<SyncStateMachine> sync_state;
-    std::unique_ptr<PlatformDecoder> decoder;
-    std::unique_ptr<MdnsDiscovery> discovery;
-    std::unique_ptr<TimestampMapper> timestamp_mapper;
-    std::unique_ptr<TextureOutput> texture_output;
-    std::unique_ptr<WebSocketClient> ws_client;
+    // --- Pipeline: Codec/network components ---
+    struct Pipeline {
+        std::unique_ptr<UdpReceiver> receiver;
+        std::unique_ptr<JitterBuffer> jitter_buffer;
+        std::unique_ptr<RtpDepacketizer> depacketizer;
+        std::unique_ptr<AccessUnitAssembler> assembler;
+        std::unique_ptr<SyncStateMachine> sync_state;
+        std::unique_ptr<PlatformDecoder> decoder;
+        std::unique_ptr<MdnsDiscovery> discovery;
+        std::unique_ptr<TimestampMapper> timestamp_mapper;
+        std::unique_ptr<TextureOutput> texture_output;
+        std::unique_ptr<WebSocketClient> ws_client;
+    };
+    Pipeline pipeline;
+
+    // --- DecodeQueue: Async decode pipeline + double buffering ---
+    struct DecodeQueue {
+        size_t max_size = 4;
+        std::deque<AccessUnit> queue;
+        std::mutex mutex;
+        std::condition_variable cv;
+
+        struct Frame {
+            std::vector<uint8_t> data;
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint32_t y_stride = 0;
+            uint32_t uv_stride = 0;
+            uint64_t pts = 0;
+            bool valid = false;
+        };
+        std::atomic<Frame*> latest{nullptr};
+        Frame buffer_a;
+        Frame buffer_b;
+        std::atomic<int> current_buffer{0};  // 0 = A, 1 = B
+    };
+    DecodeQueue decode_queue;
+
+    // --- GpuState: GPU zero-copy + textures ---
+    struct GpuState {
+        std::atomic<bool> use_gpu_decode{false};
+        std::atomic<bool> use_gpu_render{false};
+#ifdef _WIN32
+        std::unique_ptr<GPUConverter> converter;
+#endif
+        bool converter_initialized = false;
+
+        // Sync texture output
+        gs_texture_t *current_texture = nullptr;
+        std::atomic<uint32_t> texture_width{0};
+        std::atomic<uint32_t> texture_height{0};
+        std::mutex texture_mutex;
+        bool has_new_frame = false;
+
+        // Zero-copy shared handle (CUSTOM_DRAW)
+        std::atomic<void*> latest_shared_handle{nullptr};
+        void *cached_shared_handle = nullptr;
+        gs_texture_t *obs_shared_texture = nullptr;
+
+        // CPU fallback
+        gs_texture_t *cpu_fallback_texture = nullptr;
+        uint32_t cpu_fallback_width = 0;
+        uint32_t cpu_fallback_height = 0;
+    };
+    GpuState gpu;
+
+    // --- TestPattern: "No Signal" pattern ---
+    struct TestPattern {
+        gs_texture_t *texture = nullptr;
+        bool created = false;
+        std::string baked_ip;
+        std::string baked_name;
+        static constexpr uint32_t WIDTH = 1920;
+        static constexpr uint32_t HEIGHT = 1080;
+    };
+    TestPattern test_pattern;
 
     // Threading
     std::thread receive_thread;
-    std::thread decode_thread;  // Separate decode thread for async pipeline
-    std::thread ws_connect_thread_;  // WebSocket connect thread (joinable, not detached)
+    std::thread decode_thread;
+    std::thread ws_connect_thread_;
     std::atomic<bool> running{false};
-    std::atomic<bool> visible{true};  // Visibility state for show/hide callbacks
+    std::atomic<bool> visible{true};
 
     // Telemetry
     std::atomic<uint64_t> frames_received{0};
     std::atomic<uint64_t> frames_decoded{0};
     std::atomic<uint64_t> frames_dropped{0};
-    std::atomic<uint64_t> decode_queue_drops{0};  // Drops due to queue overflow
+    std::atomic<uint64_t> decode_queue_drops{0};
     std::atomic<double> current_latency_ms{0.0};
 
-    // Per-instance debug counters (avoid static to support multi-camera)
+    // Per-instance debug counters
     int packet_count{0};
     int total_nals{0};
     int au_count{0};
@@ -136,75 +205,14 @@ struct SourceData {
     // Mutex for decoder output
     std::mutex frame_mutex;
 
-    // ========== Async Decode Pipeline (Phase 3) ==========
-    // Bounded queue for access units waiting to be decoded
-    // Dynamic: 4 for hardware decode, 6 for software (more buffering needed)
-    size_t max_decode_queue_size_ = 4;
-    std::deque<AccessUnit> decode_queue_;
-    std::mutex decode_queue_mutex_;
-    std::condition_variable decode_queue_cv_;
-
-    // Latest decoded frame - atomically swapped for render thread
-    struct LatestFrame {
-        std::vector<uint8_t> data;  // CPU buffer for frame data
-        uint32_t width = 0;
-        uint32_t height = 0;
-        uint32_t y_stride = 0;
-        uint32_t uv_stride = 0;
-        uint64_t pts = 0;
-        bool valid = false;
-    };
-    std::atomic<LatestFrame*> latest_frame_{nullptr};
-    LatestFrame frame_buffer_a_;
-    LatestFrame frame_buffer_b_;
-    std::atomic<int> current_frame_buffer_{0};  // 0 = A, 1 = B
-
-    // GPU output enabled flag
-    std::atomic<bool> use_gpu_decode_{false};
-
-    // Flash mode: ultra-low latency path (derived from jitter_mode == ULTRA_LOW)
-    std::atomic<bool> flash_mode_{false};
-
-    // GPUConverter for NV12→RGBA on decoder device (Phase 2 zero-copy)
-#ifdef _WIN32
-    std::unique_ptr<GPUConverter> gpu_converter_;
-#endif
-    bool gpu_converter_initialized_ = false;
-
-    // GPU texture for sync video output (video_render callback)
-    gs_texture_t *current_gpu_texture_ = nullptr;
-    std::atomic<uint32_t> gpu_texture_width_{0};
-    std::atomic<uint32_t> gpu_texture_height_{0};
-    std::mutex gpu_texture_mutex_;
-    bool has_new_gpu_frame_ = false;
-
-    // GPU zero-copy rendering state (CUSTOM_DRAW path)
-    std::atomic<void*> latest_shared_handle_{nullptr};
-    void *cached_shared_handle_ = nullptr;
-    gs_texture_t *obs_shared_texture_ = nullptr;
-    std::atomic<bool> use_gpu_render_{false};
-
-    // CPU fallback texture for CUSTOM_DRAW mode
-    gs_texture_t *cpu_fallback_texture_ = nullptr;
-    uint32_t cpu_fallback_width_ = 0;
-    uint32_t cpu_fallback_height_ = 0;
-
-    // "No signal" test pattern
-    gs_texture_t *test_pattern_texture_ = nullptr;
-    bool test_pattern_created_ = false;
-    std::string test_pattern_ip_;   // IP baked into current test pattern
-    std::string test_pattern_name_; // source name baked into current test pattern
-    static constexpr uint32_t TEST_PATTERN_WIDTH = 1920;
-    static constexpr uint32_t TEST_PATTERN_HEIGHT = 1080;
-
     SourceData() = default;
     ~SourceData() {
         stop();
-        if (test_pattern_texture_) {
+        if (test_pattern.texture) {
             obs_enter_graphics();
-            gs_texture_destroy(test_pattern_texture_);
+            gs_texture_destroy(test_pattern.texture);
             obs_leave_graphics();
-            test_pattern_texture_ = nullptr;
+            test_pattern.texture = nullptr;
         }
     }
 
@@ -214,14 +222,14 @@ struct SourceData {
         // Snapshot config under lock
         std::string ip_copy, token_copy;
         {
-            std::lock_guard<std::mutex> lock(config_mutex_);
-            ip_copy = camera_ip;
-            token_copy = auth_token;
+            std::lock_guard<std::mutex> lock(config.mutex);
+            ip_copy = config.camera_ip;
+            token_copy = config.auth_token;
         }
-        uint16_t port_copy = camera_port.load();
-        int jitter_copy = jitter_mode.load();
-        bool zero_copy = prefer_zero_copy.load();
-        int dec_type = decoder_type.load();
+        uint16_t port_copy = config.camera_port.load();
+        int jitter_copy = config.jitter_mode.load();
+        bool zero_copy = config.prefer_zero_copy.load();
+        int dec_type = config.decoder_type.load();
 
         if (ip_copy.empty()) {
             blog(LOG_WARNING, "[avolocam] No camera IP configured");
@@ -242,25 +250,25 @@ struct SourceData {
              ip_copy.c_str(), port_copy);
 
         // Derive flash mode from jitter setting
-        flash_mode_.store(jitter_copy == JITTER_ULTRA_LOW);
+        config.flash_mode.store(jitter_copy == JITTER_ULTRA_LOW);
 
         // Initialize components
-        receiver = std::make_unique<UdpReceiver>();
-        receiver->set_expected_source(ip_copy);  // Filter packets to only accept from this camera
-        jitter_buffer = std::make_unique<JitterBuffer>(
+        pipeline.receiver = std::make_unique<UdpReceiver>();
+        pipeline.receiver->set_expected_source(ip_copy);  // Filter packets to only accept from this camera
+        pipeline.jitter_buffer = std::make_unique<JitterBuffer>(
             jitter_copy == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
-        depacketizer = std::make_unique<RtpDepacketizer>();
-        depacketizer->set_packet_loss_callback([this](int missing) {
-            if (sync_state) sync_state->on_packet_loss(missing);
+        pipeline.depacketizer = std::make_unique<RtpDepacketizer>();
+        pipeline.depacketizer->set_packet_loss_callback([this](int missing) {
+            if (pipeline.sync_state) pipeline.sync_state->on_packet_loss(missing);
         });
-        assembler = std::make_unique<AccessUnitAssembler>();
-        sync_state = std::make_unique<SyncStateMachine>();
-        timestamp_mapper = std::make_unique<TimestampMapper>();
+        pipeline.assembler = std::make_unique<AccessUnitAssembler>();
+        pipeline.sync_state = std::make_unique<SyncStateMachine>();
+        pipeline.timestamp_mapper = std::make_unique<TimestampMapper>();
 
         // Initialize texture output
-        texture_output = std::make_unique<TextureOutput>();
-        texture_output->initialize(source, zero_copy);
+        pipeline.texture_output = std::make_unique<TextureOutput>();
+        pipeline.texture_output->initialize(source, zero_copy);
 
         // Create platform-specific decoder with configured type
         DecoderConfig decoder_config;
@@ -269,33 +277,33 @@ struct SourceData {
         decoder_config.output_nv12 = true;
         decoder_config.decoder_type = static_cast<DecoderType>(dec_type);
 
-        decoder = PlatformDecoder::create(decoder_config);
-        if (!decoder) {
+        pipeline.decoder = PlatformDecoder::create(decoder_config);
+        if (!pipeline.decoder) {
             blog(LOG_ERROR, "[avolocam] Failed to create decoder");
             return;
         }
 
         // Note: GPU output will be enabled after decoder initialization in decode_frame_async
         // because supports_gpu_output() requires the D3D device to be created first
-        use_gpu_decode_.store(zero_copy);  // Store preference, will verify after init
+        gpu.use_gpu_decode.store(zero_copy);  // Store preference, will verify after init
 
         // Flash mode: minimal decode queue for lowest latency
-        if (flash_mode_.load()) {
-            max_decode_queue_size_ = 1;
+        if (config.flash_mode.load()) {
+            decode_queue.max_size = 1;
             blog(LOG_INFO, "[avolocam] Flash mode: decode queue = 1, jitter bypass ON");
         }
 
         // Initialize WebSocket client
-        ws_client = std::make_unique<WebSocketClient>();
+        pipeline.ws_client = std::make_unique<WebSocketClient>();
 
         // Set up WebSocket callbacks
-        ws_client->set_frame_info_callback([this](const FrameTimingInfo &info) {
-            if (timestamp_mapper) {
-                timestamp_mapper->register_frame_info(info);
+        pipeline.ws_client->set_frame_info_callback([this](const FrameTimingInfo &info) {
+            if (pipeline.timestamp_mapper) {
+                pipeline.timestamp_mapper->register_frame_info(info);
             }
         });
 
-        ws_client->set_telemetry_callback([this](const CameraTelemetry &telemetry) {
+        pipeline.ws_client->set_telemetry_callback([this](const CameraTelemetry &telemetry) {
             {
                 std::lock_guard<std::mutex> lock(telemetry_mutex);
                 camera_telemetry = telemetry;
@@ -303,10 +311,10 @@ struct SourceData {
         });
 
         // Re-send tally + subscribe to frame_info on every (re)connect
-        ws_client->set_connection_callback([this](WSState state) {
+        pipeline.ws_client->set_connection_callback([this](WSState state) {
             if (state == WSState::CONNECTED) {
                 // Subscribe to frame_info channel (only OBS needs it)
-                ws_client->send_command(R"({"op":"subscribe","channels":["frame_info"]})");
+                pipeline.ws_client->send_command(R"({"op":"subscribe","channels":["frame_info"]})");
 
                 // Invalidate cached tally state to force re-send on reconnect
                 tally_program.store(!tally_program.load());
@@ -317,9 +325,9 @@ struct SourceData {
         });
 
         // Set up IDR request callback for sync state machine
-        sync_state->set_idr_request_callback([this]() {
-            if (ws_client && ws_client->is_connected()) {
-                ws_client->request_idr();
+        pipeline.sync_state->set_idr_request_callback([this]() {
+            if (pipeline.ws_client && pipeline.ws_client->is_connected()) {
+                pipeline.ws_client->request_idr();
             }
         });
 
@@ -331,7 +339,7 @@ struct SourceData {
         {
             std::string ws_url_str = "ws://" + ip_copy + ":"
                                      + std::to_string(DEFAULT_WS_PORT) + "/ws";
-            auto ws = ws_client.get();
+            auto ws = pipeline.ws_client.get();
             ws_connect_thread_ = std::thread([ws, url = std::move(ws_url_str),
                          token = std::move(token_copy)]() {
                 ws->connect(url, token);
@@ -340,13 +348,13 @@ struct SourceData {
 
         // Reset async pipeline state
         {
-            std::lock_guard<std::mutex> lock(decode_queue_mutex_);
-            decode_queue_.clear();
+            std::lock_guard<std::mutex> lock(decode_queue.mutex);
+            decode_queue.queue.clear();
         }
-        latest_frame_.store(nullptr);
-        frame_buffer_a_.valid = false;
-        frame_buffer_b_.valid = false;
-        current_frame_buffer_.store(0);
+        decode_queue.latest.store(nullptr);
+        decode_queue.buffer_a.valid = false;
+        decode_queue.buffer_b.valid = false;
+        decode_queue.current_buffer.store(0);
         decode_queue_drops.store(0);
 
         running.store(true);
@@ -367,27 +375,27 @@ struct SourceData {
             running.store(false);
 
             // Two-phase WS shutdown (see stop() comment for rationale)
-            if (ws_client) ws_client->disconnect();
+            if (pipeline.ws_client) pipeline.ws_client->disconnect();
             if (ws_connect_thread_.joinable()) ws_connect_thread_.join();
-            if (ws_client) ws_client->disconnect();
+            if (pipeline.ws_client) pipeline.ws_client->disconnect();
 
             {
-                std::lock_guard<std::mutex> lock(decode_queue_mutex_);
-                decode_queue_cv_.notify_all();
+                std::lock_guard<std::mutex> lock(decode_queue.mutex);
+                decode_queue.cv.notify_all();
             }
 
             if (decode_thread.joinable()) decode_thread.join();
             if (receive_thread.joinable()) receive_thread.join();
 
-            receiver.reset();
-            jitter_buffer.reset();
-            depacketizer.reset();
-            assembler.reset();
-            sync_state.reset();
-            decoder.reset();
-            timestamp_mapper.reset();
-            texture_output.reset();
-            ws_client.reset();
+            pipeline.receiver.reset();
+            pipeline.jitter_buffer.reset();
+            pipeline.depacketizer.reset();
+            pipeline.assembler.reset();
+            pipeline.sync_state.reset();
+            pipeline.decoder.reset();
+            pipeline.timestamp_mapper.reset();
+            pipeline.texture_output.reset();
+            pipeline.ws_client.reset();
         }
     }
 
@@ -401,14 +409,14 @@ struct SourceData {
         // Phase 1: close the socket to unblock ::connect() in ws_connect_thread_.
         // Phase 2 (after join): disconnect again because connect() may have
         // succeeded between phase 1 and join, re-creating socket + recv_thread_.
-        if (ws_client) {
-            ws_client->disconnect();
+        if (pipeline.ws_client) {
+            pipeline.ws_client->disconnect();
         }
         if (ws_connect_thread_.joinable()) {
             ws_connect_thread_.join();
         }
-        if (ws_client) {
-            ws_client->disconnect();
+        if (pipeline.ws_client) {
+            pipeline.ws_client->disconnect();
         }
 
         // Note: port unregistration happens in receive_loop() exit, AFTER the
@@ -417,8 +425,8 @@ struct SourceData {
 
         // Wake up decode thread if waiting
         {
-            std::lock_guard<std::mutex> lock(decode_queue_mutex_);
-            decode_queue_cv_.notify_all();
+            std::lock_guard<std::mutex> lock(decode_queue.mutex);
+            decode_queue.cv.notify_all();
         }
 
         if (decode_thread.joinable()) {
@@ -431,45 +439,45 @@ struct SourceData {
 
         // Release GPU rendering resources
 #ifdef _WIN32
-        gpu_converter_.reset();
+        gpu.converter.reset();
 #endif
-        gpu_converter_initialized_ = false;
-        use_gpu_render_.store(false);
-        latest_shared_handle_.store(nullptr);
-        cached_shared_handle_ = nullptr;
-        if (obs_shared_texture_) {
+        gpu.converter_initialized = false;
+        gpu.use_gpu_render.store(false);
+        gpu.latest_shared_handle.store(nullptr);
+        gpu.cached_shared_handle = nullptr;
+        if (gpu.obs_shared_texture) {
             obs_enter_graphics();
-            gs_texture_destroy(obs_shared_texture_);
+            gs_texture_destroy(gpu.obs_shared_texture);
             obs_leave_graphics();
-            obs_shared_texture_ = nullptr;
+            gpu.obs_shared_texture = nullptr;
         }
-        if (cpu_fallback_texture_) {
+        if (gpu.cpu_fallback_texture) {
             obs_enter_graphics();
-            gs_texture_destroy(cpu_fallback_texture_);
+            gs_texture_destroy(gpu.cpu_fallback_texture);
             obs_leave_graphics();
-            cpu_fallback_texture_ = nullptr;
+            gpu.cpu_fallback_texture = nullptr;
         }
 
-        receiver.reset();
-        jitter_buffer.reset();
-        depacketizer.reset();
-        assembler.reset();
-        sync_state.reset();
-        decoder.reset();
-        timestamp_mapper.reset();
-        texture_output.reset();
-        ws_client.reset();
+        pipeline.receiver.reset();
+        pipeline.jitter_buffer.reset();
+        pipeline.depacketizer.reset();
+        pipeline.assembler.reset();
+        pipeline.sync_state.reset();
+        pipeline.decoder.reset();
+        pipeline.timestamp_mapper.reset();
+        pipeline.texture_output.reset();
+        pipeline.ws_client.reset();
 
         // Clear decode queue
         {
-            std::lock_guard<std::mutex> lock(decode_queue_mutex_);
-            decode_queue_.clear();
+            std::lock_guard<std::mutex> lock(decode_queue.mutex);
+            decode_queue.queue.clear();
         }
 
         // Reset frame state so test pattern shows on next start
-        latest_frame_.store(nullptr);
-        frame_buffer_a_.valid = false;
-        frame_buffer_b_.valid = false;
+        decode_queue.latest.store(nullptr);
+        decode_queue.buffer_a.valid = false;
+        decode_queue.buffer_b.valid = false;
 
         // Clear OBS async video cache (otherwise last frame stays displayed)
         if (source) {
@@ -478,10 +486,10 @@ struct SourceData {
     }
 
     void receive_loop() {
-        uint16_t port = camera_port.load();
+        uint16_t port = config.camera_port.load();
 
         // Bind to UDP port
-        if (!receiver->bind(port)) {
+        if (!pipeline.receiver->bind(port)) {
             blog(LOG_ERROR, "[avolocam] Failed to bind to port %d - port may already be in use",
                  port);
             bind_result_.store(-1);
@@ -497,7 +505,7 @@ struct SourceData {
         bind_result_.store(1);  // Signal success to start()
 
         // Log actual receive buffer size for diagnostics
-        int actual_rcvbuf = receiver->get_actual_rcvbuf();
+        int actual_rcvbuf = pipeline.receiver->get_actual_rcvbuf();
         if (actual_rcvbuf > 0 && actual_rcvbuf < 2 * 1024 * 1024) {
             blog(LOG_WARNING, "[avolocam] UDP receive buffer is only %d bytes (requested 4MB). "
                  "This may cause packet drops with multiple cameras.", actual_rcvbuf);
@@ -519,8 +527,8 @@ struct SourceData {
         while (running.load()) {
             // Receive UDP packet with timeout
             // Flash mode: 5ms timeout for fast wakeup; Stable: 100ms
-            int recv_timeout = flash_mode_ ? 5 : 100;
-            int received = receiver->receive(packet_buffer.data(),
+            int recv_timeout = config.flash_mode ? 5 : 100;
+            int received = pipeline.receiver->receive(packet_buffer.data(),
                                              packet_buffer.size(),
                                              recv_timeout);
 
@@ -533,13 +541,13 @@ struct SourceData {
 
             // Unconditional tally heartbeat every 2s (guards against lost messages)
             if (now - last_tally_heartbeat >= TALLY_HEARTBEAT_NS) {
-                if (ws_client && ws_client->is_connected() && source) {
+                if (pipeline.ws_client && pipeline.ws_client->is_connected() && source) {
                     char json[128];
                     snprintf(json, sizeof(json),
                              R"({"op":"tally","program":%s,"preview":%s})",
                              tally_program.load() ? "true" : "false",
                              tally_preview.load() ? "true" : "false");
-                    ws_client->send_command(json);
+                    pipeline.ws_client->send_command(json);
                 }
                 last_tally_heartbeat = now;
             }
@@ -548,13 +556,13 @@ struct SourceData {
 
             frames_received.fetch_add(1, std::memory_order_relaxed);
 
-            if (flash_mode_) {
+            if (config.flash_mode) {
                 // Flash mode: bypass jitter buffer, feed directly to depacketizer
                 process_packet_direct(packet_buffer.data(), received);
 
                 // Drain all remaining packets in the socket (non-blocking)
                 while (running.load()) {
-                    int extra = receiver->receive(packet_buffer.data(),
+                    int extra = pipeline.receiver->receive(packet_buffer.data(),
                                                   packet_buffer.size(),
                                                   0);  // non-blocking
                     if (extra <= 0) break;
@@ -563,7 +571,7 @@ struct SourceData {
                 }
             } else {
                 // Stable mode: use jitter buffer for reordering
-                jitter_buffer->add_packet(packet_buffer.data(), received,
+                pipeline.jitter_buffer->add_packet(packet_buffer.data(), received,
                                           os_gettime_ns());
                 process_jitter_buffer();
             }
@@ -575,7 +583,7 @@ struct SourceData {
             g_bound_ports.erase(port);
         }
 
-        receiver->close();
+        pipeline.receiver->close();
     }
 
     /**
@@ -587,27 +595,27 @@ struct SourceData {
 
         packet_count++;
 
-        auto nal_units = depacketizer->process(data, size);
+        auto nal_units = pipeline.depacketizer->process(data, size);
         total_nals += nal_units.size();
 
-        if (debug_mode && packet_count % 500 == 0) {
+        if (config.debug_mode && packet_count % 500 == 0) {
             blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d (flash mode)", packet_count, total_nals);
         }
 
         for (auto& nal : nal_units) {
             uint8_t nal_type = static_cast<uint8_t>(nal.type);
 
-            if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
+            if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
                 blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
                      nal_type, nal.data.size(), nal.marker);
             }
 
-            if (!sync_state->can_decode(nal.type, nal.is_idr)) {
+            if (!pipeline.sync_state->can_decode(nal.type, nal.is_idr)) {
                 frames_dropped.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
 
-            auto access_unit = assembler->add_nal(
+            auto access_unit = pipeline.assembler->add_nal(
                 std::move(nal.data),
                 nal.rtp_timestamp,
                 nal.marker
@@ -623,15 +631,15 @@ struct SourceData {
         std::vector<uint8_t> packet;
         uint64_t recv_time;
 
-        while (jitter_buffer->get_next_packet(packet, recv_time)) {
+        while (pipeline.jitter_buffer->get_next_packet(packet, recv_time)) {
             packet_count++;
 
             // Parse RTP and extract NAL units
-            auto nal_units = depacketizer->process(packet.data(), packet.size());
+            auto nal_units = pipeline.depacketizer->process(packet.data(), packet.size());
             total_nals += nal_units.size();
 
             // Log periodically (only in debug mode)
-            if (debug_mode && packet_count % 500 == 0) {
+            if (config.debug_mode && packet_count % 500 == 0) {
                 blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d", packet_count, total_nals);
             }
 
@@ -639,14 +647,14 @@ struct SourceData {
                 uint8_t nal_type = static_cast<uint8_t>(nal.type);
 
                 // Log SPS/PPS/IDR only in debug mode
-                if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
+                if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
                     blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
                          nal_type, nal.data.size(), nal.marker);
                 }
 
                 // Check sync state
-                if (!sync_state->can_decode(nal.type, nal.is_idr)) {
-                    if (debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
+                if (!pipeline.sync_state->can_decode(nal.type, nal.is_idr)) {
+                    if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
                         blog(LOG_WARNING, "[avolocam] Sync state rejected NAL type=%d", nal_type);
                     }
                     frames_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -654,7 +662,7 @@ struct SourceData {
                 }
 
                 // Add NAL to assembler
-                auto access_unit = assembler->add_nal(
+                auto access_unit = pipeline.assembler->add_nal(
                     std::move(nal.data),
                     nal.rtp_timestamp,
                     nal.marker
@@ -673,26 +681,26 @@ struct SourceData {
      * If queue is full, drop oldest frame (not the new one)
      */
     void push_to_decode_queue(AccessUnit&& au) {
-        std::lock_guard<std::mutex> lock(decode_queue_mutex_);
+        std::lock_guard<std::mutex> lock(decode_queue.mutex);
 
-        if (flash_mode_ && max_decode_queue_size_ == 1) {
+        if (config.flash_mode && decode_queue.max_size == 1) {
             // Flash mode with queue=1: replace the existing element in-place
             // to avoid the overhead of pop_front + push_back
-            if (!decode_queue_.empty()) {
-                decode_queue_.front() = std::move(au);
+            if (!decode_queue.queue.empty()) {
+                decode_queue.queue.front() = std::move(au);
                 decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
             } else {
-                decode_queue_.push_back(std::move(au));
+                decode_queue.queue.push_back(std::move(au));
             }
         } else {
             // Standard mode: drop oldest if queue is full
-            if (decode_queue_.size() >= max_decode_queue_size_) {
-                decode_queue_.pop_front();
+            if (decode_queue.queue.size() >= decode_queue.max_size) {
+                decode_queue.queue.pop_front();
                 decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
             }
-            decode_queue_.push_back(std::move(au));
+            decode_queue.queue.push_back(std::move(au));
         }
-        decode_queue_cv_.notify_one();
+        decode_queue.cv.notify_one();
     }
 
     /**
@@ -708,19 +716,19 @@ struct SourceData {
 
             // Wait for work
             {
-                std::unique_lock<std::mutex> lock(decode_queue_mutex_);
-                if (decode_queue_.empty()) {
+                std::unique_lock<std::mutex> lock(decode_queue.mutex);
+                if (decode_queue.queue.empty()) {
                     // Flash mode: 1ms wait with predicate for fastest wakeup
                     // Stable mode: 50ms wait (less CPU usage)
-                    auto wait_ms = flash_mode_ ? 1 : 50;
-                    decode_queue_cv_.wait_for(lock,
+                    auto wait_ms = config.flash_mode ? 1 : 50;
+                    decode_queue.cv.wait_for(lock,
                         std::chrono::milliseconds(wait_ms),
-                        [this]() { return !decode_queue_.empty() || !running.load(); });
+                        [this]() { return !decode_queue.queue.empty() || !running.load(); });
                 }
 
-                if (!decode_queue_.empty()) {
-                    au = std::move(decode_queue_.front());
-                    decode_queue_.pop_front();
+                if (!decode_queue.queue.empty()) {
+                    au = std::move(decode_queue.queue.front());
+                    decode_queue.queue.pop_front();
                     has_au = true;
                 }
             }
@@ -741,14 +749,14 @@ struct SourceData {
     void decode_frame_async(const AccessUnit& au) {
         au_count++;
 
-        if (!decoder) {
+        if (!pipeline.decoder) {
             frames_dropped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
 
         // Log decode timing stats every 300 frames
-        if (debug_mode && au_count % 300 == 0 && decoder->is_initialized()) {
-            const auto& stats = decoder->get_timing_stats();
+        if (config.debug_mode && au_count % 300 == 0 && pipeline.decoder->is_initialized()) {
+            const auto& stats = pipeline.decoder->get_timing_stats();
             uint64_t queue_drops = decode_queue_drops.load();
             blog(LOG_INFO, "[avolocam] Decode timing (avg over %llu frames): "
                  "input=%.2fms output=%.2fms lock=%.2fms copy=%.2fms total=%.2fms | queue_drops=%llu",
@@ -762,48 +770,48 @@ struct SourceData {
         }
 
         // Initialize decoder if needed
-        if (!decoder->is_initialized()) {
+        if (!pipeline.decoder->is_initialized()) {
             if (au.has_sps && au.has_pps) {
                 std::vector<uint8_t> sps, pps;
                 extract_parameter_sets(au.data, sps, pps);
                 if (!sps.empty() && !pps.empty()) {
-                    if (decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
+                    if (pipeline.decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
                         // Enable GPU output if decoder supports it AND
                         // exposes its D3D device (needed for GPUConverter NV12→RGBA).
                         // MF decoder exposes a D3D device but currently uses the CPU
                         // conversion path due to GPUConverter interop constraints.
                         // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
-                        if (prefer_zero_copy.load() && decoder->supports_gpu_output()
-                            && decoder->get_d3d_device()) {
-                            decoder->set_gpu_output(true);
-                            use_gpu_decode_.store(true);
+                        if (config.prefer_zero_copy.load() && pipeline.decoder->supports_gpu_output()
+                            && pipeline.decoder->get_d3d_device()) {
+                            pipeline.decoder->set_gpu_output(true);
+                            gpu.use_gpu_decode.store(true);
                             blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
                         } else {
-                            use_gpu_decode_.store(false);
+                            gpu.use_gpu_decode.store(false);
                         }
 
                         // Set decode queue size based on mode and decoder type:
                         // Flash mode: always 1 (minimum latency)
                         // Hardware decoders are fast → small queue (4)
                         // Software fallback is slower → larger queue (6) to absorb stalls
-                        if (flash_mode_.load()) {
-                            max_decode_queue_size_ = 1;
+                        if (config.flash_mode.load()) {
+                            decode_queue.max_size = 1;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
                                  "flash mode: decode queue size = 1",
-                                 decoder->is_hardware() ? "hardware" : "software");
-                        } else if (decoder->is_hardware()) {
-                            max_decode_queue_size_ = 4;
+                                 pipeline.decoder->is_hardware() ? "hardware" : "software");
+                        } else if (pipeline.decoder->is_hardware()) {
+                            decode_queue.max_size = 4;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
                                  "decode queue size = 4");
                         } else {
-                            max_decode_queue_size_ = 6;
+                            decode_queue.max_size = 6;
                             blog(LOG_INFO, "[avolocam] Decoder initialized (software fallback), "
                                  "decode queue size = 6");
                         }
                     }
                 }
             }
-            if (!decoder->is_initialized()) {
+            if (!pipeline.decoder->is_initialized()) {
                 frames_dropped.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -811,8 +819,8 @@ struct SourceData {
 
         // Decode
         DecodedFrame frame;
-        if (!decoder->decode(au.data.data(), au.data.size(), frame)) {
-            if (sync_state) sync_state->on_decode_error();
+        if (!pipeline.decoder->decode(au.data.data(), au.data.size(), frame)) {
+            if (pipeline.sync_state) pipeline.sync_state->on_decode_error();
             frames_dropped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -821,27 +829,27 @@ struct SourceData {
 
         // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
 #ifdef _WIN32
-        if (frame.has_gpu_texture && frame.gpu_texture && use_gpu_decode_.load()) {
+        if (frame.has_gpu_texture && frame.gpu_texture && gpu.use_gpu_decode.load()) {
             // Initialize GPUConverter once with decoder's D3D11 device
-            if (!gpu_converter_initialized_ && decoder) {
-                void *dev = decoder->get_d3d_device();
-                void *ctx = decoder->get_d3d_context();
+            if (!gpu.converter_initialized && pipeline.decoder) {
+                void *dev = pipeline.decoder->get_d3d_device();
+                void *ctx = pipeline.decoder->get_d3d_context();
                 if (dev && ctx) {
-                    gpu_converter_ = std::make_unique<GPUConverter>();
-                    if (gpu_converter_->initialize(
+                    gpu.converter = std::make_unique<GPUConverter>();
+                    if (gpu.converter->initialize(
                             static_cast<ID3D11Device*>(dev),
                             static_cast<ID3D11DeviceContext*>(ctx))) {
-                        gpu_converter_initialized_ = true;
+                        gpu.converter_initialized = true;
                         blog(LOG_INFO, "[avolocam] GPUConverter initialized for CUSTOM_DRAW path");
                     } else {
-                        gpu_converter_.reset();
+                        gpu.converter.reset();
                         blog(LOG_WARNING, "[avolocam] GPUConverter init failed, using CPU path");
                     }
                 }
             }
 
             // Convert NV12 shared texture → RGBA shared texture via GPUConverter
-            if (gpu_converter_initialized_ && gpu_converter_) {
+            if (gpu.converter_initialized && gpu.converter) {
                 GPUDecodedFrame gpu_input;
                 gpu_input.texture = static_cast<ID3D11Texture2D*>(frame.gpu_texture);
                 gpu_input.subresource = 0;
@@ -850,17 +858,17 @@ struct SourceData {
                 gpu_input.pts = 0;
 
                 ConvertedFrame converted;
-                if (gpu_converter_->convert(gpu_input, converted)) {
+                if (gpu.converter->convert(gpu_input, converted)) {
                     // Flush decoder device to ensure GPU commands are submitted
-                    auto *ctx = static_cast<ID3D11DeviceContext*>(decoder->get_d3d_context());
+                    auto *ctx = static_cast<ID3D11DeviceContext*>(pipeline.decoder->get_d3d_context());
                     if (ctx) ctx->Flush();
 
                     // Store dimensions first, then handle with release so
                     // the render thread's acquire load sees consistent values.
-                    gpu_texture_width_.store(frame.width, std::memory_order_relaxed);
-                    gpu_texture_height_.store(frame.height, std::memory_order_relaxed);
-                    latest_shared_handle_.store(converted.shared_handle, std::memory_order_release);
-                    use_gpu_render_.store(true);
+                    gpu.texture_width.store(frame.width, std::memory_order_relaxed);
+                    gpu.texture_height.store(frame.height, std::memory_order_relaxed);
+                    gpu.latest_shared_handle.store(converted.shared_handle, std::memory_order_release);
+                    gpu.use_gpu_render.store(true);
 
                     output_count++;
                     if (output_count == 1) {
@@ -869,7 +877,7 @@ struct SourceData {
                     }
 
                     // Release the converted frame back to pool (handle stays valid)
-                    gpu_converter_->release_frame(converted);
+                    gpu.converter->release_frame(converted);
                     // Release IMFSample (MF decoder keeps texture alive via sample ref)
                     if (frame.platform_handle) {
                         static_cast<IUnknown*>(frame.platform_handle)->Release();
@@ -894,9 +902,9 @@ struct SourceData {
         }
 
         // Store in latest frame buffer (double buffering)
-        // Use current_frame_buffer_ to select which buffer to write to
-        int write_idx = 1 - current_frame_buffer_.load();  // Write to the other buffer
-        LatestFrame* write_buf = (write_idx == 0) ? &frame_buffer_a_ : &frame_buffer_b_;
+        // Use current_buffer to select which buffer to write to
+        int write_idx = 1 - decode_queue.current_buffer.load();  // Write to the other buffer
+        DecodeQueue::Frame* write_buf = (write_idx == 0) ? &decode_queue.buffer_a : &decode_queue.buffer_b;
 
         // Copy frame data to buffer
         size_t y_size = (size_t)frame.y_stride * frame.height;
@@ -918,8 +926,8 @@ struct SourceData {
         write_buf->valid = true;
 
         // Atomic swap to make new frame visible
-        current_frame_buffer_.store(write_idx);
-        latest_frame_.store(write_buf);
+        decode_queue.current_buffer.store(write_idx);
+        decode_queue.latest.store(write_buf);
 
         // Also output immediately (for async video source compatibility)
         output_latest_frame();
@@ -929,7 +937,7 @@ struct SourceData {
      * Output the latest decoded frame to OBS
      */
     void output_latest_frame() {
-        LatestFrame* frame = latest_frame_.load();
+        DecodeQueue::Frame* frame = decode_queue.latest.load();
         if (!frame || !frame->valid) return;
         if (!source) return;
 
@@ -958,7 +966,7 @@ struct SourceData {
 
         if (output_count == 1) {
             blog(LOG_INFO, "[avolocam] First frame output: %ux%u", frame->width, frame->height);
-        } else if (debug_mode && output_count % 300 == 0) {
+        } else if (config.debug_mode && output_count % 300 == 0) {
             blog(LOG_INFO, "[avolocam] Output frame #%d: %ux%u",
                  output_count, frame->width, frame->height);
         }
@@ -976,7 +984,7 @@ struct SourceData {
      * Only sends when state changes to avoid spamming.
      */
     void send_tally_state() {
-        if (!ws_client || !ws_client->is_connected()) return;
+        if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
         if (!source) return;
 
         // obs_source_showing() returns true if the source is visible on the final output (Program)
@@ -997,12 +1005,12 @@ struct SourceData {
                  is_program ? "true" : "false",
                  is_preview ? "true" : "false");
 
-        ws_client->send_command(json);
+        pipeline.ws_client->send_command(json);
 
         blog(LOG_INFO, "[avolocam] Tally sent: program=%s, preview=%s (ws=%s)",
              is_program ? "true" : "false",
              is_preview ? "true" : "false",
-             ws_client->is_connected() ? "connected" : "disconnected");
+             pipeline.ws_client->is_connected() ? "connected" : "disconnected");
     }
 
     // Extract SPS and PPS from Annex B formatted data
@@ -1453,17 +1461,17 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     data->source = source;
 
     // Load settings (single-threaded construction, but use store() for atomics)
-    data->camera_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
-    data->camera_port.store((uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT));
-    data->jitter_mode.store((int)obs_data_get_int(settings, PROP_JITTER_MODE));
-    data->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
-    data->auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
-    data->prefer_zero_copy.store(obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY));
-    data->debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
-    data->decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
+    data->config.camera_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
+    data->config.camera_port.store((uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT));
+    data->config.jitter_mode.store((int)obs_data_get_int(settings, PROP_JITTER_MODE));
+    data->config.show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
+    data->config.auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
+    data->config.prefer_zero_copy.store(obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY));
+    data->config.debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
+    data->config.decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
 
     blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
-         data->decoder_type.load(), data->camera_port.load());
+         data->config.decoder_type.load(), data->config.camera_port.load());
     return data;
 }
 
@@ -1500,32 +1508,32 @@ static void avolocam_update(void *data, obs_data_t *settings)
     // Snapshot current string values under lock for comparison
     std::string old_ip, old_token;
     {
-        std::lock_guard<std::mutex> lock(src->config_mutex_);
-        old_ip = src->camera_ip;
-        old_token = src->auth_token;
+        std::lock_guard<std::mutex> lock(src->config.mutex);
+        old_ip = src->config.camera_ip;
+        old_token = src->config.auth_token;
     }
 
     // Check if we need to restart
     bool needs_restart = (new_ip != old_ip ||
-                          new_port != src->camera_port.load() ||
-                          new_jitter != src->jitter_mode.load() ||
+                          new_port != src->config.camera_port.load() ||
+                          new_jitter != src->config.jitter_mode.load() ||
                           new_token != old_token ||
-                          new_zero_copy != src->prefer_zero_copy.load() ||
-                          new_decoder_type != src->decoder_type.load());
+                          new_zero_copy != src->config.prefer_zero_copy.load() ||
+                          new_decoder_type != src->config.decoder_type.load());
 
     // Update string fields under lock
     {
-        std::lock_guard<std::mutex> lock(src->config_mutex_);
-        src->camera_ip = new_ip;
-        src->auth_token = new_token;
+        std::lock_guard<std::mutex> lock(src->config.mutex);
+        src->config.camera_ip = new_ip;
+        src->config.auth_token = new_token;
     }
     // Update atomic fields
-    src->camera_port.store(new_port);
-    src->jitter_mode.store(new_jitter);
-    src->show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
-    src->prefer_zero_copy.store(new_zero_copy);
-    src->debug_mode.store(new_debug_mode);
-    src->decoder_type.store(new_decoder_type);
+    src->config.camera_port.store(new_port);
+    src->config.jitter_mode.store(new_jitter);
+    src->config.show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
+    src->config.prefer_zero_copy.store(new_zero_copy);
+    src->config.debug_mode.store(new_debug_mode);
+    src->config.decoder_type.store(new_decoder_type);
 
     if (needs_restart && src->running.load()) {
         src->stop();
@@ -1592,7 +1600,7 @@ static bool port_changed_callback(void *priv, obs_properties_t *props,
 
     // Exclude this source's own currently-bound port from collision check
     auto *src = static_cast<SourceData *>(priv);
-    uint16_t own_port = (src && src->running.load()) ? src->camera_port.load() : 0;
+    uint16_t own_port = (src && src->running.load()) ? src->config.camera_port.load() : 0;
 
     bool collision = false;
     if (port > 0) {
@@ -1714,68 +1722,68 @@ static void avolocam_video_tick(void *data, float seconds)
     // Snapshot camera_ip under lock for test pattern comparison
     std::string ip_snapshot;
     {
-        std::lock_guard<std::mutex> lock(src->config_mutex_);
-        ip_snapshot = src->camera_ip;
+        std::lock_guard<std::mutex> lock(src->config.mutex);
+        ip_snapshot = src->config.camera_ip;
     }
 
     // Invalidate test pattern if camera IP or source name changed
-    if (src->test_pattern_created_ &&
-        (ip_snapshot != src->test_pattern_ip_ || cur_name != src->test_pattern_name_)) {
+    if (src->test_pattern.created &&
+        (ip_snapshot != src->test_pattern.baked_ip || cur_name != src->test_pattern.baked_name)) {
         obs_enter_graphics();
-        if (src->test_pattern_texture_) {
-            gs_texture_destroy(src->test_pattern_texture_);
-            src->test_pattern_texture_ = nullptr;
+        if (src->test_pattern.texture) {
+            gs_texture_destroy(src->test_pattern.texture);
+            src->test_pattern.texture = nullptr;
         }
         obs_leave_graphics();
-        src->test_pattern_created_ = false;
+        src->test_pattern.created = false;
     }
 
     // Lazy-init test pattern texture (on graphics thread)
-    if (!src->test_pattern_created_) {
+    if (!src->test_pattern.created) {
         blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u (name='%s', ip='%s')",
-             SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+             SourceData::TestPattern::WIDTH, SourceData::TestPattern::HEIGHT,
              cur_name.c_str(), ip_snapshot.c_str());
         auto pixels = generate_test_pattern_rgba(
-            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+            SourceData::TestPattern::WIDTH, SourceData::TestPattern::HEIGHT,
             cur_name, ip_snapshot);
         const uint8_t *ptr = pixels.data();
         obs_enter_graphics();
-        src->test_pattern_texture_ = gs_texture_create(
-            SourceData::TEST_PATTERN_WIDTH, SourceData::TEST_PATTERN_HEIGHT,
+        src->test_pattern.texture = gs_texture_create(
+            SourceData::TestPattern::WIDTH, SourceData::TestPattern::HEIGHT,
             GS_RGBA, 1, &ptr, 0);
         obs_leave_graphics();
-        src->test_pattern_created_ = true;
-        src->test_pattern_ip_ = ip_snapshot;
-        src->test_pattern_name_ = cur_name;
+        src->test_pattern.created = true;
+        src->test_pattern.baked_ip = ip_snapshot;
+        src->test_pattern.baked_name = cur_name;
         blog(LOG_INFO, "[avolocam] Test pattern texture %s",
-             src->test_pattern_texture_ ? "created OK" : "FAILED");
+             src->test_pattern.texture ? "created OK" : "FAILED");
     }
 
-    if (src->use_gpu_render_.load()) {
+    if (src->gpu.use_gpu_render.load()) {
         // GPU PATH: open the shared RGBA texture on OBS device (cached)
-        void *h = src->latest_shared_handle_.load(std::memory_order_acquire);
-        if (h && h != src->cached_shared_handle_) {
+        void *h = src->gpu.latest_shared_handle.load(std::memory_order_acquire);
+        if (h && h != src->gpu.cached_shared_handle) {
             obs_enter_graphics();
-            if (src->obs_shared_texture_) {
-                gs_texture_destroy(src->obs_shared_texture_);
-                src->obs_shared_texture_ = nullptr;
+            if (src->gpu.obs_shared_texture) {
+                gs_texture_destroy(src->gpu.obs_shared_texture);
+                src->gpu.obs_shared_texture = nullptr;
             }
             // Legacy DXGI shared handles (D3D11_RESOURCE_MISC_SHARED) are
             // kernel object indices that fit in 32 bits even on x64.
             // gs_texture_open_shared() takes uint32_t matching this convention.
-            src->obs_shared_texture_ = gs_texture_open_shared(
+            src->gpu.obs_shared_texture = gs_texture_open_shared(
                 static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h)));
             obs_leave_graphics();
 
-            if (src->obs_shared_texture_) {
-                src->cached_shared_handle_ = h;
+            if (src->gpu.obs_shared_texture) {
+                src->gpu.cached_shared_handle = h;
             } else {
                 blog(LOG_WARNING, "[avolocam] gs_texture_open_shared failed for handle %p", h);
             }
         }
     } else {
         // CPU FALLBACK: upload NV12 frame data into a BGRX texture
-        SourceData::LatestFrame *frame = src->latest_frame_.load(std::memory_order_acquire);
+        SourceData::DecodeQueue::Frame *frame = src->decode_queue.latest.load(std::memory_order_acquire);
         if (frame && frame->valid) {
             // CPU fallback uses ASYNC_VIDEO mode via obs_source_output_video
             // (called in decode_frame_async), so no texture upload is needed here.
@@ -1790,24 +1798,24 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
     auto *src = static_cast<SourceData *>(data);
 
     // GPU path: camera frame available via shared texture
-    if (src->use_gpu_render_.load() && src->obs_shared_texture_) {
+    if (src->gpu.use_gpu_render.load() && src->gpu.obs_shared_texture) {
         effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
         while (gs_effect_loop(effect, "Draw")) {
-            obs_source_draw(src->obs_shared_texture_, 0, 0, 0, 0, false);
+            obs_source_draw(src->gpu.obs_shared_texture, 0, 0, 0, 0, false);
         }
         return;
     }
 
     // CPU path: OBS ASYNC_VIDEO renders if a frame has been submitted
-    SourceData::LatestFrame *frame = src->latest_frame_.load(std::memory_order_acquire);
+    SourceData::DecodeQueue::Frame *frame = src->decode_queue.latest.load(std::memory_order_acquire);
     if (frame && frame->valid)
         return;
 
     // No camera frame available — draw the "NO SIGNAL" test pattern
-    if (src->test_pattern_texture_) {
+    if (src->test_pattern.texture) {
         effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
         while (gs_effect_loop(effect, "Draw")) {
-            obs_source_draw(src->test_pattern_texture_, 0, 0, 0, 0, false);
+            obs_source_draw(src->test_pattern.texture, 0, 0, 0, 0, false);
         }
     }
 }
@@ -1815,27 +1823,27 @@ static void avolocam_video_render(void *data, gs_effect_t *effect)
 static uint32_t avolocam_get_width(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    uint32_t w = src->gpu_texture_width_.load(std::memory_order_relaxed);
+    uint32_t w = src->gpu.texture_width.load(std::memory_order_relaxed);
     if (w > 0)
         return w;
-    if (src->decoder) {
-        w = src->decoder->get_width();
+    if (src->pipeline.decoder) {
+        w = src->pipeline.decoder->get_width();
         if (w > 0) return w;
     }
-    return SourceData::TEST_PATTERN_WIDTH;
+    return SourceData::TestPattern::WIDTH;
 }
 
 static uint32_t avolocam_get_height(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    uint32_t h = src->gpu_texture_height_.load(std::memory_order_relaxed);
+    uint32_t h = src->gpu.texture_height.load(std::memory_order_relaxed);
     if (h > 0)
         return h;
-    if (src->decoder) {
-        h = src->decoder->get_height();
+    if (src->pipeline.decoder) {
+        h = src->pipeline.decoder->get_height();
         if (h > 0) return h;
     }
-    return SourceData::TEST_PATTERN_HEIGHT;
+    return SourceData::TestPattern::HEIGHT;
 }
 
 } // namespace avolocam
