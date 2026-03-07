@@ -77,7 +77,7 @@ actor TelemetryAggregator: TelemetryProvider {
         let ndiState: NDIState = isStreaming ? .streaming : .idle
 
         // Update thermal manager streaming state
-        thermalManager?.isStreaming = isStreaming
+        await thermalManager?.setIsStreaming(isStreaming)
 
         // Invoke callback on main actor for UI updates
         if let callback = onTelemetryUpdate {
@@ -90,7 +90,7 @@ actor TelemetryAggregator: TelemetryProvider {
         let systemTelemetry = await telemetryCollector.collect()
 
         // Update thermal manager with current thermal state
-        thermalManager?.checkThermalState(systemTelemetry.thermalState)
+        await thermalManager?.checkThermalState(systemTelemetry.thermalState)
 
         // Get NDI stats if streaming
         let ndiStats: (fps: Double, sentFrames: Int64, droppedFrames: Int64)

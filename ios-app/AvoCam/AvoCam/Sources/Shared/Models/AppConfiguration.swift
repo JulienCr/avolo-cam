@@ -8,7 +8,7 @@
 import Foundation
 
 /// Centralized configuration for AVOLO-CAM app
-struct AppConfiguration {
+struct AppConfiguration: Sendable {
     // MARK: - Properties
 
     /// Camera alias for NDI stream naming (e.g., "AVOLO-CAM-A3")

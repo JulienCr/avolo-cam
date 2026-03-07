@@ -226,7 +226,10 @@ actor CaptureManager: NSObject {
 
     /// Synchronous format configuration for use on sessionQueue
     private func configureFormatSync(device: AVCaptureDevice, resolution: String, framerate: Int) throws {
-        let dimensions = try parseResolution(resolution)
+        guard let parsed = resolution.parseResolution() else {
+            throw CaptureError.invalidResolution
+        }
+        let dimensions = (width: Int32(parsed.width), height: Int32(parsed.height))
 
         // Check format cache first
         let cacheKey = formatCacheKey(deviceID: device.uniqueID, lens: currentLens,
@@ -895,16 +898,6 @@ actor CaptureManager: NSObject {
         }
 
         return Array(framerates).sorted()
-    }
-
-    // MARK: - Helpers
-
-    private func parseResolution(_ resolution: String) throws -> (width: Int32, height: Int32) {
-        let components = resolution.split(separator: "x").compactMap { Int32($0) }
-        guard components.count == 2 else {
-            throw CaptureError.invalidResolution
-        }
-        return (width: components[0], height: components[1])
     }
 
     // MARK: - White Balance Helpers

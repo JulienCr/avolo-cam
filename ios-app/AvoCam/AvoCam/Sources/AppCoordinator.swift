@@ -173,7 +173,9 @@ class AppCoordinator: ObservableObject {
         Task {
             await telemetryAggregator.stopCollection()
         }
-        tallyPoller.stop()
+        Task {
+            await tallyPoller.stop()
+        }
         bonjourService.stop()
         networkServer.stop()
 
@@ -198,7 +200,8 @@ class AppCoordinator: ObservableObject {
     }
 
     private func setupThermalMonitoring() {
-        thermalManager.setActionCallback { [weak self] action in
+        Task {
+            await thermalManager.setActionCallback { [weak self] action in
             guard let self = self else { return }
             switch action {
             case .stopStream(let message):
@@ -210,6 +213,7 @@ class AppCoordinator: ObservableObject {
                 print("✅ Thermal state recovered")
             case .none:
                 break
+            }
             }
         }
     }
@@ -380,7 +384,7 @@ class AppCoordinator: ObservableObject {
 
         await streamingCoordinator.stopStreaming()
         isStreaming = false
-        thermalManager.reset()
+        await thermalManager.reset()
     }
 
     // MARK: - Camera Control
@@ -418,7 +422,7 @@ class AppCoordinator: ObservableObject {
     }
 
     func getStatus() async -> StatusResponse {
-        let tallyState = isStreaming ? tallyPoller.getCurrentState() : nil
+        let tallyState = isStreaming ? await tallyPoller.getCurrentState() : nil
 
         var settings = currentSettings ?? createDefaultSettings()
         let focusState = await captureManager.getCurrentFocusState()
@@ -479,7 +483,7 @@ class AppCoordinator: ObservableObject {
     // MARK: - Settings Persistence
 
     private func loadPersistedSettings() -> CurrentSettings? {
-        guard let data = UserDefaults.standard.data(forKey: "camera_settings"),
+        guard let data = UserDefaults.standard.cameraSettingsData,
               let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
             return createDefaultSettings()
         }
@@ -489,7 +493,7 @@ class AppCoordinator: ObservableObject {
 
     private func persistSettings(_ settings: CurrentSettings) {
         if let data = try? JSONEncoder().encode(settings) {
-            UserDefaults.standard.set(data, forKey: "camera_settings")
+            UserDefaults.standard.cameraSettingsData = data
             let uiZoom = settings.zoomFactor / 2.0
             print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
         }

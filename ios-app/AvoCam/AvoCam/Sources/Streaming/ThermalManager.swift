@@ -11,7 +11,7 @@ import Foundation
 typealias ThermalActionCallback = (ThermalManager.ThermalAction) async -> Void
 
 /// Manages thermal state monitoring and protective actions for streaming
-final class ThermalManager {
+actor ThermalManager {
     // MARK: - Types
 
     enum ThermalAction: Equatable {
@@ -48,7 +48,12 @@ final class ThermalManager {
     private var actionCallback: ThermalActionCallback?
 
     /// Whether streaming is currently active (must be set externally)
-    var isStreaming: Bool = false
+    private var isStreaming: Bool = false
+
+    /// Set streaming state from external callers
+    func setIsStreaming(_ value: Bool) {
+        isStreaming = value
+    }
 
     // MARK: - Initialization
 

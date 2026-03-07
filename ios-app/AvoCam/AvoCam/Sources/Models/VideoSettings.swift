@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - Video Preset
 
-struct VideoPreset: Codable, Identifiable, Equatable {
+struct VideoPreset: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let name: String
     let resolution: String
@@ -33,7 +33,7 @@ struct VideoPreset: Codable, Identifiable, Equatable {
 
 // MARK: - Video Codec
 
-enum VideoCodec: String, Codable {
+enum VideoCodec: String, Codable, Sendable {
     case h264 = "h264"
     case hevc = "hevc"
 
@@ -47,7 +47,7 @@ enum VideoCodec: String, Codable {
 
 // MARK: - Video Settings
 
-struct VideoSettings: Codable {
+struct VideoSettings: Codable, Sendable {
     var selectedPresetId: String?
     var customResolution: String?
     var customFps: Int?
@@ -99,7 +99,7 @@ struct VideoSettings: Codable {
 
 // MARK: - Stream Configuration
 
-struct StreamConfiguration {
+struct StreamConfiguration: Sendable {
     let resolution: String
     let fps: Int
     let codec: VideoCodec
@@ -217,16 +217,14 @@ extension VideoPreset {
 // MARK: - Settings Persistence
 
 class VideoSettingsManager {
-    private static let settingsKey = "video_settings"
-
     static func save(_ settings: VideoSettings) {
         if let encoded = try? JSONEncoder().encode(settings) {
-            UserDefaults.standard.set(encoded, forKey: settingsKey)
+            UserDefaults.standard.videoSettingsData = encoded
         }
     }
 
     static func load() -> VideoSettings {
-        guard let data = UserDefaults.standard.data(forKey: settingsKey),
+        guard let data = UserDefaults.standard.videoSettingsData,
               let settings = try? JSONDecoder().decode(VideoSettings.self, from: data) else {
             // Return default settings
             return VideoSettings(

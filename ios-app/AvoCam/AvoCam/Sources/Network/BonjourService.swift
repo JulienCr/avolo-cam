@@ -58,7 +58,7 @@ class BonjourService: NSObject {
 
     // MARK: - TXT Record
 
-    private func createTXTRecord() -> Data? {
+    private func buildTXTDictionary(flashPort: UInt16? = nil) -> [String: Data] {
         var txtDict: [String: Data] = [
             "alias": alias.data(using: .utf8) ?? Data(),
             "version": "1.0".data(using: .utf8) ?? Data(),
@@ -71,13 +71,15 @@ class BonjourService: NSObject {
             "codec": "h264".data(using: .utf8) ?? Data(),
             "profile": "high".data(using: .utf8) ?? Data()
         ]
-
-        // Add Flash UDP port if active (non-zero)
-        if flashUdpPort > 0 {
-            txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
+        let effectivePort = flashPort ?? flashUdpPort
+        if effectivePort > 0 {
+            txtDict["flash_udp_port"] = "\(effectivePort)".data(using: .utf8) ?? Data()
         }
+        return txtDict
+    }
 
-        return NetService.data(fromTXTRecord: txtDict)
+    private func createTXTRecord() -> Data? {
+        return NetService.data(fromTXTRecord: buildTXTDictionary())
     }
 
     func updateTXTRecord(_ updates: [String: String]) {
@@ -98,26 +100,7 @@ class BonjourService: NSObject {
 
         guard let service = netService else { return }
 
-        // Rebuild full TXT record with new Flash port
-        var txtDict: [String: Data] = [
-            "alias": alias.data(using: .utf8) ?? Data(),
-            "version": "1.0".data(using: .utf8) ?? Data(),
-            "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
-            "token": bearerToken.data(using: .utf8) ?? Data(),
-            "ws_port": "\(self.port)".data(using: .utf8) ?? Data(),
-            "width": "1920".data(using: .utf8) ?? Data(),
-            "height": "1080".data(using: .utf8) ?? Data(),
-            "fps": "25".data(using: .utf8) ?? Data(),
-            "codec": "h264".data(using: .utf8) ?? Data(),
-            "profile": "high".data(using: .utf8) ?? Data()
-        ]
-
-        // Add Flash UDP port if active (non-zero)
-        if port > 0 {
-            txtDict["flash_udp_port"] = "\(port)".data(using: .utf8) ?? Data()
-        }
-
-        service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
+        service.setTXTRecord(NetService.data(fromTXTRecord: buildTXTDictionary(flashPort: port)))
 
         print("📢 Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
     }

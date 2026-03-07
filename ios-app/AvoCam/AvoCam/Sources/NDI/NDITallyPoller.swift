@@ -6,13 +6,12 @@
 //
 
 import Foundation
-import Combine
 import os.log
 
 /// Polls NDI tally state at 10-20Hz and controls torch accordingly
 /// - Program tally → Torch ON at minimum level
 /// - Preview tally → UI badge only (no torch)
-class NDITallyPoller {
+actor NDITallyPoller {
 
     // MARK: - Properties
 
@@ -33,8 +32,8 @@ class NDITallyPoller {
     // Task control
     private var pollingTask: Task<Void, Never>?
 
-    // Published state for UI (optional)
-    @Published private(set) var currentTallyState: (program: Bool, preview: Bool) = (false, false)
+    // Tally state for external access
+    private(set) var currentTallyState: (program: Bool, preview: Bool) = (false, false)
 
     // MARK: - Initialization
 

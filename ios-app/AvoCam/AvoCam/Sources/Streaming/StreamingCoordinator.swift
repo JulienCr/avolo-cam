@@ -57,8 +57,7 @@ actor StreamingCoordinator: StreamingService {
             framerate: request.framerate
         )
 
-        let width = parseWidth(from: request.resolution)
-        let height = parseHeight(from: request.resolution)
+        let (width, height) = request.resolution.parseResolution() ?? (1920, 1080)
 
         // 2. Start appropriate streaming backend
         switch mode {
@@ -78,7 +77,7 @@ actor StreamingCoordinator: StreamingService {
             }
 
             // 4. Start tally poller for torch control (NDI only)
-            tallyPoller?.start()
+            await tallyPoller?.start()
 
         case .srt:
             // Configure SRT manager
@@ -153,7 +152,7 @@ actor StreamingCoordinator: StreamingService {
         // Stop in reverse order based on current mode
         switch currentMode {
         case .ndi:
-            tallyPoller?.stop()
+            await tallyPoller?.stop()
             await captureManager.stopCapture()
             ndiManager.stop()
 
@@ -196,15 +195,4 @@ actor StreamingCoordinator: StreamingService {
         return currentMode
     }
 
-    // MARK: - Private Helpers
-
-    private func parseWidth(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.first ?? "1920") ?? 1920
-    }
-
-    private func parseHeight(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.last ?? "1080") ?? 1080
-    }
 }

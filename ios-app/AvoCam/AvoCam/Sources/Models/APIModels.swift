@@ -17,7 +17,7 @@ enum StreamingMode: String, Codable, CaseIterable, Sendable {
 
 // MARK: - Status Response
 
-struct StatusResponse: Codable {
+struct StatusResponse: Codable, Sendable {
     let alias: String
     let ndiState: NDIState
     let current: CurrentSettings
@@ -45,12 +45,12 @@ struct StatusResponse: Codable {
     }
 }
 
-enum NDIState: String, Codable {
+enum NDIState: String, Codable, Sendable {
     case streaming
     case idle
 }
 
-struct CurrentSettings: Codable {
+struct CurrentSettings: Codable, Sendable {
     var resolution: String
     var fps: Int
     var bitrate: Int
@@ -98,22 +98,22 @@ struct CurrentSettings: Codable {
     }
 }
 
-enum WhiteBalanceMode: String, Codable {
+enum WhiteBalanceMode: String, Codable, Sendable {
     case auto
     case manual
 }
 
-enum FocusMode: String, Codable {
+enum FocusMode: String, Codable, Sendable {
     case auto
     case manual
 }
 
-enum ExposureMode: String, Codable {
+enum ExposureMode: String, Codable, Sendable {
     case auto
     case manual
 }
 
-struct Telemetry: Codable {
+struct Telemetry: Codable, Sendable {
     let fps: Double
     let bitrate: Int
     let battery: Double
@@ -137,13 +137,13 @@ struct Telemetry: Codable {
     }
 }
 
-enum ChargingState: String, Codable {
+enum ChargingState: String, Codable, Sendable {
     case charging
     case full
     case unplugged
 }
 
-struct Capability: Codable {
+struct Capability: Codable, Sendable {
     let resolution: String
     let fps: [Int]
     let codec: [String]
@@ -161,7 +161,7 @@ struct Capability: Codable {
 
 // MARK: - Stream Control
 
-struct StreamStartRequest: Codable {
+struct StreamStartRequest: Codable, Sendable {
     let resolution: String
     let framerate: Int
     let bitrate: Int
@@ -201,7 +201,7 @@ struct StreamStartRequest: Codable {
 
 // MARK: - Camera Control
 
-struct CameraSettingsRequest: Codable {
+struct CameraSettingsRequest: Codable, Sendable {
     let wbMode: WhiteBalanceMode?
     let wbKelvin: Int?
     let wbTint: Double?
@@ -237,13 +237,13 @@ struct CameraSettingsRequest: Codable {
 
 // MARK: - Screen Control
 
-struct ScreenBrightnessRequest: Codable {
+struct ScreenBrightnessRequest: Codable, Sendable {
     let dimmed: Bool
 }
 
 // MARK: - White Balance Measure
 
-struct WhiteBalanceMeasureResponse: Codable {
+struct WhiteBalanceMeasureResponse: Codable, Sendable {
     let sceneCCT_K: Int  // Physical scene illumination temperature (Apple's value)
     let tint: Double
 
@@ -255,7 +255,7 @@ struct WhiteBalanceMeasureResponse: Codable {
 
 // MARK: - WebSocket Messages
 
-struct WebSocketTelemetryMessage: Codable {
+struct WebSocketTelemetryMessage: Codable, Sendable {
     let fps: Double
     let bitrate: Int
     let queueMs: Int
@@ -283,20 +283,20 @@ struct WebSocketTelemetryMessage: Codable {
     }
 }
 
-struct WebSocketCommandMessage: Codable {
+struct WebSocketCommandMessage: Codable, Sendable {
     let op: String
     let camera: CameraSettingsRequest?
 }
 
 /// Tally message received from OBS plugin via WebSocket
 /// OBS sends: {"op":"tally","program":true,"preview":false}
-struct WebSocketTallyMessage: Codable {
+struct WebSocketTallyMessage: Codable, Sendable {
     let op: String  // "tally"
     let program: Bool
     let preview: Bool
 }
 
-struct WebSocketFrameInfo: Codable {
+struct WebSocketFrameInfo: Codable, Sendable {
     let op: String  // "frame_info"
     let frameIdx: Int64
     let rtpTimestamp: UInt32  // RTP timestamp (90kHz clock) for correlating with RTP packets
@@ -314,7 +314,7 @@ struct WebSocketFrameInfo: Codable {
 
 // MARK: - Video Settings
 
-struct VideoPresetResponse: Codable {
+struct VideoPresetResponse: Codable, Sendable {
     let id: String
     let name: String
     let resolution: String
@@ -323,7 +323,7 @@ struct VideoPresetResponse: Codable {
     let bitrate: Int
 }
 
-struct VideoSettingsResponse: Codable {
+struct VideoSettingsResponse: Codable, Sendable {
     let selectedPresetId: String?
     let customResolution: String?
     let customFps: Int?
@@ -341,7 +341,7 @@ struct VideoSettingsResponse: Codable {
     }
 }
 
-struct VideoSettingsUpdateRequest: Codable {
+struct VideoSettingsUpdateRequest: Codable, Sendable {
     let selectedPresetId: String?
     let customResolution: String?
     let customFps: Int?
@@ -359,11 +359,11 @@ struct VideoSettingsUpdateRequest: Codable {
 
 // MARK: - Settings Control
 
-struct AliasUpdateRequest: Codable {
+struct AliasUpdateRequest: Codable, Sendable {
     let alias: String
 }
 
-struct AliasUpdateResponse: Codable {
+struct AliasUpdateResponse: Codable, Sendable {
     let alias: String
     let requiresRestart: Bool
 
@@ -375,7 +375,7 @@ struct AliasUpdateResponse: Codable {
 
 // MARK: - Torch Control
 
-struct TorchLevelResponse: Codable {
+struct TorchLevelResponse: Codable, Sendable {
     let currentLevel: Float
     let defaultLevel: Float
     let deviceModel: String
@@ -387,7 +387,7 @@ struct TorchLevelResponse: Codable {
     }
 }
 
-struct TorchLevelUpdateRequest: Codable {
+struct TorchLevelUpdateRequest: Codable, Sendable {
     let level: Float?  // nil to reset to default
 
     enum CodingKeys: String, CodingKey {
@@ -397,7 +397,7 @@ struct TorchLevelUpdateRequest: Codable {
 
 // MARK: - Error Response
 
-struct ErrorResponse: Codable {
+struct ErrorResponse: Codable, Sendable {
     let code: String
     let message: String
 }
