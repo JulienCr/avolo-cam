@@ -9,6 +9,7 @@
  */
 
 #include "ffmpeg-d3d11va-decoder.h"
+#include "../logging.h"
 
 #if defined(_WIN32) && defined(HAVE_FFMPEG_D3D11VA)
 
@@ -47,13 +48,13 @@ static enum AVPixelFormat ffmpeg_get_hw_format(
     // Prefer D3D11 hardware format
     for (const enum AVPixelFormat *p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
         if (*p == AV_PIX_FMT_D3D11) {
-            blog(LOG_DEBUG, "[avolocam] FFmpeg: Selected D3D11 pixel format");
+            ALOG_FFMPEG(LOG_DEBUG, "Selected D3D11 pixel format");
             return AV_PIX_FMT_D3D11;
         }
     }
 
     // Fallback to NV12 software
-    blog(LOG_WARNING, "[avolocam] FFmpeg: D3D11 format unavailable, falling back to software");
+    ALOG_FFMPEG(LOG_WARNING, "D3D11 format unavailable, falling back to software");
     for (const enum AVPixelFormat *p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
         if (*p == AV_PIX_FMT_NV12 || *p == AV_PIX_FMT_YUV420P) {
             return *p;
@@ -71,14 +72,14 @@ static thread_local FFmpegD3D11VADecoder *g_current_decoder = nullptr;
 FFmpegD3D11VADecoder::FFmpegD3D11VADecoder(const DecoderConfig &config)
     : config_(config)
 {
-    blog(LOG_INFO, "[avolocam] Creating FFmpeg D3D11VA decoder");
+    ALOG_FFMPEG(LOG_INFO, "Creating FFmpeg D3D11VA decoder");
 }
 
 FFmpegD3D11VADecoder::~FFmpegD3D11VADecoder()
 {
     destroy_decoder();
     destroy_d3d11();
-    blog(LOG_INFO, "[avolocam] FFmpeg D3D11VA decoder destroyed");
+    ALOG_FFMPEG(LOG_INFO, "FFmpeg D3D11VA decoder destroyed");
 }
 
 bool FFmpegD3D11VADecoder::is_available()
@@ -101,13 +102,13 @@ bool FFmpegD3D11VADecoder::is_available()
         // Check if FFmpeg has H.264 decoder
         const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
         if (codec) {
-            blog(LOG_INFO, "[avolocam] FFmpeg D3D11VA is available (feature level %d.%d)",
+            ALOG_FFMPEG(LOG_INFO, "D3D11VA is available (feature level %d.%d)",
                  (feature_level >> 12) & 0xF, (feature_level >> 8) & 0xF);
             return true;
         }
     }
 
-    blog(LOG_WARNING, "[avolocam] FFmpeg D3D11VA not available");
+    ALOG_FFMPEG(LOG_WARNING, "D3D11VA not available");
     return false;
 }
 
@@ -145,7 +146,7 @@ bool FFmpegD3D11VADecoder::init_d3d11_device()
         &d3d_context_);
 
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to create D3D11 device: 0x%08X", hr);
+        ALOG_FFMPEG(LOG_ERROR, "Failed to create D3D11 device: 0x%08X", hr);
         return false;
     }
 
@@ -155,7 +156,7 @@ bool FFmpegD3D11VADecoder::init_d3d11_device()
         mt->SetMultithreadProtected(TRUE);
     }
 
-    blog(LOG_INFO, "[avolocam] FFmpeg: Created separate D3D11 device (feature level %d.%d)",
+    ALOG_FFMPEG(LOG_INFO, "Created separate D3D11 device (feature level %d.%d)",
          (actual_level >> 12) & 0xF, (actual_level >> 8) & 0xF);
     return true;
 }
@@ -165,14 +166,14 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
     // Find H.264 decoder
     codec_ = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec_) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: H.264 decoder not found");
+        ALOG_FFMPEG(LOG_ERROR, "H.264 decoder not found");
         return false;
     }
 
     // Create codec context
     codec_ctx_ = avcodec_alloc_context3(codec_);
     if (!codec_ctx_) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to allocate codec context");
+        ALOG_FFMPEG(LOG_ERROR, "Failed to allocate codec context");
         return false;
     }
 
@@ -208,7 +209,7 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
             p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 1;
             memcpy(p + 4, pps_.data(), pps_.size());
             codec_ctx_->extradata_size = (int)extradata_size;
-            blog(LOG_INFO, "[avolocam] FFmpeg: Set extradata (SPS=%zu, PPS=%zu) BEFORE codec open",
+            ALOG_FFMPEG(LOG_INFO, "Set extradata (SPS=%zu, PPS=%zu) BEFORE codec open",
                  sps_.size(), pps_.size());
         }
     }
@@ -232,16 +233,16 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
             if (ret < 0) {
                 char errbuf[128];
                 av_strerror(ret, errbuf, sizeof(errbuf));
-                blog(LOG_WARNING, "[avolocam] FFmpeg: Failed to init D3D11VA context: %s", errbuf);
+                ALOG_FFMPEG(LOG_WARNING, "Failed to init D3D11VA context: %s", errbuf);
                 av_buffer_unref(&hw_device_ctx_);
                 hardware_mode_ = false;
             } else {
                 codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx_);
                 codec_ctx_->get_format = ffmpeg_get_hw_format;
-                blog(LOG_INFO, "[avolocam] FFmpeg: D3D11VA hardware context initialized with our device");
+                ALOG_FFMPEG(LOG_INFO, "D3D11VA hardware context initialized with our device");
             }
         } else {
-            blog(LOG_WARNING, "[avolocam] FFmpeg: Failed to allocate D3D11VA hw context");
+            ALOG_FFMPEG(LOG_WARNING, "Failed to allocate D3D11VA hw context");
             hardware_mode_ = false;
         }
     }
@@ -251,11 +252,11 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
     if (ret < 0) {
         char errbuf[128];
         av_strerror(ret, errbuf, sizeof(errbuf));
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to open codec: %s", errbuf);
+        ALOG_FFMPEG(LOG_ERROR, "Failed to open codec: %s", errbuf);
         return false;
     }
 
-    blog(LOG_INFO, "[avolocam] FFmpeg: Codec opened successfully (hw=%s)",
+    ALOG_FFMPEG(LOG_INFO, "Codec opened successfully (hw=%s)",
          hardware_mode_ ? "yes" : "no");
 
     // Allocate frames
@@ -264,11 +265,11 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
     packet_ = av_packet_alloc();
 
     if (!frame_ || !sw_frame_ || !packet_) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to allocate frame/packet");
+        ALOG_FFMPEG(LOG_ERROR, "Failed to allocate frame/packet");
         return false;
     }
 
-    blog(LOG_INFO, "[avolocam] FFmpeg decoder initialized (hardware=%s)",
+    ALOG_FFMPEG(LOG_INFO, "Decoder initialized (hardware=%s)",
          hardware_mode_ ? "yes" : "no");
     return true;
 }
@@ -298,7 +299,7 @@ bool FFmpegD3D11VADecoder::create_shared_texture_pool(uint32_t width, uint32_t h
     for (size_t i = 0; i < SHARED_POOL_SIZE; i++) {
         HRESULT hr = d3d_device_->CreateTexture2D(&desc, nullptr, &shared_pool_[i].texture);
         if (FAILED(hr)) {
-            blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to create shared texture %zu: 0x%08X",
+            ALOG_FFMPEG(LOG_ERROR, "Failed to create shared texture %zu: 0x%08X",
                  i, hr);
             release_shared_texture_pool();
             return false;
@@ -314,11 +315,11 @@ bool FFmpegD3D11VADecoder::create_shared_texture_pool(uint32_t width, uint32_t h
         shared_pool_[i].height = height;
         shared_pool_[i].in_use = false;
 
-        blog(LOG_DEBUG, "[avolocam] FFmpeg: Created shared texture %zu (%ux%u, handle=%p)",
+        ALOG_FFMPEG(LOG_DEBUG, "Created shared texture %zu (%ux%u, handle=%p)",
              i, width, height, shared_pool_[i].shared_handle);
     }
 
-    blog(LOG_INFO, "[avolocam] FFmpeg: Created shared texture pool %ux%u (pool size=%zu)",
+    ALOG_FFMPEG(LOG_INFO, "Created shared texture pool %ux%u (pool size=%zu)",
          width, height, SHARED_POOL_SIZE);
     return true;
 }
@@ -358,7 +359,7 @@ bool FFmpegD3D11VADecoder::copy_to_shared_texture(AVFrame *frame, SharedTexture 
     intptr_t subresource = (intptr_t)frame->data[1];
 
     if (!src_texture) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: AVFrame has no D3D11 texture");
+        ALOG_FFMPEG(LOG_ERROR, "AVFrame has no D3D11 texture");
         return false;
     }
 
@@ -385,7 +386,7 @@ bool FFmpegD3D11VADecoder::decode_software_fallback(AVFrame *frame, DecodedFrame
     if (frame->format == AV_PIX_FMT_D3D11) {
         int ret = av_hwframe_transfer_data(cpu_frame, frame, 0);
         if (ret < 0) {
-            blog(LOG_ERROR, "[avolocam] FFmpeg: av_hwframe_transfer_data failed: %d", ret);
+            ALOG_FFMPEG(LOG_ERROR, "av_hwframe_transfer_data failed: %d", ret);
             return false;
         }
         src_frame = cpu_frame;
@@ -393,7 +394,7 @@ bool FFmpegD3D11VADecoder::decode_software_fallback(AVFrame *frame, DecodedFrame
 
     // Ensure we have NV12 or YUV420P
     if (src_frame->format != AV_PIX_FMT_NV12 && src_frame->format != AV_PIX_FMT_YUV420P) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Unsupported software format: %d", src_frame->format);
+        ALOG_FFMPEG(LOG_ERROR, "Unsupported software format: %d", src_frame->format);
         return false;
     }
 
@@ -501,7 +502,7 @@ bool FFmpegD3D11VADecoder::build_annexb_extradata()
 
     codec_ctx_->extradata_size = (int)extradata_size;
 
-    blog(LOG_INFO, "[avolocam] FFmpeg: Built Annex-B extradata (SPS=%zu, PPS=%zu)",
+    ALOG_FFMPEG(LOG_INFO, "Built Annex-B extradata (SPS=%zu, PPS=%zu)",
          sps_.size(), pps_.size());
     return true;
 }
@@ -510,7 +511,7 @@ bool FFmpegD3D11VADecoder::initialize(const uint8_t *sps, size_t sps_size,
                                        const uint8_t *pps, size_t pps_size)
 {
     if (!sps || sps_size == 0 || !pps || pps_size == 0) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Invalid SPS/PPS data");
+        ALOG_FFMPEG(LOG_ERROR, "Invalid SPS/PPS data");
         return false;
     }
 
@@ -520,14 +521,14 @@ bool FFmpegD3D11VADecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Parse SPS for dimensions
     if (!parse_sps_dimensions(sps, sps_size)) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to parse SPS");
+        ALOG_FFMPEG(LOG_ERROR, "Failed to parse SPS");
         return false;
     }
 
     // Initialize D3D11 device (our own, not OBS's)
     if (config_.prefer_hardware) {
         if (!init_d3d11_device()) {
-            blog(LOG_WARNING, "[avolocam] FFmpeg: D3D11 init failed, will use software");
+            ALOG_FFMPEG(LOG_WARNING, "D3D11 init failed, will use software");
             hardware_mode_ = false;
         }
     } else {
@@ -536,12 +537,12 @@ bool FFmpegD3D11VADecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Initialize FFmpeg decoder (extradata is set inside)
     if (!init_ffmpeg_hwaccel()) {
-        blog(LOG_ERROR, "[avolocam] FFmpeg: Failed to initialize decoder");
+        ALOG_FFMPEG(LOG_ERROR, "Failed to initialize decoder");
         return false;
     }
 
     initialized_ = true;
-    blog(LOG_INFO, "[avolocam] FFmpeg D3D11VA decoder initialized: %ux%u, hardware=%s",
+    ALOG_FFMPEG(LOG_INFO, "D3D11VA decoder initialized: %ux%u, hardware=%s",
          width_, height_, hardware_mode_ ? "yes" : "no");
     return true;
 }
@@ -557,7 +558,7 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
     // Debug: log first access unit's start bytes (only first few times)
     static int debug_count = 0;
     if (debug_count < 5 && size >= 8) {
-        blog(LOG_INFO, "[avolocam] FFmpeg: Input AU size=%zu, start=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+        ALOG_FFMPEG(LOG_INFO, "Input AU size=%zu, start=[%02X %02X %02X %02X %02X %02X %02X %02X]",
              size, data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
         debug_count++;
     }
@@ -575,7 +576,7 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
         if (ret != AVERROR_EOF) {
             char errbuf[128];
             av_strerror(ret, errbuf, sizeof(errbuf));
-            blog(LOG_WARNING, "[avolocam] FFmpeg: avcodec_send_packet failed: %s (%d)", errbuf, ret);
+            ALOG_FFMPEG(LOG_WARNING, "avcodec_send_packet failed: %s (%d)", errbuf, ret);
         }
         return false;
     }
@@ -592,7 +593,7 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
     if (ret < 0) {
         char errbuf[128];
         av_strerror(ret, errbuf, sizeof(errbuf));
-        blog(LOG_WARNING, "[avolocam] FFmpeg: avcodec_receive_frame failed: %s", errbuf);
+        ALOG_FFMPEG(LOG_WARNING, "avcodec_receive_frame failed: %s", errbuf);
         return false;
     }
 
@@ -600,7 +601,7 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
     if ((uint32_t)frame_->width != width_ || (uint32_t)frame_->height != height_) {
         width_ = frame_->width;
         height_ = frame_->height;
-        blog(LOG_INFO, "[avolocam] FFmpeg: Resolution update %ux%u", width_, height_);
+        ALOG_FFMPEG(LOG_INFO, "Resolution update %ux%u", width_, height_);
     }
 
     // GPU texture output path: copy decoded frame to shared texture
@@ -609,20 +610,20 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
 
         // Create shared texture pool if needed
         if (!create_shared_texture_pool(width_, height_)) {
-            blog(LOG_WARNING, "[avolocam] FFmpeg: Failed to create shared pool, falling back to CPU");
+            ALOG_FFMPEG(LOG_WARNING, "Failed to create shared pool, falling back to CPU");
             goto cpu_fallback;
         }
 
         // Get next shared texture from pool
         SharedTexture *shared = get_available_shared_texture();
         if (!shared || !shared->texture) {
-            blog(LOG_WARNING, "[avolocam] FFmpeg: No shared texture available, falling back to CPU");
+            ALOG_FFMPEG(LOG_WARNING, "No shared texture available, falling back to CPU");
             goto cpu_fallback;
         }
 
         // GPU→GPU copy (same device, <0.5ms)
         if (!copy_to_shared_texture(frame_, shared)) {
-            blog(LOG_WARNING, "[avolocam] FFmpeg: Copy to shared texture failed, falling back to CPU");
+            ALOG_FFMPEG(LOG_WARNING, "Copy to shared texture failed, falling back to CPU");
             goto cpu_fallback;
         }
 
@@ -741,11 +742,11 @@ bool FFmpegD3D11VADecoder::supports_gpu_output() const
 bool FFmpegD3D11VADecoder::set_gpu_output(bool enable)
 {
     if (enable && !supports_gpu_output()) {
-        blog(LOG_WARNING, "[avolocam] FFmpeg: GPU output requested but not supported");
+        ALOG_FFMPEG(LOG_WARNING, "GPU output requested but not supported");
         return false;
     }
     gpu_output_enabled_ = enable;
-    blog(LOG_INFO, "[avolocam] FFmpeg: GPU output %s", enable ? "enabled" : "disabled");
+    ALOG_FFMPEG(LOG_INFO, "GPU output %s", enable ? "enabled" : "disabled");
     return true;
 }
 

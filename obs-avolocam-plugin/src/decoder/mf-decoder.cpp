@@ -3,6 +3,7 @@
  */
 
 #include "mf-decoder.h"
+#include "../logging.h"
 
 #ifdef HAVE_FFMPEG_D3D11VA
 #include "ffmpeg-d3d11va-decoder.h"
@@ -55,14 +56,14 @@ static const GUID MFVideoFormat_NV12 = {0x3231564E, 0x0000, 0x0010,
 MFDecoder::MFDecoder(const DecoderConfig &config)
     : config_(config)
 {
-    blog(LOG_INFO, "[avolocam] Creating Media Foundation decoder");
+    ALOG_MF(LOG_INFO, "Creating Media Foundation decoder");
 
     // Initialize Media Foundation
     HRESULT hr = MFStartup(MF_VERSION);
     if (SUCCEEDED(hr)) {
         mf_initialized_ = true;
     } else {
-        blog(LOG_ERROR, "[avolocam] MFStartup failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "MFStartup failed: 0x%08X", hr);
     }
 }
 
@@ -82,7 +83,7 @@ MFDecoder::~MFDecoder()
         d3d_device_.Clear();
 
         g_shared_d3d_refcount--;
-        blog(LOG_INFO, "[avolocam] Released shared D3D11 device reference (refcount=%d)",
+        ALOG_MF(LOG_INFO, "Released shared D3D11 device reference (refcount=%d)",
              g_shared_d3d_refcount);
 
         if (g_shared_d3d_refcount <= 0) {
@@ -90,7 +91,7 @@ MFDecoder::~MFDecoder()
             g_shared_d3d_context.Clear();
             g_shared_d3d_device.Clear();
             g_shared_d3d_refcount = 0;
-            blog(LOG_INFO, "[avolocam] Shared D3D11 device destroyed (last reference)");
+            ALOG_MF(LOG_INFO, "Shared D3D11 device destroyed (last reference)");
         }
     } else {
         // Non-shared device: release normally without lock
@@ -104,7 +105,7 @@ MFDecoder::~MFDecoder()
         mf_initialized_ = false;
     }
 
-    blog(LOG_INFO, "[avolocam] Media Foundation decoder destroyed");
+    ALOG_MF(LOG_INFO, "Media Foundation decoder destroyed");
 }
 
 void MFDecoder::release_staging_textures()
@@ -142,7 +143,7 @@ bool MFDecoder::create_staging_textures(uint32_t width, uint32_t height)
     for (int i = 0; i < 2; i++) {
         HRESULT hr = d3d_device_->CreateTexture2D(&desc, nullptr, &staging_textures_[i]);
         if (FAILED(hr)) {
-            blog(LOG_ERROR, "[avolocam] Failed to create staging texture %d: 0x%08X", i, hr);
+            ALOG_MF(LOG_ERROR, "Failed to create staging texture %d: 0x%08X", i, hr);
             release_staging_textures();
             return false;
         }
@@ -150,7 +151,7 @@ bool MFDecoder::create_staging_textures(uint32_t width, uint32_t height)
 
     staging_width_ = width;
     staging_height_ = height;
-    blog(LOG_INFO, "[avolocam] Created async staging textures %ux%u", width, height);
+    ALOG_MF(LOG_INFO, "Created async staging textures %ux%u", width, height);
     return true;
 }
 
@@ -172,7 +173,7 @@ bool MFDecoder::create_d3d11_device()
         g_shared_d3d_refcount++;
         using_shared_device_ = true;
 
-        blog(LOG_INFO, "[avolocam] Reusing shared D3D11 device (refcount=%d)",
+        ALOG_MF(LOG_INFO, "Reusing shared D3D11 device (refcount=%d)",
              g_shared_d3d_refcount);
         return true;
     }
@@ -204,7 +205,7 @@ bool MFDecoder::create_d3d11_device()
         &d3d_context_);
 
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] D3D11CreateDevice failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "D3D11CreateDevice failed: 0x%08X", hr);
         return false;
     }
 
@@ -217,7 +218,7 @@ bool MFDecoder::create_d3d11_device()
     // Create DXGI device manager
     hr = MFCreateDXGIDeviceManager(&device_manager_token_, &device_manager_);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] MFCreateDXGIDeviceManager failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "MFCreateDXGIDeviceManager failed: 0x%08X", hr);
         d3d_context_.Clear();
         d3d_device_.Clear();
         return false;
@@ -225,7 +226,7 @@ bool MFDecoder::create_d3d11_device()
 
     hr = device_manager_->ResetDevice(d3d_device_, device_manager_token_);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] ResetDevice failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "ResetDevice failed: 0x%08X", hr);
         device_manager_.Clear();
         d3d_context_.Clear();
         d3d_device_.Clear();
@@ -241,7 +242,7 @@ bool MFDecoder::create_d3d11_device()
     g_shared_d3d_refcount = 1;
     using_shared_device_ = true;
 
-    blog(LOG_INFO, "[avolocam] Created shared D3D11 device for hardware decoding (refcount=1)");
+    ALOG_MF(LOG_INFO, "Created shared D3D11 device for hardware decoding (refcount=1)");
     return true;
 }
 
@@ -253,7 +254,7 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
     }
 
     if (!sps || sps_size == 0 || !pps || pps_size == 0) {
-        blog(LOG_ERROR, "[avolocam] Invalid SPS/PPS data");
+        ALOG_MF(LOG_ERROR, "Invalid SPS/PPS data");
         return false;
     }
 
@@ -263,7 +264,7 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Parse SPS for dimensions
     if (!parse_sps_dimensions(sps, sps_size)) {
-        blog(LOG_ERROR, "[avolocam] Failed to parse SPS");
+        ALOG_MF(LOG_ERROR, "Failed to parse SPS");
         return false;
     }
 
@@ -274,14 +275,14 @@ bool MFDecoder::initialize(const uint8_t *sps, size_t sps_size,
 
     // Create decoder
     if (!create_decoder()) {
-        blog(LOG_ERROR, "[avolocam] Failed to create decoder");
+        ALOG_MF(LOG_ERROR, "Failed to create decoder");
         return false;
     }
 
     initialized_ = true;
     {
         std::lock_guard<std::mutex> lock(g_shared_d3d_mutex);
-        blog(LOG_INFO, "[avolocam] MF decoder initialized: %ux%u, hardware=%d, "
+        ALOG_MF(LOG_INFO, "Decoder initialized: %ux%u, hardware=%d, "
              "active_hw_sessions=%d",
              width_, height_, hardware_enabled_,
              hardware_enabled_ ? g_shared_d3d_refcount : 0);
@@ -316,12 +317,12 @@ bool MFDecoder::create_decoder()
     if (FAILED(hr) || num_activates == 0) {
         if (hardware_enabled_) {
             // Hardware decoder not found — fall back to software
-            blog(LOG_WARNING, "[avolocam] No hardware H.264 decoder found (0x%08X), "
+            ALOG_MF(LOG_WARNING, "No hardware H.264 decoder found (0x%08X), "
                  "falling back to software decoder", hr);
             hardware_enabled_ = false;
             return create_decoder();  // Retry without MFT_ENUM_FLAG_HARDWARE
         }
-        blog(LOG_ERROR, "[avolocam] No H.264 decoder found: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "No H.264 decoder found: 0x%08X", hr);
         return false;
     }
 
@@ -337,12 +338,12 @@ bool MFDecoder::create_decoder()
     if (FAILED(hr)) {
         if (hardware_enabled_) {
             // ActivateObject failed — GPU hardware session limit likely reached
-            blog(LOG_WARNING, "[avolocam] Hardware decoder ActivateObject failed (0x%08X). "
+            ALOG_MF(LOG_WARNING, "Hardware decoder ActivateObject failed (0x%08X). "
                  "GPU session limit may be reached. Falling back to software decoder.", hr);
             hardware_enabled_ = false;
             return create_decoder();  // Retry with software
         }
-        blog(LOG_ERROR, "[avolocam] ActivateObject failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "ActivateObject failed: 0x%08X", hr);
         return false;
     }
 
@@ -355,12 +356,12 @@ bool MFDecoder::create_decoder()
             // MF_LOW_LATENCY has same GUID as CODECAPI_AVLowLatencyMode
             hr = attrs->SetUINT32(MF_LOW_LATENCY, TRUE);
             if (SUCCEEDED(hr)) {
-                blog(LOG_INFO, "[avolocam] MF_LOW_LATENCY enabled via attributes");
+                ALOG_MF(LOG_INFO, "MF_LOW_LATENCY enabled via attributes");
             } else {
-                blog(LOG_WARNING, "[avolocam] Failed to set MF_LOW_LATENCY: 0x%08X", hr);
+                ALOG_MF(LOG_WARNING, "Failed to set MF_LOW_LATENCY: 0x%08X", hr);
             }
         } else {
-            blog(LOG_WARNING, "[avolocam] GetAttributes failed: 0x%08X, trying ICodecAPI", hr);
+            ALOG_MF(LOG_WARNING, "GetAttributes failed: 0x%08X, trying ICodecAPI", hr);
             // Fallback to ICodecAPI for older decoders
             ComQIPtr<ICodecAPI> codec_api(decoder_);
             if (codec_api) {
@@ -370,7 +371,7 @@ bool MFDecoder::create_decoder()
                 var.ulVal = 1;
                 hr = codec_api->SetValue(&CODECAPI_AVLowLatencyMode, &var);
                 if (SUCCEEDED(hr)) {
-                    blog(LOG_INFO, "[avolocam] Low-latency mode enabled via ICodecAPI");
+                    ALOG_MF(LOG_INFO, "Low-latency mode enabled via ICodecAPI");
                 }
             }
         }
@@ -381,32 +382,32 @@ bool MFDecoder::create_decoder()
         hr = decoder_->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
                                        (ULONG_PTR)device_manager_.Get());
         if (FAILED(hr)) {
-            blog(LOG_WARNING, "[avolocam] Failed to set D3D manager: 0x%08X", hr);
+            ALOG_MF(LOG_WARNING, "Failed to set D3D manager: 0x%08X", hr);
             hardware_enabled_ = false;
         }
     }
 
     // Configure input type
     if (!configure_input_type()) {
-        blog(LOG_ERROR, "[avolocam] Failed to configure input type");
+        ALOG_MF(LOG_ERROR, "Failed to configure input type");
         return false;
     }
 
     // Configure output type
     if (!configure_output_type()) {
-        blog(LOG_ERROR, "[avolocam] Failed to configure output type");
+        ALOG_MF(LOG_ERROR, "Failed to configure output type");
         return false;
     }
 
     // Start streaming
     hr = decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] Failed to notify begin streaming: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "Failed to notify begin streaming: 0x%08X", hr);
     }
 
     hr = decoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] Failed to notify start of stream: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "Failed to notify start of stream: 0x%08X", hr);
     }
 
     input_started_ = true;
@@ -460,7 +461,7 @@ bool MFDecoder::configure_input_type()
 
     hr = decoder_->SetInputType(0, media_type, 0);
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] SetInputType failed: 0x%08X", hr);
+        ALOG_MF(LOG_ERROR, "SetInputType failed: 0x%08X", hr);
         return false;
     }
 
@@ -490,7 +491,7 @@ bool MFDecoder::configure_output_type()
         }
     }
 
-    blog(LOG_ERROR, "[avolocam] No suitable output type found");
+    ALOG_MF(LOG_ERROR, "No suitable output type found");
     return false;
 }
 
@@ -648,7 +649,7 @@ bool MFDecoder::process_output(DecodedFrame &out)
     }
 
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] ProcessOutput failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "ProcessOutput failed: 0x%08X", hr);
         return false;
     }
 
@@ -930,7 +931,7 @@ bool MFDecoder::decode(const uint8_t *data, size_t size, DecodedFrame &out)
 
     // Process input
     if (!process_input(data, size)) {
-        blog(LOG_WARNING, "[avolocam] Failed to process input");
+        ALOG_MF(LOG_WARNING, "Failed to process input");
         // Still try to get output
     }
 
@@ -1019,11 +1020,11 @@ bool MFDecoder::supports_gpu_output() const
 bool MFDecoder::set_gpu_output(bool enable)
 {
     if (enable && !supports_gpu_output()) {
-        blog(LOG_WARNING, "[avolocam] GPU output requested but not supported");
+        ALOG_MF(LOG_WARNING, "GPU output requested but not supported");
         return false;
     }
     gpu_output_enabled_ = enable;
-    blog(LOG_INFO, "[avolocam] GPU output %s", enable ? "enabled" : "disabled");
+    ALOG_MF(LOG_INFO, "GPU output %s", enable ? "enabled" : "disabled");
     return true;
 }
 
@@ -1067,7 +1068,7 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
     }
 
     if (FAILED(hr)) {
-        blog(LOG_WARNING, "[avolocam] ProcessOutput (GPU) failed: 0x%08X", hr);
+        ALOG_MF(LOG_WARNING, "ProcessOutput (GPU) failed: 0x%08X", hr);
         return false;
     }
 
@@ -1125,36 +1126,36 @@ bool MFDecoder::process_output_gpu(DecodedFrame &out)
     }
 
     // GPU extraction failed, fall back to CPU
-    blog(LOG_DEBUG, "[avolocam] GPU texture extraction failed, falling back to CPU");
+    ALOG_MF(LOG_DEBUG, "GPU texture extraction failed, falling back to CPU");
     return process_output(out);
 }
 
 // Factory method implementation for Windows
 std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
 {
-    blog(LOG_INFO, "[avolocam] Creating platform decoder (Windows), type=%d",
+    ALOG_MF(LOG_INFO, "Creating platform decoder (Windows), type=%d",
          static_cast<int>(config.decoder_type));
 
     switch (config.decoder_type) {
 #ifdef HAVE_FFMPEG_D3D11VA
     case DecoderType::FFMPEG_D3D11VA:
-        blog(LOG_INFO, "[avolocam] Explicitly requested FFmpeg D3D11VA decoder");
+        ALOG_MF(LOG_INFO, "Explicitly requested FFmpeg D3D11VA decoder");
         if (FFmpegD3D11VADecoder::is_available()) {
             return std::make_unique<FFmpegD3D11VADecoder>(config);
         }
-        blog(LOG_WARNING, "[avolocam] FFmpeg D3D11VA not available, falling back to MF");
+        ALOG_MF(LOG_WARNING, "FFmpeg D3D11VA not available, falling back to MF");
         return std::make_unique<MFDecoder>(config);
 #endif
 
     case DecoderType::MEDIA_FOUNDATION:
-        blog(LOG_INFO, "[avolocam] Explicitly requested Media Foundation decoder");
+        ALOG_MF(LOG_INFO, "Explicitly requested Media Foundation decoder");
         return std::make_unique<MFDecoder>(config);
 
     case DecoderType::AUTO:
     default:
         // AUTO: Use MF by default on Windows (proven stable)
         // User can explicitly select FFmpeg D3D11VA via UI if desired
-        blog(LOG_INFO, "[avolocam] AUTO: Using Media Foundation decoder");
+        ALOG_MF(LOG_INFO, "AUTO: Using Media Foundation decoder");
         return std::make_unique<MFDecoder>(config);
     }
 }

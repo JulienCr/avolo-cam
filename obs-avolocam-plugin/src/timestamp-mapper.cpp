@@ -4,6 +4,7 @@
 
 #include "timestamp-mapper.h"
 #include <obs-module.h>
+#include "logging.h"
 #include <algorithm>
 #include <cmath>
 
@@ -11,12 +12,12 @@ namespace avolocam {
 
 TimestampMapper::TimestampMapper()
 {
-    blog(LOG_DEBUG, "[avolocam] TimestampMapper created");
+    ALOG(LOG_DEBUG, "TimestampMapper created");
 }
 
 TimestampMapper::~TimestampMapper()
 {
-    blog(LOG_DEBUG, "[avolocam] TimestampMapper destroyed, stats: added=%llu lookups=%llu hits=%llu misses=%llu",
+    ALOG(LOG_DEBUG, "TimestampMapper destroyed, stats: added=%llu lookups=%llu hits=%llu misses=%llu",
          (unsigned long long)total_added_,
          (unsigned long long)total_lookups_,
          (unsigned long long)lookup_hits_,

@@ -7,6 +7,7 @@
 #ifdef _WIN32
 
 #include <obs-module.h>
+#include "logging.h"
 #include <d3d11_3.h>
 #include <d3dcompiler.h>
 #include <cstring>
@@ -70,7 +71,7 @@ GPUConverter::~GPUConverter()
 bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context)
 {
     if (!device || !context) {
-        blog(LOG_ERROR, "[avolocam] GPUConverter: null device or context");
+        ALOG_GPU(LOG_ERROR, "null device or context");
         return false;
     }
 
@@ -79,14 +80,14 @@ bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context
     context_ = context;
 
     if (!create_shader()) {
-        blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create shader");
+        ALOG_GPU(LOG_ERROR, "failed to create shader");
         device_.Clear();
         context_.Clear();
         return false;
     }
 
     if (!create_constant_buffer()) {
-        blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create constant buffer");
+        ALOG_GPU(LOG_ERROR, "failed to create constant buffer");
         shader_.Clear();
         device_.Clear();
         context_.Clear();
@@ -94,7 +95,7 @@ bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context
     }
 
     if (!create_sampler()) {
-        blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create sampler");
+        ALOG_GPU(LOG_ERROR, "failed to create sampler");
         constant_buffer_.Clear();
         shader_.Clear();
         device_.Clear();
@@ -103,7 +104,7 @@ bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context
     }
 
     initialized_ = true;
-    blog(LOG_INFO, "[avolocam] GPUConverter initialized");
+    ALOG_GPU(LOG_INFO, "GPUConverter initialized");
     return true;
 }
 
@@ -132,7 +133,7 @@ void GPUConverter::shutdown()
     context_.Clear();
     initialized_ = false;
 
-    blog(LOG_INFO, "[avolocam] GPUConverter shutdown");
+    ALOG_GPU(LOG_INFO, "GPUConverter shutdown");
 }
 
 bool GPUConverter::create_shader()
@@ -160,7 +161,7 @@ bool GPUConverter::create_shader()
 
     if (FAILED(hr)) {
         if (errors) {
-            blog(LOG_ERROR, "[avolocam] Shader compile error: %s",
+            ALOG_GPU(LOG_ERROR, "Shader compile error: %s",
                  (const char *)errors->GetBufferPointer());
         }
         return false;
@@ -173,7 +174,7 @@ bool GPUConverter::create_shader()
         &shader_);
 
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] CreateComputeShader failed: 0x%08X", hr);
+        ALOG_GPU(LOG_ERROR, "CreateComputeShader failed: 0x%08X", hr);
         return false;
     }
 
@@ -196,7 +197,7 @@ bool GPUConverter::create_constant_buffer()
 
     HRESULT hr = device_->CreateBuffer(&desc, nullptr, &constant_buffer_);
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] CreateBuffer (constants) failed: 0x%08X", hr);
+        ALOG_GPU(LOG_ERROR, "CreateBuffer (constants) failed: 0x%08X", hr);
         return false;
     }
 
@@ -213,7 +214,7 @@ bool GPUConverter::create_sampler()
 
     HRESULT hr = device_->CreateSamplerState(&desc, &sampler_);
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] CreateSamplerState failed: 0x%08X", hr);
+        ALOG_GPU(LOG_ERROR, "CreateSamplerState failed: 0x%08X", hr);
         return false;
     }
 
@@ -250,7 +251,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
 
             HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture_pool_[i].texture);
             if (FAILED(hr)) {
-                blog(LOG_ERROR, "[avolocam] CreateTexture2D (output) failed: 0x%08X", hr);
+                ALOG_GPU(LOG_ERROR, "CreateTexture2D (output) failed: 0x%08X", hr);
                 return nullptr;
             }
 
@@ -263,7 +264,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             hr = device_->CreateUnorderedAccessView(texture_pool_[i].texture, &uav_desc, &texture_pool_[i].uav);
             if (FAILED(hr)) {
                 texture_pool_[i].texture.Clear();
-                blog(LOG_ERROR, "[avolocam] CreateUnorderedAccessView failed: 0x%08X", hr);
+                ALOG_GPU(LOG_ERROR, "CreateUnorderedAccessView failed: 0x%08X", hr);
                 return nullptr;
             }
 
@@ -279,7 +280,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             texture_pool_[i].height = height;
             texture_pool_[i].in_use = true;
 
-            blog(LOG_INFO, "[avolocam] Created output texture %ux%u in pool slot %zu",
+            ALOG_GPU(LOG_INFO, "Created output texture %ux%u in pool slot %zu",
                  width, height, i);
 
             return &texture_pool_[i];
@@ -310,7 +311,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
 
             HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture_pool_[i].texture);
             if (FAILED(hr)) {
-                blog(LOG_ERROR, "[avolocam] CreateTexture2D (pool resize) failed: 0x%08X", hr);
+                ALOG_GPU(LOG_ERROR, "CreateTexture2D (pool resize) failed: 0x%08X", hr);
                 return nullptr;
             }
 
@@ -339,7 +340,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
         }
     }
 
-    blog(LOG_WARNING, "[avolocam] Texture pool exhausted");
+    ALOG_GPU(LOG_WARNING, "Texture pool exhausted");
     return nullptr;
 }
 
@@ -371,14 +372,14 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
 
         HRESULT hr = device_->CreateTexture2D(&staging_desc, nullptr, &staging_nv12_);
         if (FAILED(hr)) {
-            blog(LOG_ERROR, "[avolocam] Failed to create staging NV12 texture: 0x%08X", hr);
+            ALOG_GPU(LOG_ERROR, "Failed to create staging NV12 texture: 0x%08X", hr);
             return false;
         }
 
         staging_width_ = tex_desc.Width;
         staging_height_ = tex_desc.Height;
 
-        blog(LOG_INFO, "[avolocam] Created staging NV12 texture %ux%u", staging_width_, staging_height_);
+        ALOG_GPU(LOG_INFO, "Created staging NV12 texture %ux%u", staging_width_, staging_height_);
     }
 
     // Copy input texture to staging texture (GPU-GPU copy, very fast)
@@ -400,7 +401,7 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     // Need ID3D11Device3 for CreateShaderResourceView1 with PlaneSlice
     ComQIPtr<ID3D11Device3> device3(device_);
     if (!device3) {
-        blog(LOG_ERROR, "[avolocam] Failed to get ID3D11Device3");
+        ALOG_GPU(LOG_ERROR, "Failed to get ID3D11Device3");
         return false;
     }
 
@@ -414,7 +415,7 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
 
     HRESULT hr = device3->CreateShaderResourceView1(staging_nv12_, &y_srv_desc, (ID3D11ShaderResourceView1 **)&y_srv_);
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] CreateShaderResourceView1 (Y plane on staging) failed: 0x%08X", hr);
+        ALOG_GPU(LOG_ERROR, "CreateShaderResourceView1 (Y plane on staging) failed: 0x%08X", hr);
         return false;
     }
 
@@ -428,7 +429,7 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
 
     hr = device3->CreateShaderResourceView1(staging_nv12_, &uv_srv_desc, (ID3D11ShaderResourceView1 **)&uv_srv_);
     if (FAILED(hr)) {
-        blog(LOG_ERROR, "[avolocam] CreateShaderResourceView1 (UV plane on staging) failed: 0x%08X", hr);
+        ALOG_GPU(LOG_ERROR, "CreateShaderResourceView1 (UV plane on staging) failed: 0x%08X", hr);
         y_srv_.Clear();
         return false;
     }
@@ -436,7 +437,7 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     srv_width_ = staging_width_;
     srv_height_ = staging_height_;
 
-    blog(LOG_INFO, "[avolocam] Created NV12 plane SRVs on staging texture");
+    ALOG_GPU(LOG_INFO, "Created NV12 plane SRVs on staging texture");
     return true;
 }
 

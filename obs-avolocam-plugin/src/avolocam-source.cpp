@@ -17,6 +17,7 @@
 #include "texture-output.h"
 #include "gpu-converter.h"
 #include "websocket-client.h"
+#include "logging.h"
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
@@ -247,7 +248,7 @@ struct SourceData {
 
         pipeline.decoder = PlatformDecoder::create(decoder_config);
         if (!pipeline.decoder) {
-            blog(LOG_ERROR, "[avolocam] Failed to create decoder");
+            ALOG(LOG_ERROR, "Failed to create decoder");
             return;
         }
 
@@ -286,7 +287,7 @@ struct SourceData {
                 tally_program.store(!tally_program.load());
                 tally_preview.store(!tally_preview.load());
                 send_tally_state();
-                blog(LOG_INFO, "[avolocam] WS connected: subscribed to frame_info, tally re-sent");
+                ALOG(LOG_INFO, "WS connected: subscribed to frame_info, tally re-sent");
             }
         });
 
@@ -343,7 +344,7 @@ struct SourceData {
         }
 
         if (bind_result_.load() != 1) {
-            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", port);
+            ALOG(LOG_ERROR, "Bind to port %d failed — stopping source", port);
             running.store(false);
 
             shutdown_websocket();
@@ -376,7 +377,7 @@ struct SourceData {
         int dec_type = config.decoder_type.load();
 
         if (ip_copy.empty()) {
-            blog(LOG_WARNING, "[avolocam] No camera IP configured");
+            ALOG(LOG_WARNING, "No camera IP configured");
             return;
         }
 
@@ -384,13 +385,13 @@ struct SourceData {
         {
             std::lock_guard<std::mutex> lock(g_ports_mutex);
             if (g_bound_ports.count(port_copy)) {
-                blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
+                ALOG(LOG_ERROR, "Port %d is already in use by another AvoCam source. "
                      "Each source must use a unique UDP port.", port_copy);
                 return;
             }
         }
 
-        blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
+        ALOG(LOG_INFO, "Starting receiver for %s:%d",
              ip_copy.c_str(), port_copy);
 
         // Derive flash mode from jitter setting
@@ -464,7 +465,7 @@ struct SourceData {
     void stop() {
         if (!running.load()) return;
 
-        blog(LOG_INFO, "[avolocam] Stopping receiver");
+        ALOG(LOG_INFO, "Stopping receiver");
         running.store(false);
 
         shutdown_websocket();
@@ -512,7 +513,7 @@ struct SourceData {
 
         // Bind to UDP port
         if (!pipeline.receiver->bind(port)) {
-            blog(LOG_ERROR, "[avolocam] Failed to bind to port %d - port may already be in use",
+            ALOG(LOG_ERROR, "Failed to bind to port %d - port may already be in use",
                  port);
             bind_result_.store(-1);
             return;
@@ -529,11 +530,11 @@ struct SourceData {
         // Log actual receive buffer size for diagnostics
         int actual_rcvbuf = pipeline.receiver->get_actual_rcvbuf();
         if (actual_rcvbuf > 0 && actual_rcvbuf < 2 * 1024 * 1024) {
-            blog(LOG_WARNING, "[avolocam] UDP receive buffer is only %d bytes (requested 4MB). "
+            ALOG(LOG_WARNING, "UDP receive buffer is only %d bytes (requested 4MB). "
                  "This may cause packet drops with multiple cameras.", actual_rcvbuf);
         }
 
-        blog(LOG_INFO, "[avolocam] Listening on UDP port %d (rcvbuf=%dKB)",
+        ALOG(LOG_INFO, "Listening on UDP port %d (rcvbuf=%dKB)",
              port, actual_rcvbuf / 1024);
 
         std::vector<uint8_t> packet_buffer(2048);
@@ -614,14 +615,14 @@ struct SourceData {
         total_nals += nal_units.size();
 
         if (config.debug_mode && packet_count % 500 == 0) {
-            blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d (flash mode)", packet_count, total_nals);
+            ALOG(LOG_DEBUG, "Packets: %d, NALs: %d (flash mode)", packet_count, total_nals);
         }
 
         for (auto& nal : nal_units) {
             uint8_t nal_type = static_cast<uint8_t>(nal.type);
 
             if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
-                blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
+                ALOG(LOG_DEBUG, "NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
                      nal_type, nal.data.size(), nal.marker);
             }
 
@@ -655,7 +656,7 @@ struct SourceData {
 
             // Log periodically (only in debug mode)
             if (config.debug_mode && packet_count % 500 == 0) {
-                blog(LOG_INFO, "[avolocam] Packets: %d, NALs: %d", packet_count, total_nals);
+                ALOG(LOG_DEBUG, "Packets: %d, NALs: %d", packet_count, total_nals);
             }
 
             for (auto& nal : nal_units) {
@@ -663,14 +664,14 @@ struct SourceData {
 
                 // Log SPS/PPS/IDR only in debug mode
                 if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
-                    blog(LOG_INFO, "[avolocam] NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
+                    ALOG(LOG_DEBUG, "NAL type=%d (SPS=7/PPS=8/IDR=5), size=%zu, marker=%d",
                          nal_type, nal.data.size(), nal.marker);
                 }
 
                 // Check sync state
                 if (!pipeline.sync_state->can_decode(nal.type, nal.is_idr)) {
                     if (config.debug_mode && (nal_type == 7 || nal_type == 8 || nal_type == 5)) {
-                        blog(LOG_WARNING, "[avolocam] Sync state rejected NAL type=%d", nal_type);
+                        ALOG(LOG_DEBUG, "Sync state rejected NAL type=%d", nal_type);
                     }
                     frames_dropped.fetch_add(1, std::memory_order_relaxed);
                     continue;
@@ -723,7 +724,7 @@ struct SourceData {
      * Pulls access units from queue and decodes them
      */
     void decode_loop() {
-        blog(LOG_INFO, "[avolocam] Decode thread started");
+        ALOG(LOG_INFO, "Decode thread started");
 
         while (running.load()) {
             AccessUnit au;
@@ -755,7 +756,7 @@ struct SourceData {
             decode_frame_async(au);
         }
 
-        blog(LOG_INFO, "[avolocam] Decode thread stopped");
+        ALOG(LOG_INFO, "Decode thread stopped");
     }
 
     /**
@@ -780,7 +781,7 @@ struct SourceData {
                         && pipeline.decoder->get_d3d_device()) {
                         pipeline.decoder->set_gpu_output(true);
                         gpu.use_gpu_decode.store(true);
-                        blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
+                        ALOG(LOG_INFO, "GPU decode enabled (CUSTOM_DRAW path)");
                     } else {
                         gpu.use_gpu_decode.store(false);
                     }
@@ -791,16 +792,16 @@ struct SourceData {
                     // Software fallback is slower → larger queue (6) to absorb stalls
                     if (config.flash_mode.load()) {
                         decode_queue.max_size = 1;
-                        blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
+                        ALOG(LOG_INFO, "Decoder initialized (%s), "
                              "flash mode: decode queue size = 1",
                              pipeline.decoder->is_hardware() ? "hardware" : "software");
                     } else if (pipeline.decoder->is_hardware()) {
                         decode_queue.max_size = 4;
-                        blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
+                        ALOG(LOG_INFO, "Decoder initialized (hardware), "
                              "decode queue size = 4");
                     } else {
                         decode_queue.max_size = 6;
-                        blog(LOG_INFO, "[avolocam] Decoder initialized (software fallback), "
+                        ALOG(LOG_INFO, "Decoder initialized (software fallback), "
                              "decode queue size = 6");
                     }
                 }
@@ -833,10 +834,10 @@ struct SourceData {
                         static_cast<ID3D11Device*>(dev),
                         static_cast<ID3D11DeviceContext*>(ctx))) {
                     gpu.converter_initialized = true;
-                    blog(LOG_INFO, "[avolocam] GPUConverter initialized for CUSTOM_DRAW path");
+                    ALOG(LOG_INFO, "GPUConverter initialized for CUSTOM_DRAW path");
                 } else {
                     gpu.converter.reset();
-                    blog(LOG_WARNING, "[avolocam] GPUConverter init failed, using CPU path");
+                    ALOG(LOG_WARNING, "GPUConverter init failed, using CPU path");
                 }
             }
         }
@@ -865,7 +866,7 @@ struct SourceData {
 
                 output_count++;
                 if (output_count == 1) {
-                    blog(LOG_INFO, "[avolocam] First GPU frame (CUSTOM_DRAW): %ux%u, handle=%p",
+                    ALOG(LOG_INFO, "First GPU frame (CUSTOM_DRAW): %ux%u, handle=%p",
                          frame.width, frame.height, converted.shared_handle);
                 }
 
@@ -879,7 +880,7 @@ struct SourceData {
                 }
                 return true;
             }
-            blog(LOG_WARNING, "[avolocam] GPU conversion failed, falling back to CPU");
+            ALOG(LOG_WARNING, "GPU conversion failed, falling back to CPU");
         }
 
         // Fall through to CPU path — release IMFSample since GPU didn't consume it
@@ -948,7 +949,7 @@ struct SourceData {
         if (config.debug_mode && au_count % 300 == 0 && pipeline.decoder->is_initialized()) {
             const auto& stats = pipeline.decoder->get_timing_stats();
             uint64_t queue_drops = decode_queue_drops.load();
-            blog(LOG_INFO, "[avolocam] Decode timing (avg over %llu frames): "
+            ALOG(LOG_DEBUG, "Decode timing (avg over %llu frames): "
                  "input=%.2fms output=%.2fms lock=%.2fms copy=%.2fms total=%.2fms | queue_drops=%llu",
                  (unsigned long long)stats.frame_count,
                  stats.avg_input_ms(),
@@ -1012,9 +1013,9 @@ struct SourceData {
         obs_source_output_video(source, &obs_frame);
 
         if (output_count == 1) {
-            blog(LOG_INFO, "[avolocam] First frame output: %ux%u", frame->width, frame->height);
+            ALOG(LOG_INFO, "First frame output: %ux%u", frame->width, frame->height);
         } else if (config.debug_mode && output_count % 300 == 0) {
-            blog(LOG_INFO, "[avolocam] Output frame #%d: %ux%u",
+            ALOG(LOG_DEBUG, "Output frame #%d: %ux%u",
                  output_count, frame->width, frame->height);
         }
     }
@@ -1054,7 +1055,7 @@ struct SourceData {
 
         pipeline.ws_client->send_command(json);
 
-        blog(LOG_INFO, "[avolocam] Tally sent: program=%s, preview=%s (ws=%s)",
+        ALOG(LOG_INFO, "Tally sent: program=%s, preview=%s (ws=%s)",
              is_program ? "true" : "false",
              is_preview ? "true" : "false",
              pipeline.ws_client->is_connected() ? "connected" : "disconnected");
@@ -1531,7 +1532,7 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     data->config.debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
     data->config.decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
 
-    blog(LOG_INFO, "[avolocam] Source created (decoder_type=%d, port=%d)",
+    ALOG(LOG_INFO, "Source created (decoder_type=%d, port=%d)",
          data->config.decoder_type.load(), data->config.camera_port.load());
     return data;
 }
@@ -1540,7 +1541,7 @@ static void avolocam_destroy(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
     delete src;
-    blog(LOG_INFO, "[avolocam] Source destroyed");
+    ALOG(LOG_INFO, "Source destroyed");
 }
 
 static void avolocam_update(void *data, obs_data_t *settings)
@@ -1556,7 +1557,7 @@ static void avolocam_update(void *data, obs_data_t *settings)
     // Note: Port is NOT from dropdown - it must be set manually to match Tauri assignment
     if (!camera_select.empty()) {
         new_ip = camera_select;
-        blog(LOG_INFO, "[avolocam] Selected camera from dropdown: %s (port from manual field: %d)",
+        ALOG(LOG_INFO, "Selected camera from dropdown: %s (port from manual field: %d)",
              new_ip.c_str(), new_port);
     }
 
@@ -1605,14 +1606,14 @@ static void avolocam_update(void *data, obs_data_t *settings)
 static void avolocam_activate(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    blog(LOG_INFO, "[avolocam] Source activated");
+    ALOG(LOG_INFO, "Source activated");
     src->start();
 }
 
 static void avolocam_deactivate(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
-    blog(LOG_INFO, "[avolocam] Source deactivated (keeping decoder running for fast switching)");
+    ALOG(LOG_INFO, "Source deactivated (keeping decoder running for fast switching)");
     // Don't stop the decoder here - keep it running for instant scene switching
     // The decoder will be stopped when the source is destroyed
 }
@@ -1621,14 +1622,14 @@ static void avolocam_show(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
     src->visible.store(true);
-    blog(LOG_INFO, "[avolocam] Source shown");
+    ALOG(LOG_INFO, "Source shown");
 }
 
 static void avolocam_hide(void *data)
 {
     auto *src = static_cast<SourceData *>(data);
     src->visible.store(false);
-    blog(LOG_INFO, "[avolocam] Source hidden");
+    ALOG(LOG_INFO, "Source hidden");
 }
 
 // Callback to auto-fill IP when camera is selected from dropdown
@@ -1801,7 +1802,7 @@ static void avolocam_video_tick(void *data, float seconds)
 
     // Lazy-init test pattern texture (on graphics thread)
     if (!src->test_pattern.created) {
-        blog(LOG_INFO, "[avolocam] Creating test pattern texture %ux%u (name='%s', ip='%s')",
+        ALOG(LOG_INFO, "Creating test pattern texture %ux%u (name='%s', ip='%s')",
              SourceData::TestPattern::WIDTH, SourceData::TestPattern::HEIGHT,
              cur_name.c_str(), ip_snapshot.c_str());
         auto pixels = generate_test_pattern_rgba(
@@ -1816,7 +1817,7 @@ static void avolocam_video_tick(void *data, float seconds)
         src->test_pattern.created = true;
         src->test_pattern.baked_ip = ip_snapshot;
         src->test_pattern.baked_name = cur_name;
-        blog(LOG_INFO, "[avolocam] Test pattern texture %s",
+        ALOG(LOG_INFO, "Test pattern texture %s",
              src->test_pattern.texture ? "created OK" : "FAILED");
     }
 
@@ -1839,7 +1840,7 @@ static void avolocam_video_tick(void *data, float seconds)
             if (src->gpu.obs_shared_texture) {
                 src->gpu.cached_shared_handle = h;
             } else {
-                blog(LOG_WARNING, "[avolocam] gs_texture_open_shared failed for handle %p", h);
+                ALOG(LOG_WARNING, "gs_texture_open_shared failed for handle %p", h);
             }
         }
     } else {
@@ -1922,12 +1923,12 @@ void avolocam_source_register(void)
         if (avolocam::g_discovery->start([](avolocam::DiscoveryEvent event, const avolocam::DiscoveredCamera& cam) {
             const char* event_str = (event == avolocam::DiscoveryEvent::Added) ? "discovered" :
                                     (event == avolocam::DiscoveryEvent::Updated) ? "updated" : "removed";
-            blog(LOG_INFO, "[avolocam] Camera %s: %s (%s:%d)",
+            ALOG(LOG_INFO, "Camera %s: %s (%s:%d)",
                  event_str, cam.alias.c_str(), cam.ip.c_str(), cam.flash_udp_port);
         })) {
-            blog(LOG_INFO, "[avolocam] mDNS discovery started");
+            ALOG(LOG_INFO, "mDNS discovery started");
         } else {
-            blog(LOG_WARNING, "[avolocam] Failed to start mDNS discovery");
+            ALOG(LOG_WARNING, "Failed to start mDNS discovery");
         }
     }
 
@@ -1954,5 +1955,5 @@ void avolocam_source_register(void)
     info.get_height = avolocam::avolocam_get_height;
 
     obs_register_source(&info);
-    blog(LOG_INFO, "[avolocam] Source type registered");
+    ALOG(LOG_INFO, "Source type registered");
 }

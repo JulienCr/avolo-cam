@@ -17,6 +17,7 @@
 #ifdef _WIN32
 
 #include <obs-module.h>
+#include "logging.h"
 #include <graphics/graphics.h>
 #include <media-io/video-io.h>
 #include <util/platform.h>
@@ -146,14 +147,14 @@ void TextureOutput::initialize(obs_source_t *source, bool prefer_zero_copy)
         ID3D11Device *obs_device = get_obs_d3d11_device();
         if (obs_device) {
             preferred_mode_ = OutputMode::GPU_ZERO_COPY;
-            blog(LOG_INFO, "[avolocam] D3D11 backend detected, GPU zero-copy enabled");
+            ALOG_TEX(LOG_INFO, "D3D11 backend detected, GPU zero-copy enabled");
         } else {
             preferred_mode_ = OutputMode::CPU_COPY;
-            blog(LOG_INFO, "[avolocam] D3D11 backend detected, but couldn't get device - using CPU copy");
+            ALOG_TEX(LOG_INFO, "D3D11 backend detected, but couldn't get device - using CPU copy");
         }
     } else {
         preferred_mode_ = OutputMode::CPU_COPY;
-        blog(LOG_INFO, "[avolocam] Using CPU copy output");
+        ALOG_TEX(LOG_INFO, "Using CPU copy output");
     }
 
     initialized_ = true;
@@ -207,7 +208,7 @@ ID3D11Texture2D *TextureOutput::get_or_open_shared_texture(ID3D11Device *obs_dev
         (void**)&opened);
 
     if (FAILED(hr) || !opened) {
-        blog(LOG_WARNING, "[avolocam] OpenSharedResource failed: 0x%08X", hr);
+        ALOG_TEX(LOG_WARNING, "OpenSharedResource failed: 0x%08X", hr);
         return nullptr;
     }
 
@@ -216,7 +217,7 @@ ID3D11Texture2D *TextureOutput::get_or_open_shared_texture(ID3D11Device *obs_dev
         if (!shared_cache_[i].opened_texture) {
             shared_cache_[i].shared_handle = shared_handle;
             shared_cache_[i].opened_texture = opened;
-            blog(LOG_DEBUG, "[avolocam] Cached shared texture in slot %zu", i);
+            ALOG_TEX(LOG_DEBUG, "Cached shared texture in slot %zu", i);
             return shared_cache_[i].opened_texture;
         }
     }
@@ -224,7 +225,7 @@ ID3D11Texture2D *TextureOutput::get_or_open_shared_texture(ID3D11Device *obs_dev
     // Cache full, replace slot 0 (simple LRU)
     shared_cache_[0].shared_handle = shared_handle;
     shared_cache_[0].opened_texture = opened;
-    blog(LOG_DEBUG, "[avolocam] Replaced shared texture cache slot 0");
+    ALOG_TEX(LOG_DEBUG, "Replaced shared texture cache slot 0");
     return shared_cache_[0].opened_texture;
 }
 
@@ -361,7 +362,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
 
     ConvertedFrame converted;
     if (!converter->convert(input, converted)) {
-        blog(LOG_WARNING, "[avolocam] GPU conversion failed");
+        ALOG_TEX(LOG_WARNING, "GPU conversion failed");
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
 
@@ -370,7 +371,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
 
     // Verify we have a valid shared handle
     if (!converted.shared_handle) {
-        blog(LOG_WARNING, "[avolocam] Converted texture doesn't have shared handle - falling back to CPU");
+        ALOG_TEX(LOG_WARNING, "Converted texture doesn't have shared handle - falling back to CPU");
         converter->release_frame(converted);
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
@@ -382,7 +383,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
     // Get OBS's D3D11 device
     ID3D11Device *obs_device = static_cast<ID3D11Device*>(gs_get_device_obj());
     if (!obs_device) {
-        blog(LOG_WARNING, "[avolocam] Failed to get OBS D3D11 device");
+        ALOG_TEX(LOG_WARNING, "Failed to get OBS D3D11 device");
         obs_leave_graphics();
         converter->release_frame(converted);
         return {false, OutputMode::GPU_ZERO_COPY, 0};
@@ -397,7 +398,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
         (void**)&shared_texture);
 
     if (FAILED(hr) || !shared_texture) {
-        blog(LOG_WARNING, "[avolocam] Failed to open shared texture on OBS device: 0x%08X", hr);
+        ALOG_TEX(LOG_WARNING, "Failed to open shared texture on OBS device: 0x%08X", hr);
         obs_leave_graphics();
         converter->release_frame(converted);
         return {false, OutputMode::GPU_ZERO_COPY, 0};
@@ -424,7 +425,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
         if (win_texture_) {
             win_texture_width_ = converted.width;
             win_texture_height_ = converted.height;
-            blog(LOG_INFO, "[avolocam] Created OBS output texture %ux%u for GPU path",
+            ALOG_TEX(LOG_INFO, "Created OBS output texture %ux%u for GPU path",
                  converted.width, converted.height);
         }
     }
@@ -504,12 +505,12 @@ OutputResult TextureOutput::prepare_gpu_frame(const DecodedFrame &frame)
 
     ConvertedFrame converted;
     if (!converter->convert(input, converted)) {
-        blog(LOG_WARNING, "[avolocam] GPU conversion failed");
+        ALOG_TEX(LOG_WARNING, "GPU conversion failed");
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
 
     if (!converted.shared_handle) {
-        blog(LOG_WARNING, "[avolocam] Converted texture has no shared handle");
+        ALOG_TEX(LOG_WARNING, "Converted texture has no shared handle");
         converter->release_frame(converted);
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
@@ -554,7 +555,7 @@ OutputResult TextureOutput::prepare_gpu_frame(const DecodedFrame &frame)
         if (win_texture_) {
             win_texture_width_ = converted.width;
             win_texture_height_ = converted.height;
-            blog(LOG_INFO, "[avolocam] Created GPU output texture %ux%u",
+            ALOG_TEX(LOG_INFO, "Created GPU output texture %ux%u",
                  converted.width, converted.height);
         }
     }
@@ -639,7 +640,7 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
     // Get OBS's D3D11 device
     ID3D11Device *obs_device = static_cast<ID3D11Device*>(gs_get_device_obj());
     if (!obs_device) {
-        blog(LOG_WARNING, "[avolocam] FFmpeg GPU: Failed to get OBS D3D11 device");
+        ALOG_TEX(LOG_WARNING, "FFmpeg GPU: Failed to get OBS D3D11 device");
         obs_leave_graphics();
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
@@ -648,7 +649,7 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
     ID3D11Texture2D *shared_texture = get_or_open_shared_texture(obs_device, shared_handle);
 
     if (!shared_texture) {
-        blog(LOG_WARNING, "[avolocam] FFmpeg GPU: Failed to open shared texture");
+        ALOG_TEX(LOG_WARNING, "FFmpeg GPU: Failed to open shared texture");
         obs_leave_graphics();
         return {false, OutputMode::GPU_ZERO_COPY, 0};
     }
@@ -680,14 +681,14 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
 
         HRESULT hr = obs_device->CreateTexture2D(&staging_desc, nullptr, &win_staging_texture_);
         if (FAILED(hr)) {
-            blog(LOG_ERROR, "[avolocam] FFmpeg GPU: Failed to create staging texture: 0x%08X", hr);
+            ALOG_TEX(LOG_ERROR, "FFmpeg GPU: Failed to create staging texture: 0x%08X", hr);
             obs_leave_graphics();
             return {false, OutputMode::GPU_ZERO_COPY, 0};
         }
 
         win_texture_width_ = tex_desc.Width;
         win_texture_height_ = tex_desc.Height;
-        blog(LOG_INFO, "[avolocam] FFmpeg GPU: Created staging texture %ux%u",
+        ALOG_TEX(LOG_INFO, "FFmpeg GPU: Created staging texture %ux%u",
              tex_desc.Width, tex_desc.Height);
     }
 
