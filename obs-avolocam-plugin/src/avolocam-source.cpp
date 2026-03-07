@@ -251,6 +251,9 @@ struct SourceData {
             jitter_copy == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
         depacketizer = std::make_unique<RtpDepacketizer>();
+        depacketizer->set_packet_loss_callback([this](int missing) {
+            if (sync_state) sync_state->on_packet_loss(missing);
+        });
         assembler = std::make_unique<AccessUnitAssembler>();
         sync_state = std::make_unique<SyncStateMachine>();
         timestamp_mapper = std::make_unique<TimestampMapper>();
@@ -809,6 +812,7 @@ struct SourceData {
         // Decode
         DecodedFrame frame;
         if (!decoder->decode(au.data.data(), au.data.size(), frame)) {
+            if (sync_state) sync_state->on_decode_error();
             frames_dropped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -866,11 +870,20 @@ struct SourceData {
 
                     // Release the converted frame back to pool (handle stays valid)
                     gpu_converter_->release_frame(converted);
+                    // Release IMFSample (MF decoder keeps texture alive via sample ref)
+                    if (frame.platform_handle) {
+                        static_cast<IUnknown*>(frame.platform_handle)->Release();
+                        frame.platform_handle = nullptr;
+                    }
                     return;
                 }
                 blog(LOG_WARNING, "[avolocam] GPU conversion failed, falling back to CPU");
             }
-            // Fall through to CPU path
+            // Fall through to CPU path — release IMFSample since GPU didn't consume it
+            if (frame.platform_handle) {
+                static_cast<IUnknown*>(frame.platform_handle)->Release();
+                frame.platform_handle = nullptr;
+            }
         }
 #endif
 

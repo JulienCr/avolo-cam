@@ -103,7 +103,7 @@ int UdpReceiver::receive(uint8_t *buffer, size_t max_size, int timeout_ms) {
     }
 
     // Wait for data with timeout
-    if (timeout_ms > 0) {
+    if (timeout_ms >= 0) {
 #ifdef _WIN32
         fd_set read_fds;
         FD_ZERO(&read_fds);
