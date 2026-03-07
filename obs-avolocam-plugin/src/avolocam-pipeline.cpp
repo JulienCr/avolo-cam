@@ -72,11 +72,13 @@ void SourceData::init_websocket(const std::string& ip, std::string token) {
             // Subscribe to frame_info channel (only OBS needs it)
             pipeline.ws_client->send_command(R"({"op":"subscribe","channels":["frame_info"]})");
 
-            // Invalidate cached tally state to force re-send on reconnect
+            // Invalidate cached tally state so tick_tally() will resend
+            // on the next poll cycle (~100ms). We must NOT call
+            // send_tally_state() here — it would send on the WebSocket
+            // from within a connection callback context.
             tally_program.store(!tally_program.load());
             tally_preview.store(!tally_preview.load());
-            send_tally_state();
-            ALOG(LOG_INFO, "WS connected: subscribed to frame_info, tally re-sent");
+            ALOG(LOG_INFO, "WS connected: subscribed to frame_info, tally invalidated for resend");
         }
     });
 
@@ -170,10 +172,10 @@ Result<void> SourceData::start() {
         return {SourceError::NO_CAMERA_IP};
     }
 
-    // Check port availability before starting
+    // Reserve port atomically (insert returns false if already present)
     {
         std::lock_guard<std::mutex> lock(g_ports_mutex);
-        if (g_bound_ports.count(port_copy)) {
+        if (!g_bound_ports.insert(port_copy).second) {
             ALOG(LOG_ERROR, "Port %d is already in use by another AvoCam source. "
                  "Each source must use a unique UDP port.", port_copy);
             return {SourceError::PORT_IN_USE};

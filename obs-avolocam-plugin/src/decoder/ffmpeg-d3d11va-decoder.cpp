@@ -656,19 +656,21 @@ bool FFmpegD3D11VADecoder::decode(const uint8_t *data, size_t size, DecodedFrame
     }
 
 cpu_fallback:
-    // CPU fallback: av_hwframe_transfer_data (slow but reliable)
-    timing_stats_.lock_buffer_ns = 0;
-    uint64_t fallback_start = get_time_ns();
+    {
+        // CPU fallback: av_hwframe_transfer_data (slow but reliable)
+        timing_stats_.lock_buffer_ns = 0;
+        uint64_t fallback_start = get_time_ns();
 
-    bool success = decode_software_fallback(frame_, out);
+        bool success = decode_software_fallback(frame_, out);
 
-    timing_stats_.memcpy_ns = get_time_ns() - fallback_start;
-    timing_stats_.total_decode_ns = get_time_ns() - start_time;
-    timing_stats_.accumulate();
-    timing_stats_.reset_per_frame();
+        timing_stats_.memcpy_ns = get_time_ns() - fallback_start;
+        timing_stats_.total_decode_ns = get_time_ns() - start_time;
+        timing_stats_.accumulate();
+        timing_stats_.reset_per_frame();
 
-    av_frame_unref(frame_);
-    return success;
+        av_frame_unref(frame_);
+        return success;
+    }
 }
 
 void FFmpegD3D11VADecoder::flush()

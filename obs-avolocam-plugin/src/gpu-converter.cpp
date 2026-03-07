@@ -504,6 +504,7 @@ bool GPUConverter::convert(const GPUDecodedFrame &input, ConvertedFrame &output)
     UINT groups_x = (input.width + 15) / 16;
     UINT groups_y = (input.height + 15) / 16;
     context_->Dispatch(groups_x, groups_y, 1);
+    context_->Flush();
 
     // Unbind resources
     ID3D11ShaderResourceView *null_srvs[] = { nullptr, nullptr };

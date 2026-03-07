@@ -630,10 +630,16 @@ bool MFDecoder::process_output(DecodedFrame &out)
     hr = decoder_->ProcessOutput(0, 1, &output, &status);
     uint64_t process_time = get_time_ns() - process_start;
 
-    // ProcessOutput may return a different sample than what we provided
-    // Wrap it in a ComPtr for automatic cleanup (Set = take ownership without AddRef)
+    // ProcessOutput may return a different sample than what we provided.
+    // Use .Set() to take ownership without AddRef (ProcessOutput already AddRef'd).
     ComPtr<IMFSample> result_sample;
-    result_sample.Set(output.pSample);
+    if (output.pSample != output_sample) {
+        // Decoder provided its own sample — take ownership
+        result_sample.Set(output.pSample);
+    } else {
+        // Same sample we provided — output_sample already owns it
+        result_sample = std::move(output_sample);
+    }
 
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
         return false;

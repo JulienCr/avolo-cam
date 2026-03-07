@@ -144,6 +144,7 @@ bool WebSocketClient::connect(const std::string &url, const std::string &auth_to
  */
 bool WebSocketClient::do_connect_socket()
 {
+    disconnecting_ = false;
     set_state(WSState::CONNECTING);
 
     // Parse URL
@@ -266,6 +267,9 @@ void WebSocketClient::disconnect()
 
 void WebSocketClient::do_disconnect()
 {
+    if (disconnecting_.exchange(true))
+        return;
+
 #ifdef _WIN32
     if (socket_ != INVALID_SOCKET) {
         // Send close frame
@@ -284,6 +288,7 @@ void WebSocketClient::do_disconnect()
 #endif
 
     set_state(WSState::DISCONNECTED);
+    disconnecting_ = false;
 }
 
 bool WebSocketClient::is_connected() const

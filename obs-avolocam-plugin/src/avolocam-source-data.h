@@ -110,7 +110,7 @@ struct SourceData {
 
     // --- DecodeQueue: Async decode pipeline + double buffering ---
     struct DecodeQueue {
-        size_t max_size = 4;
+        std::atomic<size_t> max_size{4};
         std::deque<AccessUnit> queue;
         std::mutex mutex;
         std::condition_variable cv;

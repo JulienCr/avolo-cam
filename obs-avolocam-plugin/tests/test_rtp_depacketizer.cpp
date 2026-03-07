@@ -300,14 +300,14 @@ TEST_F(RtpDepacketizerTest, MultiSsrc_IndependentReassembly) {
     // SSRC A: start fragment
     auto pktA1 = build_rtp_packet(10, 9000, 0xAAAA, false,
                                    make_fua_start(nri, type, {0x11}));
-    // SSRC B: start fragment
-    auto pktB1 = build_rtp_packet(20, 18000, 0xBBBB, false,
+    // SSRC B: start fragment (same timestamp as A to verify SSRC-based discrimination)
+    auto pktB1 = build_rtp_packet(20, 9000, 0xBBBB, false,
                                    make_fua_start(nri, type, {0x33}));
     // SSRC A: end fragment
     auto pktA2 = build_rtp_packet(11, 9000, 0xAAAA, true,
                                    make_fua_end(nri, type, {0x22}));
     // SSRC B: end fragment
-    auto pktB2 = build_rtp_packet(21, 18000, 0xBBBB, true,
+    auto pktB2 = build_rtp_packet(21, 9000, 0xBBBB, true,
                                    make_fua_end(nri, type, {0x44}));
 
     EXPECT_TRUE(depak.process(pktA1.data(), pktA1.size()).empty());
@@ -319,7 +319,7 @@ TEST_F(RtpDepacketizerTest, MultiSsrc_IndependentReassembly) {
 
     auto rB = depak.process(pktB2.data(), pktB2.size());
     ASSERT_EQ(rB.size(), 1u);
-    EXPECT_EQ(rB[0].rtp_timestamp, 18000u);
+    EXPECT_EQ(rB[0].rtp_timestamp, 9000u);
 }
 
 // --- Reset and Stats ---

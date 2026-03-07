@@ -338,7 +338,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
     // 3. Get shared handle from RGBA texture (created with D3D11_RESOURCE_MISC_SHARED)
     // 4. Open shared texture on OBS's D3D11 device via OpenSharedResource
     // 5. Copy from shared texture to OBS texture (now same-device copy)
-    // 6. Render using OBS graphics API
+    // 6. Store texture for video_render to draw on the render thread
     //
     // IMPORTANT: CopyResource does NOT work between different D3D11 devices.
     // We must use DXGI shared handles to access the texture from OBS's device.
@@ -449,25 +449,8 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
                 // - obs_texture: created on OBS device
                 obs_ctx->CopyResource(obs_texture, shared_texture);
 
-                // Draw the texture as a source
-                gs_effect_t *effect = gs_get_effect();
-                if (effect) {
-                    gs_technique_t *tech = gs_effect_get_technique(effect, "Draw");
-                    if (tech) {
-                        gs_technique_begin(tech);
-                        gs_technique_begin_pass(tech, 0);
-
-                        gs_effect_set_texture(
-                            gs_effect_get_param_by_name(effect, "image"),
-                            win_texture_);
-
-                        gs_draw_sprite(win_texture_, 0, converted.width, converted.height);
-
-                        gs_technique_end_pass(tech);
-                        gs_technique_end(tech);
-                    }
-                }
-
+                // Store for video_render to draw later (on the render thread)
+                current_output_texture_ = win_texture_;
                 output_success = true;
             }
         }

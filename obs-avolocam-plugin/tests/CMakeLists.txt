@@ -29,6 +29,9 @@ target_link_libraries(avocam-tests PRIVATE
 
 target_include_directories(avocam-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${OBS_LIBOBS_DIR}
+    ${OBS_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}
 )
 
 include(GoogleTest)

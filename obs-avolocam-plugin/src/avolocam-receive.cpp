@@ -17,15 +17,16 @@ void SourceData::receive_loop() {
     if (!bind_res) {
         ALOG(LOG_ERROR, "Failed to bind to port %d: %s",
              port, source_error_str(bind_res.error));
+        // Release the port reservation made in start()
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_bound_ports.erase(port);
+        }
         bind_result_.store(-1);
         return;
     }
 
-    // Register port in global registry
-    {
-        std::lock_guard<std::mutex> lock(g_ports_mutex);
-        g_bound_ports.insert(port);
-    }
+    // Port was already reserved in start() via atomic insert
 
     bind_result_.store(1);  // Signal success to start()
 
@@ -39,7 +40,7 @@ void SourceData::receive_loop() {
     ALOG(LOG_INFO, "Listening on UDP port %d (rcvbuf=%dKB)",
          port, actual_rcvbuf / 1024);
 
-    std::vector<uint8_t> packet_buffer(2048);
+    std::vector<uint8_t> packet_buffer(UDP_PACKET_BUFFER_SIZE);
 
     while (running.load()) {
         // Receive UDP packet with timeout

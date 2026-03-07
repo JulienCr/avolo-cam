@@ -201,7 +201,7 @@ TEST_F(PipelineIntegrationTest, PacketLoss_FuAMiddleFragment) {
     // Assembler may or may not produce an AU depending on implementation
     // But if it does, it should not crash
     // The depacketizer tracks dropped fragments
-    EXPECT_GE(depack_.fragments_dropped(), 0u);
+    EXPECT_GT(depack_.fragments_dropped(), 0u);
 }
 
 // --- Out-of-order packets ---
