@@ -217,47 +217,14 @@ struct SourceData {
         }
     }
 
-    void start() {
-        if (running.load()) return;
-
-        // Snapshot config under lock
-        std::string ip_copy, token_copy;
-        {
-            std::lock_guard<std::mutex> lock(config.mutex);
-            ip_copy = config.camera_ip;
-            token_copy = config.auth_token;
-        }
-        uint16_t port_copy = config.camera_port.load();
-        int jitter_copy = config.jitter_mode.load();
-        bool zero_copy = config.prefer_zero_copy.load();
-        int dec_type = config.decoder_type.load();
-
-        if (ip_copy.empty()) {
-            blog(LOG_WARNING, "[avolocam] No camera IP configured");
-            return;
-        }
-
-        // Check port availability before starting
-        {
-            std::lock_guard<std::mutex> lock(g_ports_mutex);
-            if (g_bound_ports.count(port_copy)) {
-                blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
-                     "Each source must use a unique UDP port.", port_copy);
-                return;
-            }
-        }
-
-        blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
-             ip_copy.c_str(), port_copy);
-
-        // Derive flash mode from jitter setting
-        config.flash_mode.store(jitter_copy == JITTER_ULTRA_LOW);
-
-        // Initialize components
+    /**
+     * Create all pipeline components (receiver, jitter, decoder, etc).
+     */
+    void init_pipeline(const std::string& ip, int jitter_mode, bool zero_copy, int dec_type) {
         pipeline.receiver = std::make_unique<UdpReceiver>();
-        pipeline.receiver->set_expected_source(ip_copy);  // Filter packets to only accept from this camera
+        pipeline.receiver->set_expected_source(ip);  // Filter packets to only accept from this camera
         pipeline.jitter_buffer = std::make_unique<JitterBuffer>(
-            jitter_copy == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
+            jitter_mode == JITTER_ULTRA_LOW ? 8 : 50  // max_delay_ms
         );
         pipeline.depacketizer = std::make_unique<RtpDepacketizer>();
         pipeline.depacketizer->set_packet_loss_callback([this](int missing) {
@@ -287,14 +254,12 @@ struct SourceData {
         // Note: GPU output will be enabled after decoder initialization in decode_frame_async
         // because supports_gpu_output() requires the D3D device to be created first
         gpu.use_gpu_decode.store(zero_copy);  // Store preference, will verify after init
+    }
 
-        // Flash mode: minimal decode queue for lowest latency
-        if (config.flash_mode.load()) {
-            decode_queue.max_size = 1;
-            blog(LOG_INFO, "[avolocam] Flash mode: decode queue = 1, jitter bypass ON");
-        }
-
-        // Initialize WebSocket client
+    /**
+     * Set up WebSocket client with callbacks and launch background connect thread.
+     */
+    void init_websocket(const std::string& ip, std::string token) {
         pipeline.ws_client = std::make_unique<WebSocketClient>();
 
         // Set up WebSocket callbacks
@@ -338,15 +303,21 @@ struct SourceData {
         // Blocking here freezes ALL video_tick/video_render for every source.
         // Thread is stored (not detached) so stop() can join it safely.
         {
-            std::string ws_url_str = "ws://" + ip_copy + ":"
+            std::string ws_url_str = "ws://" + ip + ":"
                                      + std::to_string(DEFAULT_WS_PORT) + "/ws";
             auto ws = pipeline.ws_client.get();
             ws_connect_thread_ = std::thread([ws, url = std::move(ws_url_str),
-                         token = std::move(token_copy)]() {
+                         token = std::move(token)]() {
                 ws->connect(url, token);
             });
         }
+    }
 
+    /**
+     * Reset decode queue, spawn threads, wait for bind result.
+     * Cleans up everything on bind failure.
+     */
+    void start_threads(uint16_t port) {
         // Reset async pipeline state
         {
             std::lock_guard<std::mutex> lock(decode_queue.mutex);
@@ -372,13 +343,10 @@ struct SourceData {
         }
 
         if (bind_result_.load() != 1) {
-            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", port_copy);
+            blog(LOG_ERROR, "[avolocam] Bind to port %d failed — stopping source", port);
             running.store(false);
 
-            // Two-phase WS shutdown (see stop() comment for rationale)
-            if (pipeline.ws_client) pipeline.ws_client->disconnect();
-            if (ws_connect_thread_.joinable()) ws_connect_thread_.join();
-            if (pipeline.ws_client) pipeline.ws_client->disconnect();
+            shutdown_websocket();
 
             {
                 std::lock_guard<std::mutex> lock(decode_queue.mutex);
@@ -388,28 +356,60 @@ struct SourceData {
             if (decode_thread.joinable()) decode_thread.join();
             if (receive_thread.joinable()) receive_thread.join();
 
-            pipeline.receiver.reset();
-            pipeline.jitter_buffer.reset();
-            pipeline.depacketizer.reset();
-            pipeline.assembler.reset();
-            pipeline.sync_state.reset();
-            pipeline.decoder.reset();
-            pipeline.timestamp_mapper.reset();
-            pipeline.texture_output.reset();
-            pipeline.ws_client.reset();
+            reset_pipeline();
         }
     }
 
-    void stop() {
-        if (!running.load()) return;
+    void start() {
+        if (running.load()) return;
 
-        blog(LOG_INFO, "[avolocam] Stopping receiver");
-        running.store(false);
+        // Snapshot config under lock
+        std::string ip_copy, token_copy;
+        {
+            std::lock_guard<std::mutex> lock(config.mutex);
+            ip_copy = config.camera_ip;
+            token_copy = config.auth_token;
+        }
+        uint16_t port_copy = config.camera_port.load();
+        int jitter_copy = config.jitter_mode.load();
+        bool zero_copy = config.prefer_zero_copy.load();
+        int dec_type = config.decoder_type.load();
 
-        // Shut down WebSocket: two-phase disconnect.
-        // Phase 1: close the socket to unblock ::connect() in ws_connect_thread_.
-        // Phase 2 (after join): disconnect again because connect() may have
-        // succeeded between phase 1 and join, re-creating socket + recv_thread_.
+        if (ip_copy.empty()) {
+            blog(LOG_WARNING, "[avolocam] No camera IP configured");
+            return;
+        }
+
+        // Check port availability before starting
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            if (g_bound_ports.count(port_copy)) {
+                blog(LOG_ERROR, "[avolocam] Port %d is already in use by another AvoCam source. "
+                     "Each source must use a unique UDP port.", port_copy);
+                return;
+            }
+        }
+
+        blog(LOG_INFO, "[avolocam] Starting receiver for %s:%d",
+             ip_copy.c_str(), port_copy);
+
+        // Derive flash mode from jitter setting
+        config.flash_mode.store(jitter_copy == JITTER_ULTRA_LOW);
+
+        init_pipeline(ip_copy, jitter_copy, zero_copy, dec_type);
+        if (!pipeline.decoder) return;  // init_pipeline logged the error
+
+        init_websocket(ip_copy, std::move(token_copy));
+        start_threads(port_copy);
+    }
+
+    /**
+     * Two-phase WebSocket shutdown.
+     * Phase 1: close socket to unblock ::connect() in ws_connect_thread_.
+     * Phase 2 (after join): disconnect again because connect() may have
+     * succeeded between phase 1 and join, re-creating socket + recv_thread_.
+     */
+    void shutdown_websocket() {
         if (pipeline.ws_client) {
             pipeline.ws_client->disconnect();
         }
@@ -419,26 +419,12 @@ struct SourceData {
         if (pipeline.ws_client) {
             pipeline.ws_client->disconnect();
         }
+    }
 
-        // Note: port unregistration happens in receive_loop() exit, AFTER the
-        // socket is actually closed, to avoid a TOCTOU window where another
-        // source sees the port as free while the socket is still bound.
-
-        // Wake up decode thread if waiting
-        {
-            std::lock_guard<std::mutex> lock(decode_queue.mutex);
-            decode_queue.cv.notify_all();
-        }
-
-        if (decode_thread.joinable()) {
-            decode_thread.join();
-        }
-
-        if (receive_thread.joinable()) {
-            receive_thread.join();
-        }
-
-        // Release GPU rendering resources
+    /**
+     * Release GPU rendering resources (converter, shared textures).
+     */
+    void cleanup_gpu_state() {
 #ifdef _WIN32
         gpu.converter.reset();
 #endif
@@ -458,7 +444,12 @@ struct SourceData {
             obs_leave_graphics();
             gpu.cpu_fallback_texture = nullptr;
         }
+    }
 
+    /**
+     * Destroy all pipeline components.
+     */
+    void reset_pipeline() {
         pipeline.receiver.reset();
         pipeline.jitter_buffer.reset();
         pipeline.depacketizer.reset();
@@ -468,6 +459,36 @@ struct SourceData {
         pipeline.timestamp_mapper.reset();
         pipeline.texture_output.reset();
         pipeline.ws_client.reset();
+    }
+
+    void stop() {
+        if (!running.load()) return;
+
+        blog(LOG_INFO, "[avolocam] Stopping receiver");
+        running.store(false);
+
+        shutdown_websocket();
+
+        // Note: port unregistration happens in receive_loop() exit, AFTER the
+        // socket is actually closed, to avoid a TOCTOU window where another
+        // source sees the port as free while the socket is still bound.
+
+        // Wake up decode thread if waiting
+        {
+            std::lock_guard<std::mutex> lock(decode_queue.mutex);
+            decode_queue.cv.notify_all();
+        }
+
+        if (decode_thread.joinable()) {
+            decode_thread.join();
+        }
+
+        if (receive_thread.joinable()) {
+            receive_thread.join();
+        }
+
+        cleanup_gpu_state();
+        reset_pipeline();
 
         // Clear decode queue
         {
@@ -542,14 +563,7 @@ struct SourceData {
 
             // Unconditional tally heartbeat every 2s (guards against lost messages)
             if (now - last_tally_heartbeat >= TALLY_HEARTBEAT_NS) {
-                if (pipeline.ws_client && pipeline.ws_client->is_connected() && source) {
-                    char json[128];
-                    snprintf(json, sizeof(json),
-                             R"({"op":"tally","program":%s,"preview":%s})",
-                             tally_program.load() ? "true" : "false",
-                             tally_preview.load() ? "true" : "false");
-                    pipeline.ws_client->send_command(json);
-                }
+                send_tally_heartbeat();
                 last_tally_heartbeat = now;
             }
 
@@ -745,160 +759,143 @@ struct SourceData {
     }
 
     /**
-     * Decode a frame and store in latest_frame_ (async version)
+     * Initialize decoder on first access unit with SPS/PPS.
+     * Returns true if decoder is ready, false if still uninitialized.
      */
-    void decode_frame_async(const AccessUnit& au) {
-        au_count++;
+    bool init_decoder(const AccessUnit& au) {
+        if (pipeline.decoder->is_initialized())
+            return true;
 
-        if (!pipeline.decoder) {
-            frames_dropped.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-
-        // Log decode timing stats every 300 frames
-        if (config.debug_mode && au_count % 300 == 0 && pipeline.decoder->is_initialized()) {
-            const auto& stats = pipeline.decoder->get_timing_stats();
-            uint64_t queue_drops = decode_queue_drops.load();
-            blog(LOG_INFO, "[avolocam] Decode timing (avg over %llu frames): "
-                 "input=%.2fms output=%.2fms lock=%.2fms copy=%.2fms total=%.2fms | queue_drops=%llu",
-                 (unsigned long long)stats.frame_count,
-                 stats.avg_input_ms(),
-                 stats.avg_output_ms(),
-                 stats.avg_lock_ms(),
-                 stats.avg_memcpy_ms(),
-                 stats.avg_total_ms(),
-                 (unsigned long long)queue_drops);
-        }
-
-        // Initialize decoder if needed
-        if (!pipeline.decoder->is_initialized()) {
-            if (au.has_sps && au.has_pps) {
-                std::vector<uint8_t> sps, pps;
-                extract_parameter_sets(au.data, sps, pps);
-                if (!sps.empty() && !pps.empty()) {
-                    if (pipeline.decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
-                        // Enable GPU output if decoder supports it AND
-                        // exposes its D3D device (needed for GPUConverter NV12→RGBA).
-                        // MF decoder exposes a D3D device but currently uses the CPU
-                        // conversion path due to GPUConverter interop constraints.
-                        // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
-                        if (config.prefer_zero_copy.load() && pipeline.decoder->supports_gpu_output()
-                            && pipeline.decoder->get_d3d_device()) {
-                            pipeline.decoder->set_gpu_output(true);
-                            gpu.use_gpu_decode.store(true);
-                            blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
-                        } else {
-                            gpu.use_gpu_decode.store(false);
-                        }
-
-                        // Set decode queue size based on mode and decoder type:
-                        // Flash mode: always 1 (minimum latency)
-                        // Hardware decoders are fast → small queue (4)
-                        // Software fallback is slower → larger queue (6) to absorb stalls
-                        if (config.flash_mode.load()) {
-                            decode_queue.max_size = 1;
-                            blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
-                                 "flash mode: decode queue size = 1",
-                                 pipeline.decoder->is_hardware() ? "hardware" : "software");
-                        } else if (pipeline.decoder->is_hardware()) {
-                            decode_queue.max_size = 4;
-                            blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
-                                 "decode queue size = 4");
-                        } else {
-                            decode_queue.max_size = 6;
-                            blog(LOG_INFO, "[avolocam] Decoder initialized (software fallback), "
-                                 "decode queue size = 6");
-                        }
-                    }
-                }
-            }
-            if (!pipeline.decoder->is_initialized()) {
-                frames_dropped.fetch_add(1, std::memory_order_relaxed);
-                return;
-            }
-        }
-
-        // Decode
-        DecodedFrame frame;
-        if (!pipeline.decoder->decode(au.data.data(), au.data.size(), frame)) {
-            if (pipeline.sync_state) pipeline.sync_state->on_decode_error();
-            frames_dropped.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-
-        frames_decoded.fetch_add(1, std::memory_order_relaxed);
-
-        // GPU path: use shared RGBA texture handle for zero-copy CUSTOM_DRAW
-#ifdef _WIN32
-        if (frame.has_gpu_texture && frame.gpu_texture && gpu.use_gpu_decode.load()) {
-            // Initialize GPUConverter once with decoder's D3D11 device
-            if (!gpu.converter_initialized && pipeline.decoder) {
-                void *dev = pipeline.decoder->get_d3d_device();
-                void *ctx = pipeline.decoder->get_d3d_context();
-                if (dev && ctx) {
-                    gpu.converter = std::make_unique<GPUConverter>();
-                    if (gpu.converter->initialize(
-                            static_cast<ID3D11Device*>(dev),
-                            static_cast<ID3D11DeviceContext*>(ctx))) {
-                        gpu.converter_initialized = true;
-                        blog(LOG_INFO, "[avolocam] GPUConverter initialized for CUSTOM_DRAW path");
+        if (au.has_sps && au.has_pps) {
+            std::vector<uint8_t> sps, pps;
+            extract_parameter_sets(au.data, sps, pps);
+            if (!sps.empty() && !pps.empty()) {
+                if (pipeline.decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
+                    // Enable GPU output if decoder supports it AND
+                    // exposes its D3D device (needed for GPUConverter NV12→RGBA).
+                    // MF decoder exposes a D3D device but currently uses the CPU
+                    // conversion path due to GPUConverter interop constraints.
+                    // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
+                    if (config.prefer_zero_copy.load() && pipeline.decoder->supports_gpu_output()
+                        && pipeline.decoder->get_d3d_device()) {
+                        pipeline.decoder->set_gpu_output(true);
+                        gpu.use_gpu_decode.store(true);
+                        blog(LOG_INFO, "[avolocam] GPU decode enabled (CUSTOM_DRAW path)");
                     } else {
-                        gpu.converter.reset();
-                        blog(LOG_WARNING, "[avolocam] GPUConverter init failed, using CPU path");
+                        gpu.use_gpu_decode.store(false);
+                    }
+
+                    // Set decode queue size based on mode and decoder type:
+                    // Flash mode: always 1 (minimum latency)
+                    // Hardware decoders are fast → small queue (4)
+                    // Software fallback is slower → larger queue (6) to absorb stalls
+                    if (config.flash_mode.load()) {
+                        decode_queue.max_size = 1;
+                        blog(LOG_INFO, "[avolocam] Decoder initialized (%s), "
+                             "flash mode: decode queue size = 1",
+                             pipeline.decoder->is_hardware() ? "hardware" : "software");
+                    } else if (pipeline.decoder->is_hardware()) {
+                        decode_queue.max_size = 4;
+                        blog(LOG_INFO, "[avolocam] Decoder initialized (hardware), "
+                             "decode queue size = 4");
+                    } else {
+                        decode_queue.max_size = 6;
+                        blog(LOG_INFO, "[avolocam] Decoder initialized (software fallback), "
+                             "decode queue size = 6");
                     }
                 }
-            }
-
-            // Convert NV12 shared texture → RGBA shared texture via GPUConverter
-            if (gpu.converter_initialized && gpu.converter) {
-                GPUDecodedFrame gpu_input;
-                gpu_input.texture = static_cast<ID3D11Texture2D*>(frame.gpu_texture);
-                gpu_input.subresource = 0;
-                gpu_input.width = frame.width;
-                gpu_input.height = frame.height;
-                gpu_input.pts = 0;
-
-                ConvertedFrame converted;
-                if (gpu.converter->convert(gpu_input, converted)) {
-                    // Flush decoder device to ensure GPU commands are submitted
-                    auto *ctx = static_cast<ID3D11DeviceContext*>(pipeline.decoder->get_d3d_context());
-                    if (ctx) ctx->Flush();
-
-                    // Store dimensions first, then handle with release so
-                    // the render thread's acquire load sees consistent values.
-                    gpu.texture_width.store(frame.width, std::memory_order_relaxed);
-                    gpu.texture_height.store(frame.height, std::memory_order_relaxed);
-                    gpu.latest_shared_handle.store(converted.shared_handle, std::memory_order_release);
-                    gpu.use_gpu_render.store(true);
-
-                    output_count++;
-                    if (output_count == 1) {
-                        blog(LOG_INFO, "[avolocam] First GPU frame (CUSTOM_DRAW): %ux%u, handle=%p",
-                             frame.width, frame.height, converted.shared_handle);
-                    }
-
-                    // Release the converted frame back to pool (handle stays valid)
-                    gpu.converter->release_frame(converted);
-                    // Release IMFSample (MF decoder keeps texture alive via sample ref)
-                    if (frame.platform_handle) {
-                        ComPtr<IUnknown> prevent_leak;
-                        prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
-                        frame.platform_handle = nullptr;
-                    }
-                    return;
-                }
-                blog(LOG_WARNING, "[avolocam] GPU conversion failed, falling back to CPU");
-            }
-            // Fall through to CPU path — release IMFSample since GPU didn't consume it
-            if (frame.platform_handle) {
-                ComPtr<IUnknown> prevent_leak;
-                prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
-                frame.platform_handle = nullptr;
             }
         }
+
+        if (!pipeline.decoder->is_initialized()) {
+            frames_dropped.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Attempt GPU zero-copy decode path (NV12 → RGBA shared texture).
+     * Returns true if GPU consumed the frame, false to fall through to CPU.
+     */
+#ifdef _WIN32
+    bool decode_gpu_frame(DecodedFrame& frame) {
+        if (!(frame.has_gpu_texture && frame.gpu_texture && gpu.use_gpu_decode.load()))
+            return false;
+
+        // Initialize GPUConverter once with decoder's D3D11 device
+        if (!gpu.converter_initialized && pipeline.decoder) {
+            void *dev = pipeline.decoder->get_d3d_device();
+            void *ctx = pipeline.decoder->get_d3d_context();
+            if (dev && ctx) {
+                gpu.converter = std::make_unique<GPUConverter>();
+                if (gpu.converter->initialize(
+                        static_cast<ID3D11Device*>(dev),
+                        static_cast<ID3D11DeviceContext*>(ctx))) {
+                    gpu.converter_initialized = true;
+                    blog(LOG_INFO, "[avolocam] GPUConverter initialized for CUSTOM_DRAW path");
+                } else {
+                    gpu.converter.reset();
+                    blog(LOG_WARNING, "[avolocam] GPUConverter init failed, using CPU path");
+                }
+            }
+        }
+
+        // Convert NV12 shared texture → RGBA shared texture via GPUConverter
+        if (gpu.converter_initialized && gpu.converter) {
+            GPUDecodedFrame gpu_input;
+            gpu_input.texture = static_cast<ID3D11Texture2D*>(frame.gpu_texture);
+            gpu_input.subresource = 0;
+            gpu_input.width = frame.width;
+            gpu_input.height = frame.height;
+            gpu_input.pts = 0;
+
+            ConvertedFrame converted;
+            if (gpu.converter->convert(gpu_input, converted)) {
+                // Flush decoder device to ensure GPU commands are submitted
+                auto *ctx = static_cast<ID3D11DeviceContext*>(pipeline.decoder->get_d3d_context());
+                if (ctx) ctx->Flush();
+
+                // Store dimensions first, then handle with release so
+                // the render thread's acquire load sees consistent values.
+                gpu.texture_width.store(frame.width, std::memory_order_relaxed);
+                gpu.texture_height.store(frame.height, std::memory_order_relaxed);
+                gpu.latest_shared_handle.store(converted.shared_handle, std::memory_order_release);
+                gpu.use_gpu_render.store(true);
+
+                output_count++;
+                if (output_count == 1) {
+                    blog(LOG_INFO, "[avolocam] First GPU frame (CUSTOM_DRAW): %ux%u, handle=%p",
+                         frame.width, frame.height, converted.shared_handle);
+                }
+
+                // Release the converted frame back to pool (handle stays valid)
+                gpu.converter->release_frame(converted);
+                // Release IMFSample (MF decoder keeps texture alive via sample ref)
+                if (frame.platform_handle) {
+                    ComPtr<IUnknown> prevent_leak;
+                    prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
+                    frame.platform_handle = nullptr;
+                }
+                return true;
+            }
+            blog(LOG_WARNING, "[avolocam] GPU conversion failed, falling back to CPU");
+        }
+
+        // Fall through to CPU path — release IMFSample since GPU didn't consume it
+        if (frame.platform_handle) {
+            ComPtr<IUnknown> prevent_leak;
+            prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
+            frame.platform_handle = nullptr;
+        }
+        return false;
+    }
 #endif
 
-        // CPU path - existing code
+    /**
+     * Store decoded frame in double buffer and output to OBS (CPU path).
+     */
+    void store_cpu_frame(const DecodedFrame& frame) {
         if (!frame.y_plane) {
             frames_dropped.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -934,6 +931,53 @@ struct SourceData {
 
         // Also output immediately (for async video source compatibility)
         output_latest_frame();
+    }
+
+    /**
+     * Decode a frame and store in latest_frame_ (async version)
+     */
+    void decode_frame_async(const AccessUnit& au) {
+        au_count++;
+
+        if (!pipeline.decoder) {
+            frames_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        // Log decode timing stats every 300 frames
+        if (config.debug_mode && au_count % 300 == 0 && pipeline.decoder->is_initialized()) {
+            const auto& stats = pipeline.decoder->get_timing_stats();
+            uint64_t queue_drops = decode_queue_drops.load();
+            blog(LOG_INFO, "[avolocam] Decode timing (avg over %llu frames): "
+                 "input=%.2fms output=%.2fms lock=%.2fms copy=%.2fms total=%.2fms | queue_drops=%llu",
+                 (unsigned long long)stats.frame_count,
+                 stats.avg_input_ms(),
+                 stats.avg_output_ms(),
+                 stats.avg_lock_ms(),
+                 stats.avg_memcpy_ms(),
+                 stats.avg_total_ms(),
+                 (unsigned long long)queue_drops);
+        }
+
+        if (!init_decoder(au))
+            return;
+
+        // Decode
+        DecodedFrame frame;
+        if (!pipeline.decoder->decode(au.data.data(), au.data.size(), frame)) {
+            if (pipeline.sync_state) pipeline.sync_state->on_decode_error();
+            frames_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        frames_decoded.fetch_add(1, std::memory_order_relaxed);
+
+#ifdef _WIN32
+        if (decode_gpu_frame(frame))
+            return;
+#endif
+
+        store_cpu_frame(frame);
     }
 
     /**
@@ -1014,6 +1058,20 @@ struct SourceData {
              is_program ? "true" : "false",
              is_preview ? "true" : "false",
              pipeline.ws_client->is_connected() ? "connected" : "disconnected");
+    }
+
+    // Unconditional tally re-send (guards against lost WebSocket messages).
+    // Unlike send_tally_state() which only sends on change, this always sends.
+    void send_tally_heartbeat() {
+        if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
+        if (!source) return;
+
+        char json[128];
+        snprintf(json, sizeof(json),
+                 R"({"op":"tally","program":%s,"preview":%s})",
+                 tally_program.load() ? "true" : "false",
+                 tally_preview.load() ? "true" : "false");
+        pipeline.ws_client->send_command(json);
     }
 
     // Extract SPS and PPS from Annex B formatted data
