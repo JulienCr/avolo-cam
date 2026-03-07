@@ -3,11 +3,12 @@
  *
  * Receives H.264 video over UDP/RTP from iOS devices running AvoCam
  * with hardware-accelerated decoding on macOS (VideoToolbox) and
- * Windows (Media Foundation).
+ * Windows (FFmpeg D3D11VA).
  */
 
 #include <obs-module.h>
 #include "avolocam-source.h"
+#include "avolocam-source-data.h"
 #include "logging.h"
 
 OBS_DECLARE_MODULE()
@@ -36,4 +37,15 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
     ALOG(LOG_INFO, "Plugin unloading...");
+
+    // Stop and release global mDNS discovery to avoid thread leak
+    {
+        std::lock_guard<std::mutex> lock(avolocam::g_discovery_mutex);
+        if (avolocam::g_discovery) {
+            avolocam::g_discovery->stop();
+            avolocam::g_discovery.reset();
+        }
+    }
+
+    ALOG(LOG_INFO, "Plugin unloaded");
 }

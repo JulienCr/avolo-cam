@@ -24,11 +24,9 @@ void SourceData::decode_loop() {
         {
             std::unique_lock<std::mutex> lock(decode_queue.mutex);
             if (decode_queue.queue.empty()) {
-                // Flash mode: 1ms wait with predicate for fastest wakeup
-                // Stable mode: 50ms wait (less CPU usage)
-                auto wait_ms = config.flash_mode ? DECODE_CV_WAIT_FLASH_MS : DECODE_CV_WAIT_STABLE_MS;
+                // 1ms wait with predicate for fastest wakeup
                 decode_queue.cv.wait_for(lock,
-                    std::chrono::milliseconds(wait_ms),
+                    std::chrono::milliseconds(DECODE_CV_WAIT_MS),
                     [this]() { return !decode_queue.queue.empty() || !running.load(); });
             }
 
@@ -64,9 +62,6 @@ bool SourceData::init_decoder(const AccessUnit& au) {
             if (pipeline.decoder->initialize(sps.data(), sps.size(), pps.data(), pps.size())) {
                 // Enable GPU output if decoder supports it AND
                 // exposes its D3D device (needed for GPUConverter NV12→RGBA).
-                // MF decoder exposes a D3D device but currently uses the CPU
-                // conversion path due to GPUConverter interop constraints.
-                // FFmpeg D3D11VA exposes a compatible device → full GPU zero-copy path.
                 if (config.prefer_zero_copy.load() && pipeline.decoder->supports_gpu_output()
                     && pipeline.decoder->get_d3d_device()) {
                     pipeline.decoder->set_gpu_output(true);
@@ -76,25 +71,8 @@ bool SourceData::init_decoder(const AccessUnit& au) {
                     gpu.use_gpu_decode.store(false);
                 }
 
-                // Set decode queue size based on mode and decoder type:
-                // Flash mode: always 1 (minimum latency)
-                // Hardware decoders are fast → small queue (4)
-                // Software fallback is slower → larger queue (6) to absorb stalls
-                if (config.flash_mode.load()) {
-                    decode_queue.max_size = DECODE_QUEUE_FLASH;
-                    ALOG(LOG_INFO, "Decoder initialized (%s), "
-                         "flash mode: decode queue size = %zu",
-                         pipeline.decoder->is_hardware() ? "hardware" : "software",
-                         DECODE_QUEUE_FLASH);
-                } else if (pipeline.decoder->is_hardware()) {
-                    decode_queue.max_size = DECODE_QUEUE_HW;
-                    ALOG(LOG_INFO, "Decoder initialized (hardware), "
-                         "decode queue size = %zu", DECODE_QUEUE_HW);
-                } else {
-                    decode_queue.max_size = DECODE_QUEUE_SW;
-                    ALOG(LOG_INFO, "Decoder initialized (software fallback), "
-                         "decode queue size = %zu", DECODE_QUEUE_SW);
-                }
+                ALOG(LOG_INFO, "Decoder initialized (%s)",
+                     pipeline.decoder->is_hardware() ? "hardware" : "software");
             }
         }
     }
@@ -163,23 +141,11 @@ bool SourceData::decode_gpu_frame(DecodedFrame& frame) {
 
             // Release the converted frame back to pool (handle stays valid)
             gpu.converter->release_frame(converted);
-            // Release IMFSample (MF decoder keeps texture alive via sample ref)
-            if (frame.platform_handle) {
-                ComPtr<IUnknown> prevent_leak;
-                prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
-                frame.platform_handle = nullptr;
-            }
             return true;
         }
         ALOG(LOG_WARNING, "GPU conversion failed, falling back to CPU");
     }
 
-    // Fall through to CPU path — release IMFSample since GPU didn't consume it
-    if (frame.platform_handle) {
-        ComPtr<IUnknown> prevent_leak;
-        prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
-        frame.platform_handle = nullptr;
-    }
     return false;
 }
 #endif

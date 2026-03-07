@@ -2,7 +2,7 @@
  * platform-decoder.h - Abstract platform decoder interface
  *
  * Provides a unified interface for hardware-accelerated H.264 decoding
- * across different platforms (macOS VideoToolbox, Windows Media Foundation).
+ * across different platforms (macOS VideoToolbox, Windows FFmpeg D3D11VA).
  */
 
 #pragma once
@@ -73,23 +73,13 @@ struct DecodedFrame {
     uint32_t height = 0;            // Frame height in pixels
     uint64_t pts = 0;               // Presentation timestamp
     bool owns_memory = false;       // If true, decoder manages memory lifetime
-    void *platform_handle = nullptr; // Platform-specific handle (CVPixelBuffer, IMFSample, etc.)
+    void *platform_handle = nullptr; // Platform-specific handle (CVPixelBuffer, etc.)
 
     // GPU texture info (Windows D3D11)
     void *gpu_texture = nullptr;    // ID3D11Texture2D* when using GPU path
     uint32_t gpu_subresource = 0;   // Subresource index for texture arrays
     bool has_gpu_texture = false;   // True if gpu_texture is valid
     void *shared_handle = nullptr;  // DXGI shared handle for cross-device sharing (RGBA)
-};
-
-/**
- * Decoder type selection
- */
-enum class DecoderType {
-    AUTO,                 // Best available for platform (default)
-    MEDIA_FOUNDATION,     // Windows Media Foundation D3D11VA
-    FFMPEG_D3D11VA,       // FFmpeg with D3D11VA hardware acceleration
-    FFMPEG_SOFTWARE       // FFmpeg software decoder (CPU fallback)
 };
 
 /**
@@ -101,7 +91,6 @@ struct DecoderConfig {
     bool output_nv12 = true;        // Output NV12 format (vs I420)
     uint32_t max_width = 1920;      // Maximum expected width
     uint32_t max_height = 1080;     // Maximum expected height
-    DecoderType decoder_type = DecoderType::AUTO;  // Explicit decoder selection
 };
 
 /**
@@ -114,19 +103,12 @@ public:
     virtual ~PlatformDecoder() = default;
 
     /**
-     * Factory method - creates decoder based on config.decoder_type
+     * Factory method - creates the best available decoder for the current platform
      *
-     * AUTO selection order:
      * - macOS: VideoToolbox
-     * - Windows: Media Foundation (D3D11VA if available)
-     * - Fallback: FFmpeg software decoder (if compiled with HAVE_FFMPEG)
+     * - Windows: FFmpeg D3D11VA
      *
-     * Explicit types:
-     * - MEDIA_FOUNDATION: Windows MF decoder only
-     * - FFMPEG_D3D11VA: FFmpeg with D3D11VA hardware (if HAVE_FFMPEG_D3D11VA)
-     * - FFMPEG_SOFTWARE: FFmpeg CPU decoder (if HAVE_FFMPEG)
-     *
-     * @param config Decoder configuration options including decoder_type
+     * @param config Decoder configuration options
      * @return Unique pointer to decoder, or nullptr on failure
      */
     static std::unique_ptr<PlatformDecoder> create(

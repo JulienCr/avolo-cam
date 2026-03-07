@@ -8,8 +8,6 @@
 #define ALOG_WS(level, fmt, ...) blog(level, "[avolocam-ws] " fmt, ##__VA_ARGS__)
 #define ALOG_FFMPEG(level, fmt, ...) \
 	blog(level, "[avolocam-ffmpeg] " fmt, ##__VA_ARGS__)
-#define ALOG_MF(level, fmt, ...) \
-	blog(level, "[avolocam-mf] " fmt, ##__VA_ARGS__)
 #define ALOG_GPU(level, fmt, ...) \
 	blog(level, "[avolocam-gpu] " fmt, ##__VA_ARGS__)
 #define ALOG_MDNS(level, fmt, ...) \

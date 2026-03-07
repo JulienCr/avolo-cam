@@ -50,15 +50,12 @@ static void *avolocam_create(obs_data_t *settings, obs_source_t *source)
     // Load settings (single-threaded construction, but use store() for atomics)
     data->config.camera_ip = obs_data_get_string(settings, PROP_MANUAL_IP);
     data->config.camera_port.store((uint16_t)obs_data_get_int(settings, PROP_MANUAL_PORT));
-    data->config.jitter_mode.store((int)obs_data_get_int(settings, PROP_JITTER_MODE));
     data->config.show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
     data->config.auth_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
     data->config.prefer_zero_copy.store(obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY));
     data->config.debug_mode.store(obs_data_get_bool(settings, PROP_DEBUG_MODE));
-    data->config.decoder_type.store((int)obs_data_get_int(settings, PROP_DECODER_TYPE));
 
-    ALOG(LOG_INFO, "Source created (decoder_type=%d, port=%d)",
-         data->config.decoder_type.load(), data->config.camera_port.load());
+    ALOG(LOG_INFO, "Source created (port=%d)", data->config.camera_port.load());
     return data;
 }
 
@@ -86,11 +83,9 @@ static void avolocam_update(void *data, obs_data_t *settings)
              new_ip.c_str(), new_port);
     }
 
-    int new_jitter = (int)obs_data_get_int(settings, PROP_JITTER_MODE);
     std::string new_token = obs_data_get_string(settings, PROP_AUTH_TOKEN);
     bool new_zero_copy = obs_data_get_bool(settings, PROP_PREFER_ZERO_COPY);
     bool new_debug_mode = obs_data_get_bool(settings, PROP_DEBUG_MODE);
-    int new_decoder_type = (int)obs_data_get_int(settings, PROP_DECODER_TYPE);
 
     // Snapshot current string values under lock for comparison
     std::string old_ip, old_token;
@@ -103,10 +98,8 @@ static void avolocam_update(void *data, obs_data_t *settings)
     // Check if we need to restart
     bool needs_restart = (new_ip != old_ip ||
                           new_port != src->config.camera_port.load() ||
-                          new_jitter != src->config.jitter_mode.load() ||
                           new_token != old_token ||
-                          new_zero_copy != src->config.prefer_zero_copy.load() ||
-                          new_decoder_type != src->config.decoder_type.load());
+                          new_zero_copy != src->config.prefer_zero_copy.load());
 
     // Update string fields under lock
     {
@@ -116,11 +109,9 @@ static void avolocam_update(void *data, obs_data_t *settings)
     }
     // Update atomic fields
     src->config.camera_port.store(new_port);
-    src->config.jitter_mode.store(new_jitter);
     src->config.show_latency.store(obs_data_get_bool(settings, PROP_SHOW_LATENCY));
     src->config.prefer_zero_copy.store(new_zero_copy);
     src->config.debug_mode.store(new_debug_mode);
-    src->config.decoder_type.store(new_decoder_type);
 
     if (needs_restart && src->running.load()) {
         src->stop();
@@ -256,34 +247,12 @@ static obs_properties_t *avolocam_get_properties(void *data)
     obs_properties_add_text(props, PROP_AUTH_TOKEN, "Auth Token",
                             OBS_TEXT_PASSWORD);
 
-    // Jitter buffer mode
-    obs_property_t *jitter = obs_properties_add_list(
-        props, PROP_JITTER_MODE, "Jitter Buffer",
-        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-    obs_property_list_add_int(jitter, "Ultra-Low (0-8ms)", JITTER_ULTRA_LOW);
-    obs_property_list_add_int(jitter, "Stable (16-50ms)", JITTER_STABLE);
-
     // Show latency overlay
     obs_properties_add_bool(props, PROP_SHOW_LATENCY, "Show Latency Overlay");
 
     // GPU zero-copy option
     obs_properties_add_bool(props, PROP_PREFER_ZERO_COPY,
                             "Prefer GPU Zero-Copy (requires compatible GPU)");
-
-    // Decoder type selection
-    obs_property_t *decoder = obs_properties_add_list(
-        props, PROP_DECODER_TYPE, "Decoder",
-        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-    obs_property_list_add_int(decoder, "Auto (Recommended)", DECODER_TYPE_AUTO);
-    obs_property_list_add_int(decoder, "Media Foundation (D3D11VA)", DECODER_TYPE_MEDIA_FOUNDATION);
-#ifdef HAVE_FFMPEG_D3D11VA
-    obs_property_list_add_int(decoder, "FFmpeg D3D11VA (Low Latency)", DECODER_TYPE_FFMPEG_D3D11VA);
-#endif
-    obs_property_set_long_description(decoder,
-        "Decoder selection:\n"
-        "- Auto: Uses Media Foundation (proven stable)\n"
-        "- Media Foundation: Windows built-in hardware decoder\n"
-        "- FFmpeg D3D11VA: Alternative low-latency decoder (experimental)");
 
     // Debug mode
     obs_properties_add_bool(props, PROP_DEBUG_MODE, "Enable debug logging");
@@ -295,12 +264,10 @@ static void avolocam_get_defaults(obs_data_t *settings)
 {
     obs_data_set_default_string(settings, PROP_MANUAL_IP, "");
     obs_data_set_default_int(settings, PROP_MANUAL_PORT, 5000);
-    obs_data_set_default_int(settings, PROP_JITTER_MODE, JITTER_STABLE);
     obs_data_set_default_bool(settings, PROP_SHOW_LATENCY, false);
     obs_data_set_default_string(settings, PROP_AUTH_TOKEN, "");
     obs_data_set_default_bool(settings, PROP_PREFER_ZERO_COPY, true);
     obs_data_set_default_bool(settings, PROP_DEBUG_MODE, false);
-    obs_data_set_default_int(settings, PROP_DECODER_TYPE, DECODER_TYPE_AUTO);
 }
 
 // video_tick: open/update shared texture for CUSTOM_DRAW (called on render thread)
