@@ -32,13 +32,13 @@ class AppCoordinator: ObservableObject {
     private var configuration: AppConfiguration
 
     // Core components
-    private let captureManager: CaptureManager
+    let captureManager: CaptureManager
     private let ndiManager: NDIManager
     private let srtManager: SRTManager
     private let flashManager: FlashManager
     private var networkServer: NetworkServer  // var to allow re-initialization with self
     private let bonjourService: BonjourService
-    private let tallyPoller: NDITallyPoller
+    let tallyPoller: NDITallyPoller
 
     // Modular services
     private let streamingCoordinator: StreamingCoordinator

@@ -13,7 +13,7 @@ import os
 
 // MARK: - Network Server
 
-class NetworkServer {
+nonisolated class NetworkServer {
     // MARK: - Properties
 
     private let port: Int

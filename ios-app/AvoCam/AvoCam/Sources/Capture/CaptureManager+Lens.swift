@@ -5,16 +5,16 @@
 //  CaptureManager extension for lens selection and zoom factor mapping
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 
 // MARK: - Lens & Zoom
 
 extension CaptureManager {
 
-    /// Returns prioritized device types for discovery
+    /// Returns prioritized device types for discovery (nonisolated static for use from sessionQueue)
     /// Always use physical cameras to support full manual control (WB/ISO/shutter)
     /// Virtual devices don't support custom exposure or custom WB gains
-    func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
+    nonisolated static func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
         if position == .back {
             // Always use physical cameras for full manual control support
             // Lens switching handled via reconfiguration
@@ -53,11 +53,14 @@ extension CaptureManager {
         }
     }
 
-    /// Get zoom factors for lens switching on virtual devices
-    /// Device zoom values: ultra-wide=1.0, wide=2.0, telephoto=10.0
-    func zoomFactorForLens(_ lens: String, device: AVCaptureDevice) -> CGFloat? {
-        guard isUsingVirtualDevice else { return nil }
+    /// Instance convenience wrapper for actor-isolated callers
+    func prioritizedDeviceTypes(for position: AVCaptureDevice.Position, requestedLens: String) -> [AVCaptureDevice.DeviceType] {
+        return Self.prioritizedDeviceTypes(for: position, requestedLens: requestedLens)
+    }
 
+    /// Get zoom factors for lens switching on virtual devices (nonisolated static for use from sessionQueue)
+    /// Device zoom values: ultra-wide=1.0, wide=2.0, telephoto=10.0
+    nonisolated static func zoomFactorForLensStatic(_ lens: String, device: AVCaptureDevice) -> CGFloat? {
         // Device zoom factors (what AVFoundation actually uses)
         // Ultra-wide is at 1.0x, wide is at 2.0x (2x zoom from ultra-wide)
         let targetZoom: CGFloat
@@ -75,6 +78,12 @@ extension CaptureManager {
         // Clamp to device's available zoom range
         let clampedZoom = min(max(targetZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
         return clampedZoom
+    }
+
+    /// Instance method for actor-isolated callers that checks isUsingVirtualDevice
+    func zoomFactorForLens(_ lens: String, device: AVCaptureDevice) -> CGFloat? {
+        guard isUsingVirtualDevice else { return nil }
+        return Self.zoomFactorForLensStatic(lens, device: device)
     }
 
     /// Detects which lens is active based on the device zoom factor

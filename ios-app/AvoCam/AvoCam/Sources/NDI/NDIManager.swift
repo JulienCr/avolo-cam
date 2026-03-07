@@ -10,7 +10,7 @@ import CoreMedia
 import CoreVideo
 import os.signpost
 
-class NDIManager {
+nonisolated class NDIManager {
     // MARK: - Properties
 
     private let alias: String

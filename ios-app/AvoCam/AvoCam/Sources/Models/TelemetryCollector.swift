@@ -26,10 +26,10 @@ actor TelemetryCollector {
     private var lastBytesSent: UInt64 = 0
 
     func collect() async -> SystemTelemetry {
-        let battery = getBatteryLevel()
+        let battery = await getBatteryLevel()
         let temperature = getDeviceTemperature()
         let wifiRssi = getWiFiRSSI()
-        let chargingState = getChargingState()
+        let chargingState = await getChargingState()
         let thermalState = ProcessInfo.processInfo.thermalState
         let networkBitrate = await getNetworkBitrate()
         let cpuUsage = getCPUUsage()
@@ -47,26 +47,29 @@ actor TelemetryCollector {
 
     // MARK: - Battery
 
-    private func getBatteryLevel() -> Double {
-        UIDevice.current.isBatteryMonitoringEnabled = true
-        let level = UIDevice.current.batteryLevel
-
-        // batteryLevel returns -1 if unknown, so clamp to 0-1 range
-        return max(0.0, min(1.0, Double(level)))
+    private func getBatteryLevel() async -> Double {
+        await MainActor.run {
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            let level = UIDevice.current.batteryLevel
+            // batteryLevel returns -1 if unknown, so clamp to 0-1 range
+            return max(0.0, min(1.0, Double(level)))
+        }
     }
 
-    private func getChargingState() -> ChargingState {
-        UIDevice.current.isBatteryMonitoringEnabled = true
+    private func getChargingState() async -> ChargingState {
+        await MainActor.run {
+            UIDevice.current.isBatteryMonitoringEnabled = true
 
-        switch UIDevice.current.batteryState {
-        case .charging:
-            return .charging
-        case .full:
-            return .full
-        case .unplugged, .unknown:
-            return .unplugged
-        @unknown default:
-            return .unplugged
+            switch UIDevice.current.batteryState {
+            case .charging:
+                return .charging
+            case .full:
+                return .full
+            case .unplugged, .unknown:
+                return .unplugged
+            @unknown default:
+                return .unplugged
+            }
         }
     }
 

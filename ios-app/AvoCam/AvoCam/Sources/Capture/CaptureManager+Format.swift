@@ -5,7 +5,7 @@
 //  CaptureManager extension for format selection and capabilities
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import os
 
@@ -13,15 +13,45 @@ import os
 
 extension CaptureManager {
 
-    /// Synchronous format configuration for use on sessionQueue
+    /// Synchronous format configuration for use on sessionQueue (actor-isolated convenience)
     func configureFormatSync(device: AVCaptureDevice, resolution: String, framerate: Int) throws {
+        try Self.configureFormatSyncStatic(
+            device: device, resolution: resolution, framerate: framerate,
+            lens: currentLens, formatCache: formatCache,
+            enableSensorLockOptimizations: enableSensorLockOptimizations,
+            enableBufferPoolOptimization: enableBufferPoolOptimization,
+            poolSize: poolSize,
+            bufferPoolLock: bufferPoolLock,
+            pixelBufferPoolSetter: { [self] pool in
+                nonisolated(unsafe) let sendablePool = pool
+                bufferPoolLock.withLock {
+                    pixelBufferPool = sendablePool
+                }
+            }
+        )
+    }
+
+    /// Nonisolated static format configuration for use from sessionQueue closure
+    /// All actor-isolated state is passed in as parameters to avoid isolation violations
+    nonisolated static func configureFormatSyncStatic(
+        device: AVCaptureDevice,
+        resolution: String,
+        framerate: Int,
+        lens: String,
+        formatCache: [String: AVCaptureDevice.Format],
+        enableSensorLockOptimizations: Bool,
+        enableBufferPoolOptimization: Bool,
+        poolSize: Int,
+        bufferPoolLock: OSAllocatedUnfairLock<Void>,
+        pixelBufferPoolSetter: (CVPixelBufferPool) -> Void
+    ) throws {
         guard let parsed = resolution.parseResolution() else {
             throw CaptureError.invalidResolution
         }
         let dimensions = (width: Int32(parsed.width), height: Int32(parsed.height))
 
         // Check format cache first
-        let cacheKey = formatCacheKey(deviceID: device.uniqueID, lens: currentLens,
+        let cacheKey = formatCacheKey(deviceID: device.uniqueID, lens: lens,
                                        width: Int(dimensions.width), height: Int(dimensions.height), fps: framerate)
         let format: AVCaptureDevice.Format
         if let cachedFormat = formatCache[cacheKey] {
@@ -37,8 +67,8 @@ extension CaptureManager {
                 throw CaptureError.formatNotSupported
             }
             format = foundFormat
-            formatCache[cacheKey] = format
-            print("✅ Cached new format for \(cacheKey)")
+            // Note: format cache update happens back on actor after configure() returns
+            print("✅ Found new format for \(cacheKey)")
         }
 
         try device.lockForConfiguration()
@@ -57,33 +87,52 @@ extension CaptureManager {
 
         // PERF: Apply sensor lock optimizations (disable HDR, lock sampling)
         // Must be called while device is locked
+        // Create a temporary instance-like call via a helper (applySensorLockOptimizationsLocked is nonisolated)
         if enableSensorLockOptimizations {
-            applySensorLockOptimizationsLocked(device: device)
+            applySensorLockOptimizationsLockedStatic(device: device)
         }
 
         device.unlockForConfiguration()
 
         // PERF: Create zero-copy buffer pool with IOSurface backing
         if enableBufferPoolOptimization {
-            createPixelBufferPool(width: Int(dimensions.width), height: Int(dimensions.height))
+            createPixelBufferPoolStatic(
+                width: Int(dimensions.width), height: Int(dimensions.height),
+                poolSize: poolSize, pixelBufferPoolSetter: pixelBufferPoolSetter
+            )
         }
 
         print("✅ Configured format: \(format.formatDescription)")
     }
 
-    /// Generate cache key for format lookup
-    func formatCacheKey(deviceID: String, lens: String, width: Int, height: Int, fps: Int) -> String {
-        return "\(deviceID)_\(lens)_\(width)x\(height)_\(fps)fps"
+    /// Nonisolated static sensor lock optimizations
+    nonisolated private static func applySensorLockOptimizationsLockedStatic(device: AVCaptureDevice) {
+        if #available(iOS 13.0, *) {
+            if device.activeFormat.isVideoHDRSupported {
+                device.automaticallyAdjustsVideoHDREnabled = false
+                print("✅ PERF: HDR auto-adjust disabled")
+            }
+        }
+        if device.hasFlash && device.flashMode != .off {
+            device.flashMode = .off
+        }
+        if device.isExposureModeSupported(.locked) || device.isExposureModeSupported(.custom) {
+            device.setExposureTargetBias(0, completionHandler: nil)
+        }
+        device.isSubjectAreaChangeMonitoringEnabled = false
+        print("✅ PERF: Sensor optimizations applied (bias locked, subject monitoring off, torch managed by tally)")
     }
 
-    /// PERF: Create IOSurface-backed pixel buffer pool for zero-copy path
-    /// Eliminates 8-12ms allocation latency per frame at 4K
-    func createPixelBufferPool(width: Int, height: Int) {
+    /// Nonisolated static pixel buffer pool creation
+    nonisolated private static func createPixelBufferPoolStatic(
+        width: Int, height: Int, poolSize: Int,
+        pixelBufferPoolSetter: (CVPixelBufferPool) -> Void
+    ) {
         let attributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:],  // Enable IOSurface backing
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             kCVPixelBufferMetalCompatibilityKey as String: true
         ]
 
@@ -100,10 +149,7 @@ extension CaptureManager {
         )
 
         if status == kCVReturnSuccess, let pool = pool {
-            nonisolated(unsafe) let sendablePool = pool
-            bufferPoolLock.withLock {
-                pixelBufferPool = sendablePool
-            }
+            pixelBufferPoolSetter(pool)
 
             // Prewarm pool by allocating and releasing all buffers
             var prewarmBuffers: [CVPixelBuffer] = []
@@ -114,7 +160,7 @@ extension CaptureManager {
                     prewarmBuffers.append(buffer)
                 }
             }
-            prewarmBuffers.removeAll()  // Release back to pool
+            prewarmBuffers.removeAll()
 
             print("✅ PERF: Pixel buffer pool created and prewarmed (\(poolSize) buffers, \(width)x\(height), IOSurface-backed)")
         } else {
@@ -122,10 +168,20 @@ extension CaptureManager {
         }
     }
 
+    /// Generate cache key for format lookup
+    nonisolated static func formatCacheKey(deviceID: String, lens: String, width: Int, height: Int, fps: Int) -> String {
+        return "\(deviceID)_\(lens)_\(width)x\(height)_\(fps)fps"
+    }
+
+    /// Instance convenience wrapper
+    func formatCacheKey(deviceID: String, lens: String, width: Int, height: Int, fps: Int) -> String {
+        return Self.formatCacheKey(deviceID: deviceID, lens: lens, width: width, height: height, fps: fps)
+    }
+
     /// Best-fit format chooser: tolerant to per-lens constraints
     /// 1. Filter by resolution (exact > nearest larger > nearest smaller)
     /// 2. Within those, pick format supporting requested fps (or closest not exceeding maxFrameRate)
-    func findFormat(for device: AVCaptureDevice, width: Int, height: Int, framerate: Int)
+    nonisolated static func findFormat(for device: AVCaptureDevice, width: Int, height: Int, framerate: Int)
         -> AVCaptureDevice.Format?
     {
         let targetPixels = width * height

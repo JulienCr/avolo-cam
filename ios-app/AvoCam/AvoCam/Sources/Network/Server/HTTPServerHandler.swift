@@ -10,7 +10,7 @@ import NIO
 import NIOHTTP1
 
 @preconcurrency
-final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
+nonisolated final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
@@ -78,6 +78,7 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
         let methodString = method.rawValue
 
         // Handle request asynchronously
+        nonisolated(unsafe) let ctx = context
         Task {
             let response = await server.handleHTTPRequest(
                 path: path,
@@ -86,8 +87,8 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
                 body: bodyData
             )
             // Send response on the channel's event loop
-            context.eventLoop.execute {
-                self.sendHTTPResponse(context: context, response: response)
+            ctx.eventLoop.execute {
+                self.sendHTTPResponse(context: ctx, response: response)
             }
         }
     }

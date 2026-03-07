@@ -10,7 +10,7 @@ import NIO
 import NIOWebSocket
 
 @preconcurrency
-final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
+nonisolated final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
     typealias OutboundOut = WebSocketFrame
 

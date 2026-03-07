@@ -5,7 +5,7 @@
 //  Manages AVFoundation video capture
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import UIKit
 import os
@@ -85,6 +85,15 @@ actor CaptureManager: NSObject {
 
     // MARK: - Configuration
 
+    /// Result struct to shuttle mutations back from the sessionQueue closure to the actor
+    private struct ConfigureResult: Sendable {
+        let isUsingVirtualDevice: Bool
+        nonisolated(unsafe) let videoDevice: AVCaptureDevice?
+        nonisolated(unsafe) let videoInput: AVCaptureDeviceInput?
+        nonisolated(unsafe) let videoOutput: AVCaptureVideoDataOutput?
+        nonisolated(unsafe) let captureSession: AVCaptureSession
+    }
+
     func configure(resolution: String, framerate: Int) async throws {
         print("📷 Configuring capture: \(resolution) @ \(framerate)fps, position: \(currentCameraPosition == .back ? "back" : "front"), lens: \(currentLens)")
 
@@ -97,23 +106,28 @@ actor CaptureManager: NSObject {
         currentResolution = resolution
         currentFramerate = framerate
 
-        // All session mutations must run on serial sessionQueue
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            sessionQueue.async { [weak self] in
-                guard let self = self else {
-                    continuation.resume(throwing: CaptureError.sessionNotConfigured)
-                    return
-                }
+        // Capture actor-isolated state before entering the nonisolated sessionQueue closure
+        let position = self.currentCameraPosition
+        let lens = self.currentLens
+        let existingSession = self.captureSession
+        let formatCacheSnapshot = self.formatCache
+        let sensorLockEnabled = self.enableSensorLockOptimizations
+        let bufferPoolEnabled = self.enableBufferPoolOptimization
+        let delegateSelf = self
+        let outQueue = self.outputQueue
 
+        // All session mutations must run on serial sessionQueue
+        let result: ConfigureResult = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ConfigureResult, Error>) in
+            sessionQueue.async {
                 do {
                     // Stop existing session if running
-                    let wasRunning = self.captureSession?.isRunning ?? false
+                    let wasRunning = existingSession?.isRunning ?? false
                     if wasRunning {
-                        self.captureSession?.stopRunning()
+                        existingSession?.stopRunning()
                     }
 
                     // Setup capture session (reuse existing or create new)
-                    let session = self.captureSession ?? AVCaptureSession()
+                    let session = existingSession ?? AVCaptureSession()
                     session.sessionPreset = .inputPriority  // We'll manually set format
 
                     // Begin atomic configuration
@@ -125,20 +139,20 @@ actor CaptureManager: NSObject {
                     }
 
                     // Remove existing inputs/outputs if reconfiguring
-                    if self.captureSession != nil {
+                    if existingSession != nil {
                         session.inputs.forEach { session.removeInput($0) }
                         session.outputs.forEach { session.removeOutput($0) }
                     }
 
                     // Discover device using prioritized list (requested lens first)
-                    let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition, requestedLens: self.currentLens)
-                    print("🔍 Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
+                    let deviceTypes = CaptureManager.prioritizedDeviceTypes(for: position, requestedLens: lens)
+                    print("🔍 Looking for device: position=\(position == .back ? "back" : "front"), lens=\(lens)")
                     print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
 
                     let discovery = AVCaptureDevice.DiscoverySession(
                         deviceTypes: deviceTypes,
                         mediaType: .video,
-                        position: self.currentCameraPosition
+                        position: position
                     )
 
                     guard let device = discovery.devices.first else {
@@ -151,18 +165,16 @@ actor CaptureManager: NSObject {
                     print("✅ Found camera device: \(device.localizedName)")
 
                     // Check if using virtual device (can switch lenses via zoom)
-                    self.isUsingVirtualDevice = [
+                    let usingVirtual = [
                         AVCaptureDevice.DeviceType.builtInTripleCamera,
                         .builtInDualWideCamera,
                         .builtInDualCamera
                     ].contains(device.deviceType)
 
-                    if self.isUsingVirtualDevice {
+                    if usingVirtual {
                         print("✅ Using virtual device - lens switching via zoom")
                         print("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
                     }
-
-                    self.videoDevice = device
 
                     // Create device input
                     let input = try AVCaptureDeviceInput(device: device)
@@ -171,10 +183,22 @@ actor CaptureManager: NSObject {
                         throw CaptureError.cannotAddInput
                     }
                     session.addInput(input)
-                    self.videoInput = input
 
                     // Configure device format (must be sync on sessionQueue)
-                    try self.configureFormatSync(device: device, resolution: resolution, framerate: framerate)
+                    try CaptureManager.configureFormatSyncStatic(
+                        device: device, resolution: resolution, framerate: framerate,
+                        lens: lens, formatCache: formatCacheSnapshot,
+                        enableSensorLockOptimizations: sensorLockEnabled,
+                        enableBufferPoolOptimization: bufferPoolEnabled,
+                        poolSize: delegateSelf.poolSize,
+                        bufferPoolLock: delegateSelf.bufferPoolLock,
+                        pixelBufferPoolSetter: { pool in
+                            nonisolated(unsafe) let sendablePool = pool
+                            delegateSelf.bufferPoolLock.withLock {
+                                delegateSelf.pixelBufferPool = sendablePool
+                            }
+                        }
+                    )
 
                     // Create video output
                     let output = AVCaptureVideoDataOutput()
@@ -184,30 +208,27 @@ actor CaptureManager: NSObject {
                             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                     ]
                     output.alwaysDiscardsLateVideoFrames = true
-                    output.setSampleBufferDelegate(self, queue: self.outputQueue)
+                    output.setSampleBufferDelegate(delegateSelf, queue: outQueue)
 
                     guard session.canAddOutput(output) else {
                         session.commitConfiguration()
                         throw CaptureError.cannotAddOutput
                     }
                     session.addOutput(output)
-                    self.videoOutput = output
 
                     // Configure connection (orientation, stabilization)
-                    self.configureConnection(output.connection(with: .video))
+                    CaptureManager.configureConnectionStatic(output.connection(with: .video))
 
                     // Commit configuration
                     session.commitConfiguration()
 
-                    self.captureSession = session
-
                     // Apply lens zoom if using virtual device
-                    if self.isUsingVirtualDevice, let zoomFactor = self.zoomFactorForLens(self.currentLens, device: device) {
+                    if usingVirtual, let zoomFactor = CaptureManager.zoomFactorForLensStatic(lens, device: device) {
                         try device.lockForConfiguration()
                         device.videoZoomFactor = zoomFactor
                         device.unlockForConfiguration()
                         let uiZoom = zoomFactor / 2.0
-                        print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(self.currentLens)'")
+                        print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(lens)'")
                     }
 
                     // Restart session if it was running before reconfiguration
@@ -216,19 +237,33 @@ actor CaptureManager: NSObject {
                         print("✅ Restarted capture session after reconfiguration")
                     }
 
-                    continuation.resume()
+                    let result = ConfigureResult(
+                        isUsingVirtualDevice: usingVirtual,
+                        videoDevice: device,
+                        videoInput: input,
+                        videoOutput: output,
+                        captureSession: session
+                    )
+                    continuation.resume(returning: result)
                 } catch {
                     print("❌ Configuration failed: \(error)")
                     continuation.resume(throwing: error)
                 }
             }
         }
+
+        // Apply mutations back on the actor
+        self.isUsingVirtualDevice = result.isUsingVirtualDevice
+        self.videoDevice = result.videoDevice
+        self.videoInput = result.videoInput
+        self.videoOutput = result.videoOutput
+        self.captureSession = result.captureSession
     }
 
     /// PERF: Apply sensor lock optimizations to reduce ISP overhead
     /// Disables HDR, torch, and continuous auto-adjustments (6% CPU, 4% GPU reduction)
     /// IMPORTANT: Must be called while device.lockForConfiguration() is held
-    func applySensorLockOptimizationsLocked(device: AVCaptureDevice) {
+    nonisolated func applySensorLockOptimizationsLocked(device: AVCaptureDevice) {
         // Disable HDR processing (3-5% GPU overhead even when "off")
         if #available(iOS 13.0, *) {
             if device.activeFormat.isVideoHDRSupported {
@@ -256,7 +291,8 @@ actor CaptureManager: NSObject {
     }
 
     /// Configure connection properties (orientation, stabilization)
-    private func configureConnection(_ connection: AVCaptureConnection?) {
+    /// Nonisolated static: pure function operating only on the connection parameter
+    nonisolated static func configureConnectionStatic(_ connection: AVCaptureConnection?) {
         guard let connection = connection else { return }
 
         // Disable stabilization for lowest latency
@@ -283,10 +319,11 @@ actor CaptureManager: NSObject {
         }
 
         // Start session on sessionQueue if not already running
+        nonisolated(unsafe) let capturedSession = session
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sessionQueue.async {
-                if !session.isRunning {
-                    session.startRunning()
+                if !capturedSession.isRunning {
+                    capturedSession.startRunning()
                     print("▶️ Capture session started")
                 } else {
                     print("▶️ Frame callback attached (session already running for preview)")
