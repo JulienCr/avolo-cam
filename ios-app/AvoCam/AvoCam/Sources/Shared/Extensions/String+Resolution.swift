@@ -8,7 +8,7 @@
 import Foundation
 
 extension String {
-    func parseResolution() -> (width: Int, height: Int)? {
+    nonisolated func parseResolution() -> (width: Int, height: Int)? {
         let parts = self.split(separator: "x")
         guard parts.count == 2,
               let width = Int(parts[0]),

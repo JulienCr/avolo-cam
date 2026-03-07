@@ -7,6 +7,7 @@
 
 import AVFoundation
 import CoreMedia
+import os
 
 // MARK: - Format Configuration & Capabilities
 
@@ -99,8 +100,9 @@ extension CaptureManager {
         )
 
         if status == kCVReturnSuccess, let pool = pool {
+            nonisolated(unsafe) let sendablePool = pool
             bufferPoolLock.withLock {
-                pixelBufferPool = pool
+                pixelBufferPool = sendablePool
             }
 
             // Prewarm pool by allocating and releasing all buffers

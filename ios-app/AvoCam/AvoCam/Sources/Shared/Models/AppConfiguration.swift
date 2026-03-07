@@ -97,27 +97,26 @@ struct AppConfiguration: Sendable {
     /// - Parameter newAlias: New camera alias
     /// - Returns: Updated configuration
     func withAlias(_ newAlias: String) -> AppConfiguration {
-        var updated = self
-        var mutable = AppConfiguration(
+        let updated = AppConfiguration(
             cameraAlias: newAlias,
             bearerToken: bearerToken,
             isAuthenticationEnabled: isAuthenticationEnabled,
             serverPort: serverPort
         )
-        mutable.save()
-        return mutable
+        updated.save()
+        return updated
     }
 
     /// Toggle authentication and save
     /// - Returns: Updated configuration
     func withAuthenticationToggled() -> AppConfiguration {
-        var mutable = AppConfiguration(
+        let toggled = AppConfiguration(
             cameraAlias: cameraAlias,
             bearerToken: bearerToken,
             isAuthenticationEnabled: !isAuthenticationEnabled,
             serverPort: serverPort
         )
-        mutable.save()
-        return mutable
+        toggled.save()
+        return toggled
     }
 }

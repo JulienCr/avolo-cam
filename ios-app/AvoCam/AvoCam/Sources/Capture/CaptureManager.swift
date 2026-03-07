@@ -37,8 +37,9 @@ actor CaptureManager: NSObject {
 
     // PERF: os_signpost for latency tracking
     // Safe for nonisolated access - initialized once, read-only thereafter
-    private let perfLog = OSLog(subsystem: "com.avocam.capture", category: .pointsOfInterest)
-    private nonisolated(unsafe) lazy var captureSignpostID = OSSignpostID(log: perfLog)
+    private static let sharedPerfLog = OSLog(subsystem: "com.avocam.capture", category: .pointsOfInterest)
+    nonisolated let perfLog = CaptureManager.sharedPerfLog
+    nonisolated let captureSignpostID = OSSignpostID(log: CaptureManager.sharedPerfLog)
 
     // Thread-safe frame callback storage (nonisolated to avoid actor hop on hot path)
     // Using @unchecked Sendable as thread safety is guaranteed by OSAllocatedUnfairLock

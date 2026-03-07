@@ -9,7 +9,8 @@ import Foundation
 import NIO
 import NIOWebSocket
 
-class WebSocketClient {
+@preconcurrency
+final class WebSocketClient: @unchecked Sendable {
     private let channel: Channel
     private let eventLoop: EventLoop
     var subscribedToFrameInfo: Bool = false
