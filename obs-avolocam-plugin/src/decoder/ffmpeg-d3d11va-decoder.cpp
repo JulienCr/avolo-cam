@@ -790,6 +790,17 @@ void FFmpegD3D11VADecoder::destroy_d3d11()
     d3d_device_.Clear();
 }
 
+// Factory method implementation for Windows
+std::unique_ptr<PlatformDecoder> PlatformDecoder::create(const DecoderConfig &config)
+{
+    ALOG_FFMPEG(LOG_INFO, "Creating FFmpeg D3D11VA decoder");
+    if (FFmpegD3D11VADecoder::is_available()) {
+        return std::make_unique<FFmpegD3D11VADecoder>(config);
+    }
+    ALOG_FFMPEG(LOG_ERROR, "FFmpeg D3D11VA decoder not available");
+    return nullptr;
+}
+
 } // namespace avolocam
 
 #endif // _WIN32 && HAVE_FFMPEG_D3D11VA

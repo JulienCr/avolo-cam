@@ -58,8 +58,16 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    # Media Foundation for hardware decoding
-    set(MF_LIBRARIES mf mfplat mfuuid mfreadwrite d3d11 dxgi)
+    # D3D11 for hardware decoding (FFmpeg D3D11VA)
+    set(D3D11_LIBRARIES d3d11 dxgi)
+
+    # FFmpeg D3D11VA is required on Windows — PlatformDecoder::create() is only
+    # implemented in ffmpeg-d3d11va-decoder.cpp. Fail early instead of at link time.
+    if(DEFINED FFMPEG_D3D11VA_FOUND AND NOT FFMPEG_D3D11VA_FOUND)
+        message(FATAL_ERROR
+            "FFmpeg D3D11VA was not found but is required on Windows to build "
+            "obs-avolocam. Install FFmpeg with D3D11VA support or check your configuration.")
+    endif()
     # Bonjour SDK for mDNS discovery (requires Bonjour SDK installed)
     # dnssd.lib is provided by Bonjour SDK for Windows
 
@@ -179,8 +187,6 @@ endif()
 
 if(WIN32)
     list(APPEND SOURCES
-        src/decoder/mf-decoder.cpp
-        src/decoder/mf-decoder.h
         src/texture-output-windows.cpp
         src/gpu-converter.cpp
         src/gpu-converter.h
@@ -337,9 +343,9 @@ if(WIN32)
         target_link_libraries(obs-avolocam PRIVATE ${OBS_LIB})
     endif()
 
-    # Link Media Foundation and other Windows libraries
+    # Link D3D11 and other Windows libraries
     target_link_libraries(obs-avolocam PRIVATE
-        ${MF_LIBRARIES}
+        ${D3D11_LIBRARIES}
         ws2_32      # Winsock for UDP
         d3dcompiler # For runtime shader compilation
     )

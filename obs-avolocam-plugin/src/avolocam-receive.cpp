@@ -43,12 +43,10 @@ void SourceData::receive_loop() {
     std::vector<uint8_t> packet_buffer(UDP_PACKET_BUFFER_SIZE);
 
     while (running.load()) {
-        // Receive UDP packet with timeout
-        // Flash mode: 5ms timeout for fast wakeup; Stable: 100ms
-        int recv_timeout = config.flash_mode ? UDP_RECV_TIMEOUT_FLASH_MS : UDP_RECV_TIMEOUT_STABLE_MS;
+        // Receive UDP packet with 5ms timeout for fast wakeup
         int received = pipeline.receiver->receive(packet_buffer.data(),
                                          packet_buffer.size(),
-                                         recv_timeout);
+                                         UDP_RECV_TIMEOUT_MS);
 
         uint64_t now = os_gettime_ns();
         tick_tally(now);
@@ -57,24 +55,17 @@ void SourceData::receive_loop() {
 
         frames_received.fetch_add(1, std::memory_order_relaxed);
 
-        if (config.flash_mode) {
-            // Flash mode: bypass jitter buffer, feed directly to depacketizer
-            process_packet_direct(packet_buffer.data(), received);
+        // Feed directly to depacketizer (no jitter buffer)
+        process_packet_direct(packet_buffer.data(), received);
 
-            // Drain all remaining packets in the socket (non-blocking)
-            while (running.load()) {
-                int extra = pipeline.receiver->receive(packet_buffer.data(),
-                                              packet_buffer.size(),
-                                              0);  // non-blocking
-                if (extra <= 0) break;
-                frames_received.fetch_add(1, std::memory_order_relaxed);
-                process_packet_direct(packet_buffer.data(), extra);
-            }
-        } else {
-            // Stable mode: use jitter buffer for reordering
-            pipeline.jitter_buffer->add_packet(packet_buffer.data(), received,
-                                      os_gettime_ns());
-            process_jitter_buffer();
+        // Drain all remaining packets in the socket (non-blocking)
+        while (running.load()) {
+            int extra = pipeline.receiver->receive(packet_buffer.data(),
+                                          packet_buffer.size(),
+                                          0);  // non-blocking
+            if (extra <= 0) break;
+            frames_received.fetch_add(1, std::memory_order_relaxed);
+            process_packet_direct(packet_buffer.data(), extra);
         }
     }
 
@@ -99,20 +90,8 @@ void SourceData::process_packet_direct(const uint8_t *data, int size) {
     process_nal_units(nal_units);
 }
 
-void SourceData::process_jitter_buffer() {
-    std::vector<uint8_t> packet;
-    uint64_t recv_time;
-
-    while (pipeline.jitter_buffer->get_next_packet(packet, recv_time)) {
-        packet_count++;
-        auto nal_units = pipeline.depacketizer->process(packet.data(), packet.size());
-        process_nal_units(nal_units);
-    }
-}
-
 /**
  * Common NAL unit processing: debug logging, sync check, assembly, queue push.
- * Shared by both flash mode (process_packet_direct) and stable mode (process_jitter_buffer).
  */
 void SourceData::process_nal_units(std::vector<NalUnit>& nal_units) {
     total_nals += nal_units.size();
@@ -153,21 +132,11 @@ void SourceData::process_nal_units(std::vector<NalUnit>& nal_units) {
 void SourceData::push_to_decode_queue(AccessUnit&& au) {
     std::lock_guard<std::mutex> lock(decode_queue.mutex);
 
-    if (config.flash_mode && decode_queue.max_size == 1) {
-        // Flash mode with queue=1: replace the existing element in-place
-        // to avoid the overhead of pop_front + push_back
-        if (!decode_queue.queue.empty()) {
-            decode_queue.queue.front() = std::move(au);
-            decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            decode_queue.queue.push_back(std::move(au));
-        }
+    // Replace-in-place for minimum latency (queue size = 1)
+    if (!decode_queue.queue.empty()) {
+        decode_queue.queue.front() = std::move(au);
+        decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
     } else {
-        // Standard mode: drop oldest if queue is full
-        if (decode_queue.queue.size() >= decode_queue.max_size) {
-            decode_queue.queue.pop_front();
-            decode_queue_drops.fetch_add(1, std::memory_order_relaxed);
-        }
         decode_queue.queue.push_back(std::move(au));
     }
     decode_queue.cv.notify_one();

@@ -9,12 +9,9 @@
 
 namespace avolocam {
 
-Result<void> SourceData::init_pipeline(const std::string& ip, int jitter_mode, bool zero_copy, int dec_type) {
+Result<void> SourceData::init_pipeline(const std::string& ip, bool zero_copy) {
     pipeline.receiver = std::make_unique<UdpReceiver>();
     pipeline.receiver->set_expected_source(ip);  // Filter packets to only accept from this camera
-    pipeline.jitter_buffer = std::make_unique<JitterBuffer>(
-        jitter_mode == JITTER_ULTRA_LOW ? JITTER_DELAY_ULTRA_LOW_MS : JITTER_DELAY_STABLE_MS
-    );
     pipeline.depacketizer = std::make_unique<RtpDepacketizer>();
     pipeline.depacketizer->set_packet_loss_callback([this](int missing) {
         if (pipeline.sync_state) pipeline.sync_state->on_packet_loss(missing);
@@ -27,12 +24,11 @@ Result<void> SourceData::init_pipeline(const std::string& ip, int jitter_mode, b
     pipeline.texture_output = std::make_unique<TextureOutput>();
     pipeline.texture_output->initialize(source, zero_copy);
 
-    // Create platform-specific decoder with configured type
+    // Create FFmpeg D3D11VA decoder
     DecoderConfig decoder_config;
     decoder_config.prefer_hardware = zero_copy;
     decoder_config.low_latency = true;
     decoder_config.output_nv12 = true;
-    decoder_config.decoder_type = static_cast<DecoderType>(dec_type);
 
     pipeline.decoder = PlatformDecoder::create(decoder_config);
     if (!pipeline.decoder) {
@@ -163,9 +159,7 @@ Result<void> SourceData::start() {
         token_copy = config.auth_token;
     }
     uint16_t port_copy = config.camera_port.load();
-    int jitter_copy = config.jitter_mode.load();
     bool zero_copy = config.prefer_zero_copy.load();
-    int dec_type = config.decoder_type.load();
 
     if (ip_copy.empty()) {
         ALOG(LOG_WARNING, "No camera IP configured");
@@ -185,11 +179,12 @@ Result<void> SourceData::start() {
     ALOG(LOG_INFO, "Starting receiver for %s:%d",
          ip_copy.c_str(), port_copy);
 
-    // Derive flash mode from jitter setting
-    config.flash_mode.store(jitter_copy == JITTER_ULTRA_LOW);
-
-    auto result = init_pipeline(ip_copy, jitter_copy, zero_copy, dec_type);
-    if (!result) return result;
+    auto result = init_pipeline(ip_copy, zero_copy);
+    if (!result) {
+        std::lock_guard<std::mutex> lock(g_ports_mutex);
+        g_bound_ports.erase(port_copy);
+        return result;
+    }
 
     init_websocket(ip_copy, std::move(token_copy));
     start_threads(port_copy);
@@ -244,7 +239,6 @@ void SourceData::cleanup_gpu_state() {
  */
 void SourceData::reset_pipeline() {
     pipeline.receiver.reset();
-    pipeline.jitter_buffer.reset();
     pipeline.depacketizer.reset();
     pipeline.assembler.reset();
     pipeline.sync_state.reset();

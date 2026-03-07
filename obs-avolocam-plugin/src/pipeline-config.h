@@ -9,26 +9,12 @@
 #include <cstdint>
 
 namespace avolocam {
-    // Jitter buffer configuration
-    constexpr uint32_t JITTER_DELAY_ULTRA_LOW_MS = 8;
-    constexpr uint32_t JITTER_DELAY_STABLE_MS = 50;
-
-    // UDP receive timeouts
-    constexpr int UDP_RECV_TIMEOUT_FLASH_MS = 5;
-    constexpr int UDP_RECV_TIMEOUT_STABLE_MS = 100;
+    // UDP receive timeout (5ms for fast wakeup)
+    constexpr int UDP_RECV_TIMEOUT_MS = 5;
 
     // Tally intervals
     constexpr uint64_t TALLY_POLL_INTERVAL_NS  = 100ULL * 1000 * 1000;
     constexpr uint64_t TALLY_HEARTBEAT_NS      = 2000ULL * 1000 * 1000;
-
-    // Decode queue sizes
-    constexpr size_t DECODE_QUEUE_FLASH = 1;
-    constexpr size_t DECODE_QUEUE_HW    = 4;
-    constexpr size_t DECODE_QUEUE_SW    = 6;
-
-    // Condition variable wait timeouts
-    constexpr int DECODE_CV_WAIT_FLASH_MS  = 1;
-    constexpr int DECODE_CV_WAIT_STABLE_MS = 50;
 
     // UDP buffer
     constexpr int UDP_RCVBUF_SIZE = 4 * 1024 * 1024;

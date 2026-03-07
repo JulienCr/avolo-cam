@@ -25,7 +25,6 @@
 #include "access-unit-assembler.h"
 #include "decoder/platform-decoder.h"
 #include "gpu-converter.h"
-#include "jitter-buffer.h"
 #include "logging.h"
 #include "mdns-discovery.h"
 #include "source-error.h"
@@ -37,7 +36,6 @@
 #include "websocket-client.h"
 
 #ifdef _WIN32
-#include <mfapi.h>
 #include <util/windows/ComPtr.hpp>
 #endif
 
@@ -45,23 +43,11 @@
 #define PROP_CAMERA_SELECT    "camera_select"
 #define PROP_MANUAL_IP        "manual_ip"
 #define PROP_MANUAL_PORT      "manual_port"
-#define PROP_JITTER_MODE      "jitter_mode"
 #define PROP_SHOW_LATENCY     "show_latency"
 #define PROP_AUTH_TOKEN       "auth_token"
 #define PROP_PREFER_ZERO_COPY "prefer_zero_copy"
 #define PROP_DEBUG_MODE       "debug_mode"
-#define PROP_DECODER_TYPE     "decoder_type"
 #define PROP_PORT_WARNING     "port_warning"
-
-// Jitter buffer modes
-#define JITTER_ULTRA_LOW  0  // 0-8ms buffer
-#define JITTER_STABLE     1  // 16-50ms buffer
-
-// Decoder types (match DecoderType enum in platform-decoder.h)
-#define DECODER_TYPE_AUTO             0
-#define DECODER_TYPE_MEDIA_FOUNDATION 1
-#define DECODER_TYPE_FFMPEG_D3D11VA   2
-#define DECODER_TYPE_FFMPEG_SOFTWARE  3
 
 namespace avolocam {
 
@@ -83,21 +69,17 @@ struct SourceData {
     struct Config {
         std::string camera_ip;               // protected by mutex
         std::atomic<uint16_t> camera_port{5000};
-        std::atomic<int> jitter_mode{JITTER_STABLE};
         std::atomic<bool> show_latency{false};
         std::string auth_token;              // protected by mutex
         std::atomic<bool> prefer_zero_copy{true};
         std::atomic<bool> debug_mode{false};
-        std::atomic<int> decoder_type{DECODER_TYPE_AUTO};
         std::mutex mutex;                    // protects camera_ip, auth_token
-        std::atomic<bool> flash_mode{false}; // derived from jitter_mode
     };
     Config config;
 
     // --- Pipeline: Codec/network components ---
     struct Pipeline {
         std::unique_ptr<UdpReceiver> receiver;
-        std::unique_ptr<JitterBuffer> jitter_buffer;
         std::unique_ptr<RtpDepacketizer> depacketizer;
         std::unique_ptr<AccessUnitAssembler> assembler;
         std::unique_ptr<SyncStateMachine> sync_state;
@@ -110,7 +92,6 @@ struct SourceData {
 
     // --- DecodeQueue: Async decode pipeline + double buffering ---
     struct DecodeQueue {
-        std::atomic<size_t> max_size{4};
         std::deque<AccessUnit> queue;
         std::mutex mutex;
         std::condition_variable cv;
@@ -211,7 +192,7 @@ struct SourceData {
     ~SourceData();  // defined in avolocam-source.cpp (uses OBS graphics)
 
     // --- Lifecycle methods ---
-    Result<void> init_pipeline(const std::string& ip, int jitter_mode, bool zero_copy, int dec_type);
+    Result<void> init_pipeline(const std::string& ip, bool zero_copy);
     void init_websocket(const std::string& ip, std::string token);
     void start_threads(uint16_t port);
     Result<void> start();
@@ -223,7 +204,6 @@ struct SourceData {
     // --- Receive thread ---
     void receive_loop();
     void process_packet_direct(const uint8_t *data, int size);
-    void process_jitter_buffer();
     void process_nal_units(std::vector<NalUnit>& nal_units);
     void push_to_decode_queue(AccessUnit&& au);
 

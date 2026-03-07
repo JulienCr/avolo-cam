@@ -25,7 +25,7 @@ struct GPUDecodedFrame {
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t pts = 0;
-    void *sample_ref = nullptr;          // IMFSample* to keep texture alive
+    void *sample_ref = nullptr;          // Platform handle to keep texture alive (unused with FFmpeg)
 };
 
 /**
