@@ -221,46 +221,7 @@ class AppCoordinator: ObservableObject {
     // MARK: - Network Detection
 
     private func detectLocalIPAddress() {
-        var address: String?
-
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else {
-            print("⚠️ Failed to get network interfaces")
-            return
-        }
-        defer { freeifaddrs(ifaddr) }
-
-        var ptr = ifaddr
-        while ptr != nil {
-            defer { ptr = ptr?.pointee.ifa_next }
-
-            guard let interface = ptr else { continue }
-            let addrFamily = interface.pointee.ifa_addr.pointee.sa_family
-
-            if addrFamily == UInt8(AF_INET) || addrFamily == UInt8(AF_INET6) {
-                let name = String(cString: interface.pointee.ifa_name)
-
-                if name == "en0" || name == "en1" || name.hasPrefix("en") {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-
-                    if getnameinfo(
-                        interface.pointee.ifa_addr,
-                        socklen_t(interface.pointee.ifa_addr.pointee.sa_len),
-                        &hostname,
-                        socklen_t(hostname.count),
-                        nil,
-                        socklen_t(0),
-                        NI_NUMERICHOST
-                    ) == 0 {
-                        address = String(cString: hostname)
-                        if addrFamily == UInt8(AF_INET) {
-                            break
-                        }
-                    }
-                }
-            }
-        }
-
+        let address = NetworkUtils.detectLocalIPAddress()
         self.localIPAddress = address
         if let ip = address {
             print("📡 Local IP Address: \(ip)")
@@ -392,7 +353,7 @@ class AppCoordinator: ObservableObject {
     func updateCameraSettings(_ settings: CameraSettingsRequest) async throws {
         try await captureManager.updateSettings(settings)
 
-        var current = currentSettings ?? createDefaultSettings()
+        var current = currentSettings ?? CurrentSettings.makeDefault()
 
         if let wbMode = settings.wbMode { current.wbMode = wbMode }
         if let wbKelvin = settings.wbKelvin { current.wbKelvin = wbKelvin }
@@ -424,7 +385,7 @@ class AppCoordinator: ObservableObject {
     func getStatus() async -> StatusResponse {
         let tallyState = isStreaming ? await tallyPoller.getCurrentState() : nil
 
-        var settings = currentSettings ?? createDefaultSettings()
+        var settings = currentSettings ?? CurrentSettings.makeDefault()
         let focusState = await captureManager.getCurrentFocusState()
         settings.focusMode = focusState.mode
         settings.focusDistance = focusState.distance
@@ -449,7 +410,7 @@ class AppCoordinator: ObservableObject {
             alias: configuration.cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
             current: settings,
-            telemetry: telemetry ?? createDefaultTelemetry(),
+            telemetry: telemetry ?? Telemetry.makeDefault(),
             capabilities: await getCapabilities(),
             tallyProgram: tallyState?.program,
             tallyPreview: tallyState?.preview,
@@ -485,7 +446,7 @@ class AppCoordinator: ObservableObject {
     private func loadPersistedSettings() -> CurrentSettings? {
         guard let data = UserDefaults.standard.cameraSettingsData,
               let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
-            return createDefaultSettings()
+            return CurrentSettings.makeDefault()
         }
         print("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
         return settings
@@ -540,144 +501,4 @@ class AppCoordinator: ObservableObject {
         }
     }
 
-    private func createDefaultSettings() -> CurrentSettings {
-        let videoSettings = VideoSettingsManager.load()
-        return CurrentSettings(
-            resolution: "1920x1080",
-            fps: 25,
-            bitrate: 10000000,
-            codec: "h264",
-            wbMode: .auto,
-            wbKelvin: nil,
-            wbTint: nil,
-            isoMode: .auto,
-            iso: 0,
-            shutterMode: .auto,
-            shutterS: 0.0,
-            focusMode: .auto,
-            focusDistance: nil,
-            zoomFactor: 1.0,
-            cameraPosition: "back",
-            lens: "wide",
-            streamingMode: videoSettings.streamingMode,
-            srtPort: videoSettings.srtPort,
-            srtLatency: videoSettings.srtLatency
-        )
-    }
-
-    private func createDefaultTelemetry() -> Telemetry {
-        return Telemetry(
-            fps: 0,
-            bitrate: 0,
-            battery: 1.0,
-            tempC: 25.0,
-            wifiRssi: -50,
-            cpuUsage: 0,
-            queueMs: nil,
-            droppedFrames: nil,
-            chargingState: nil
-        )
-    }
-}
-
-// MARK: - NetworkRequestHandler Extension
-
-extension AppCoordinator: NetworkRequestHandler {
-    func handleStreamStart(_ request: StreamStartRequest) async throws {
-        try await startStreaming(request: request)
-    }
-
-    func handleStreamStop() async throws {
-        await stopStreaming()
-    }
-
-    func handleCameraSettings(_ settings: CameraSettingsRequest) async throws {
-        try await updateCameraSettings(settings)
-    }
-
-    func handleGetStatus() async -> StatusResponse {
-        return await getStatus()
-    }
-
-    func handleGetCapabilities() async -> [Capability] {
-        return await getCapabilities()
-    }
-
-    func handleGetVideoSettings() async -> VideoSettingsResponse {
-        let settings = VideoSettingsManager.load()
-        let presets = VideoPreset.allPresets.map { preset in
-            VideoPresetResponse(
-                id: preset.id,
-                name: preset.name,
-                resolution: preset.resolution,
-                fps: preset.fps,
-                codec: preset.codec.rawValue,
-                bitrate: preset.bitrate
-            )
-        }
-
-        return VideoSettingsResponse(
-            selectedPresetId: settings.selectedPresetId,
-            customResolution: settings.customResolution,
-            customFps: settings.customFps,
-            customCodec: settings.customCodec?.rawValue,
-            customBitrate: settings.customBitrate,
-            availablePresets: presets
-        )
-    }
-
-    func handleUpdateVideoSettings(_ request: VideoSettingsUpdateRequest) async throws {
-        var settings = VideoSettingsManager.load()
-
-        settings.selectedPresetId = request.selectedPresetId
-        settings.customResolution = request.customResolution
-        settings.customFps = request.customFps
-        if let codecStr = request.customCodec {
-            settings.customCodec = VideoCodec(rawValue: codecStr)
-        }
-        settings.customBitrate = request.customBitrate
-
-        VideoSettingsManager.save(settings)
-
-        print("✅ Video settings updated and saved")
-    }
-
-    func handleScreenBrightness(_ request: ScreenBrightnessRequest) {
-        setScreenBrightness(dimmed: request.dimmed)
-    }
-
-    func handleMeasureWhiteBalance() async throws -> WhiteBalanceMeasureResponse {
-        let result = try await captureManager.measureWhiteBalance()
-        return WhiteBalanceMeasureResponse(sceneCCT_K: result.sceneCCT_K, tint: result.tint)
-    }
-
-    func handleUpdateAlias(_ request: AliasUpdateRequest) async throws -> AliasUpdateResponse {
-        let result = try await updateAlias(request.alias)
-        return AliasUpdateResponse(alias: result.alias, requiresRestart: result.requiresRestart)
-    }
-
-    func handleGetTorchLevel() async -> TorchLevelResponse {
-        let currentLevel = await tallyPoller.getTorchLevel()
-        let defaultLevel = await tallyPoller.getDefaultTorchLevel()
-        let deviceModel = await tallyPoller.getDeviceModel()
-
-        return TorchLevelResponse(
-            currentLevel: currentLevel,
-            defaultLevel: defaultLevel,
-            deviceModel: deviceModel
-        )
-    }
-
-    func handleUpdateTorchLevel(_ request: TorchLevelUpdateRequest) async throws -> TorchLevelResponse {
-        if let level = request.level {
-            let success = await tallyPoller.setTorchLevel(level)
-            if !success {
-                throw NSError(domain: "com.avocam", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid torch level (must be 0.01-1.0)"])
-            }
-        } else {
-            await tallyPoller.resetTorchToDefault()
-        }
-
-        return await handleGetTorchLevel()
-    }
 }

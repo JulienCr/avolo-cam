@@ -32,17 +32,9 @@ final class AuthMiddleware: HTTPMiddleware {
         guard let authHeader = headers["Authorization"],
               authHeader == "Bearer \(bearerToken)" else {
             print("⚠️ Authentication failed for \(method) \(path)")
-            return HTTPResponse(
-                status: 401,
-                body: errorJSON(code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
-            )
+            return .error(status: 401, code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
         }
 
         return nil  // Continue to next middleware/handler
-    }
-
-    private func errorJSON(code: String, message: String) -> Data {
-        let error = ["code": code, "message": message]
-        return (try? JSONSerialization.data(withJSONObject: error)) ?? Data()
     }
 }

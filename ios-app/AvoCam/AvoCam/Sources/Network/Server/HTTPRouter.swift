@@ -55,11 +55,6 @@ final class HTTPRouter {
         }
 
         // 404 Not Found
-        return HTTPResponse(status: 404, body: errorJSON(code: "NOT_FOUND", message: "Endpoint not found: \(method) \(path)"))
-    }
-
-    private func errorJSON(code: String, message: String) -> Data {
-        let error = ["code": code, "message": message]
-        return (try? JSONSerialization.data(withJSONObject: error)) ?? Data()
+        return .error(status: 404, code: "NOT_FOUND", message: "Endpoint not found: \(method) \(path)")
     }
 }

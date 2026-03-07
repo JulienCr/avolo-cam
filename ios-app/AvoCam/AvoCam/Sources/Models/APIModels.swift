@@ -98,6 +98,33 @@ struct CurrentSettings: Codable, Sendable {
     }
 }
 
+extension CurrentSettings {
+    static func makeDefault() -> CurrentSettings {
+        let videoSettings = VideoSettingsManager.load()
+        return CurrentSettings(
+            resolution: "1920x1080",
+            fps: 25,
+            bitrate: 10000000,
+            codec: "h264",
+            wbMode: .auto,
+            wbKelvin: nil,
+            wbTint: nil,
+            isoMode: .auto,
+            iso: 0,
+            shutterMode: .auto,
+            shutterS: 0.0,
+            focusMode: .auto,
+            focusDistance: nil,
+            zoomFactor: 1.0,
+            cameraPosition: "back",
+            lens: "wide",
+            streamingMode: videoSettings.streamingMode,
+            srtPort: videoSettings.srtPort,
+            srtLatency: videoSettings.srtLatency
+        )
+    }
+}
+
 enum WhiteBalanceMode: String, Codable, Sendable {
     case auto
     case manual
@@ -134,6 +161,22 @@ struct Telemetry: Codable, Sendable {
         case queueMs = "queue_ms"
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
+    }
+}
+
+extension Telemetry {
+    static func makeDefault() -> Telemetry {
+        return Telemetry(
+            fps: 0,
+            bitrate: 0,
+            battery: 1.0,
+            tempC: 25.0,
+            wifiRssi: -50,
+            cpuUsage: 0,
+            queueMs: nil,
+            droppedFrames: nil,
+            chargingState: nil
+        )
     }
 }
 

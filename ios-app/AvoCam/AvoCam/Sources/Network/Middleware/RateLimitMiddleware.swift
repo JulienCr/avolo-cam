@@ -22,18 +22,10 @@ final class RateLimitMiddleware: HTTPMiddleware {
 
         let now = Date()
         if now.timeIntervalSince(lastCameraUpdateTime) < minInterval {
-            return HTTPResponse(
-                status: 429,
-                body: errorJSON(code: "RATE_LIMITED", message: "Too many camera updates, wait \(Int(minInterval * 1000))ms")
-            )
+            return .error(status: 429, code: "RATE_LIMITED", message: "Too many camera updates, wait \(Int(minInterval * 1000))ms")
         }
 
         lastCameraUpdateTime = now
         return nil
-    }
-
-    private func errorJSON(code: String, message: String) -> Data {
-        let error = ["code": code, "message": message]
-        return (try? JSONSerialization.data(withJSONObject: error)) ?? Data()
     }
 }
