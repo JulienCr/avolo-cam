@@ -84,7 +84,7 @@ FFmpegD3D11VADecoder::~FFmpegD3D11VADecoder()
 bool FFmpegD3D11VADecoder::is_available()
 {
     // Check if D3D11 is available
-    ID3D11Device *test_device = nullptr;
+    ComPtr<ID3D11Device> test_device;
     D3D_FEATURE_LEVEL feature_level;
     HRESULT hr = D3D11CreateDevice(
         nullptr,
@@ -98,8 +98,6 @@ bool FFmpegD3D11VADecoder::is_available()
         nullptr);
 
     if (SUCCEEDED(hr) && test_device) {
-        test_device->Release();
-
         // Check if FFmpeg has H.264 decoder
         const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
         if (codec) {
@@ -152,11 +150,9 @@ bool FFmpegD3D11VADecoder::init_d3d11_device()
     }
 
     // Enable multithread protection (FFmpeg may call from multiple threads)
-    ID3D10Multithread *mt = nullptr;
-    hr = d3d_device_->QueryInterface(__uuidof(ID3D10Multithread), (void **)&mt);
-    if (SUCCEEDED(hr) && mt) {
+    ComQIPtr<ID3D10Multithread> mt(d3d_device_);
+    if (mt) {
         mt->SetMultithreadProtected(TRUE);
-        mt->Release();
     }
 
     blog(LOG_INFO, "[avolocam] FFmpeg: Created separate D3D11 device (feature level %d.%d)",
@@ -225,10 +221,10 @@ bool FFmpegD3D11VADecoder::init_ffmpeg_hwaccel()
             AVHWDeviceContext *hw_ctx = (AVHWDeviceContext *)hw_device_ctx_->data;
             AVD3D11VADeviceContext *d3d11_ctx = (AVD3D11VADeviceContext *)hw_ctx->hwctx;
 
-            // Use our D3D11 device
-            d3d11_ctx->device = d3d_device_;
+            // Use our D3D11 device (FFmpeg takes its own reference)
+            d3d11_ctx->device = d3d_device_.Get();
             d3d_device_->AddRef();
-            d3d11_ctx->device_context = d3d_context_;
+            d3d11_ctx->device_context = d3d_context_.Get();
             d3d_context_->AddRef();
 
             // Initialize the hardware context
@@ -309,11 +305,9 @@ bool FFmpegD3D11VADecoder::create_shared_texture_pool(uint32_t width, uint32_t h
         }
 
         // Get shared handle (stable, can be cached by OBS)
-        IDXGIResource *dxgi_res = nullptr;
-        hr = shared_pool_[i].texture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgi_res);
-        if (SUCCEEDED(hr) && dxgi_res) {
+        ComQIPtr<IDXGIResource> dxgi_res(shared_pool_[i].texture);
+        if (dxgi_res) {
             dxgi_res->GetSharedHandle(&shared_pool_[i].shared_handle);
-            dxgi_res->Release();
         }
 
         shared_pool_[i].width = width;
@@ -332,10 +326,7 @@ bool FFmpegD3D11VADecoder::create_shared_texture_pool(uint32_t width, uint32_t h
 void FFmpegD3D11VADecoder::release_shared_texture_pool()
 {
     for (size_t i = 0; i < SHARED_POOL_SIZE; i++) {
-        if (shared_pool_[i].texture) {
-            shared_pool_[i].texture->Release();
-            shared_pool_[i].texture = nullptr;
-        }
+        shared_pool_[i].texture.Clear();
         shared_pool_[i].shared_handle = nullptr;
         shared_pool_[i].in_use = false;
         shared_pool_[i].width = 0;
@@ -792,16 +783,8 @@ void FFmpegD3D11VADecoder::destroy_decoder()
 void FFmpegD3D11VADecoder::destroy_d3d11()
 {
     release_shared_texture_pool();
-
-    if (d3d_context_) {
-        d3d_context_->Release();
-        d3d_context_ = nullptr;
-    }
-
-    if (d3d_device_) {
-        d3d_device_->Release();
-        d3d_device_ = nullptr;
-    }
+    d3d_context_.Clear();
+    d3d_device_.Clear();
 }
 
 } // namespace avolocam

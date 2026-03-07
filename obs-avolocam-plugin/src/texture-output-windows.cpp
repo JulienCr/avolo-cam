@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <util/windows/ComPtr.hpp>
 
 namespace avolocam {
 
@@ -175,16 +176,13 @@ void TextureOutput::shutdown()
 void TextureOutput::release_shared_cache()
 {
     for (size_t i = 0; i < SHARED_CACHE_SIZE; i++) {
-        if (shared_cache_[i].opened_texture) {
-            static_cast<ID3D11Texture2D*>(shared_cache_[i].opened_texture)->Release();
-            shared_cache_[i].opened_texture = nullptr;
-        }
+        shared_cache_[i].opened_texture.Clear();
         shared_cache_[i].shared_handle = nullptr;
     }
     cached_obs_device_ = nullptr;
 }
 
-void *TextureOutput::get_or_open_shared_texture(void *obs_device, void *shared_handle)
+ID3D11Texture2D *TextureOutput::get_or_open_shared_texture(ID3D11Device *obs_device, void *shared_handle)
 {
     if (!obs_device || !shared_handle) return nullptr;
 
@@ -202,8 +200,8 @@ void *TextureOutput::get_or_open_shared_texture(void *obs_device, void *shared_h
     }
 
     // Not cached, open it
-    ID3D11Texture2D *opened = nullptr;
-    HRESULT hr = static_cast<ID3D11Device*>(obs_device)->OpenSharedResource(
+    ComPtr<ID3D11Texture2D> opened;
+    HRESULT hr = obs_device->OpenSharedResource(
         static_cast<HANDLE>(shared_handle),
         __uuidof(ID3D11Texture2D),
         (void**)&opened);
@@ -219,26 +217,20 @@ void *TextureOutput::get_or_open_shared_texture(void *obs_device, void *shared_h
             shared_cache_[i].shared_handle = shared_handle;
             shared_cache_[i].opened_texture = opened;
             blog(LOG_DEBUG, "[avolocam] Cached shared texture in slot %zu", i);
-            return opened;
+            return shared_cache_[i].opened_texture;
         }
     }
 
     // Cache full, replace slot 0 (simple LRU)
-    if (shared_cache_[0].opened_texture) {
-        static_cast<ID3D11Texture2D*>(shared_cache_[0].opened_texture)->Release();
-    }
     shared_cache_[0].shared_handle = shared_handle;
     shared_cache_[0].opened_texture = opened;
     blog(LOG_DEBUG, "[avolocam] Replaced shared texture cache slot 0");
-    return opened;
+    return shared_cache_[0].opened_texture;
 }
 
 void TextureOutput::release_win_texture()
 {
-    if (win_staging_texture_) {
-        ((ID3D11Texture2D *)win_staging_texture_)->Release();
-        win_staging_texture_ = nullptr;
-    }
+    win_staging_texture_.Clear();
 
     if (win_texture_) {
         obs_enter_graphics();
@@ -398,7 +390,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
 
     // Open the shared texture on OBS's device
     // This allows us to access the decoder's RGBA texture from OBS's device
-    ID3D11Texture2D *shared_texture = nullptr;
+    ComPtr<ID3D11Texture2D> shared_texture;
     HRESULT hr = obs_device->OpenSharedResource(
         converted.shared_handle,
         __uuidof(ID3D11Texture2D),
@@ -444,7 +436,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
 
         if (obs_texture) {
             // Get OBS's device context
-            ID3D11DeviceContext *obs_ctx = nullptr;
+            ComPtr<ID3D11DeviceContext> obs_ctx;
             obs_device->GetImmediateContext(&obs_ctx);
 
             if (obs_ctx) {
@@ -453,7 +445,6 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
                 // - shared_texture: opened on OBS device via OpenSharedResource
                 // - obs_texture: created on OBS device
                 obs_ctx->CopyResource(obs_texture, shared_texture);
-                obs_ctx->Release();
 
                 // Draw the texture as a source
                 gs_effect_t *effect = gs_get_effect();
@@ -479,9 +470,7 @@ OutputResult TextureOutput::output_via_d3d11(const DecodedFrame &frame)
         }
     }
 
-    // Release the shared texture reference (we opened it, we must release it)
-    shared_texture->Release();
-
+    // shared_texture released automatically by ComPtr
     obs_leave_graphics();
 
     // Release converted frame back to pool
@@ -537,8 +526,7 @@ OutputResult TextureOutput::prepare_gpu_frame(const DecodedFrame &frame)
     }
 
     // Get or open shared texture on OBS's device (cached to avoid slow OpenSharedResource every frame)
-    ID3D11Texture2D *shared_texture = static_cast<ID3D11Texture2D*>(
-        get_or_open_shared_texture(obs_device, converted.shared_handle));
+    ID3D11Texture2D *shared_texture = get_or_open_shared_texture(obs_device, converted.shared_handle);
 
     if (!shared_texture) {
         obs_leave_graphics();
@@ -576,13 +564,12 @@ OutputResult TextureOutput::prepare_gpu_frame(const DecodedFrame &frame)
             gs_texture_get_obj(win_texture_));
 
         if (obs_texture) {
-            ID3D11DeviceContext *obs_ctx = nullptr;
+            ComPtr<ID3D11DeviceContext> obs_ctx;
             obs_device->GetImmediateContext(&obs_ctx);
 
             if (obs_ctx) {
                 // GPU-GPU copy (fast!)
                 obs_ctx->CopyResource(obs_texture, shared_texture);
-                obs_ctx->Release();
 
                 // Store for video_render
                 current_output_texture_ = win_texture_;
@@ -658,8 +645,7 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
     }
 
     // Get or open shared texture (cached to avoid slow OpenSharedResource every frame)
-    ID3D11Texture2D *shared_texture = static_cast<ID3D11Texture2D*>(
-        get_or_open_shared_texture(obs_device, shared_handle));
+    ID3D11Texture2D *shared_texture = get_or_open_shared_texture(obs_device, shared_handle);
 
     if (!shared_texture) {
         blog(LOG_WARNING, "[avolocam] FFmpeg GPU: Failed to open shared texture");
@@ -684,10 +670,7 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
         win_texture_width_ != tex_desc.Width ||
         win_texture_height_ != tex_desc.Height) {
 
-        if (win_staging_texture_) {
-            static_cast<ID3D11Texture2D*>(win_staging_texture_)->Release();
-            win_staging_texture_ = nullptr;
-        }
+        win_staging_texture_.Clear();
 
         D3D11_TEXTURE2D_DESC staging_desc = tex_desc;
         staging_desc.Usage = D3D11_USAGE_STAGING;
@@ -695,15 +678,13 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
         staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         staging_desc.MiscFlags = 0;
 
-        ID3D11Texture2D *staging = nullptr;
-        HRESULT hr = obs_device->CreateTexture2D(&staging_desc, nullptr, &staging);
+        HRESULT hr = obs_device->CreateTexture2D(&staging_desc, nullptr, &win_staging_texture_);
         if (FAILED(hr)) {
             blog(LOG_ERROR, "[avolocam] FFmpeg GPU: Failed to create staging texture: 0x%08X", hr);
             obs_leave_graphics();
             return {false, OutputMode::GPU_ZERO_COPY, 0};
         }
 
-        win_staging_texture_ = staging;
         win_texture_width_ = tex_desc.Width;
         win_texture_height_ = tex_desc.Height;
         blog(LOG_INFO, "[avolocam] FFmpeg GPU: Created staging texture %ux%u",
@@ -711,14 +692,14 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
     }
 
     // Copy shared texture to staging
-    ID3D11DeviceContext *obs_ctx = nullptr;
+    ComPtr<ID3D11DeviceContext> obs_ctx;
     obs_device->GetImmediateContext(&obs_ctx);
     if (obs_ctx) {
-        obs_ctx->CopyResource(static_cast<ID3D11Texture2D*>(win_staging_texture_), shared_texture);
+        obs_ctx->CopyResource(win_staging_texture_, shared_texture);
 
         // Map staging and output via CPU path
         D3D11_MAPPED_SUBRESOURCE mapped;
-        HRESULT hr = obs_ctx->Map(static_cast<ID3D11Texture2D*>(win_staging_texture_), 0,
+        HRESULT hr = obs_ctx->Map(win_staging_texture_, 0,
                                    D3D11_MAP_READ, 0, &mapped);
         if (SUCCEEDED(hr)) {
             // Create OBS video frame
@@ -749,9 +730,8 @@ OutputResult TextureOutput::output_ffmpeg_gpu_frame(const DecodedFrame &frame, v
             obs_source_output_video(source_, &obs_frame);
             output_success = true;
 
-            obs_ctx->Unmap(static_cast<ID3D11Texture2D*>(win_staging_texture_), 0);
+            obs_ctx->Unmap(win_staging_texture_, 0);
         }
-        obs_ctx->Release();
     }
 
     obs_leave_graphics();

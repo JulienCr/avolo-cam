@@ -15,6 +15,12 @@
 #include <obs-module.h>
 #include <cstdint>
 
+#ifdef _WIN32
+#include <util/windows/ComPtr.hpp>
+struct ID3D11Texture2D;
+struct ID3D11Device;
+#endif
+
 namespace avolocam {
 
 /**
@@ -187,7 +193,7 @@ private:
 
 #ifdef _WIN32
     // Windows: D3D11 texture support
-    void *win_staging_texture_ = nullptr;  // ID3D11Texture2D*
+    ComPtr<ID3D11Texture2D> win_staging_texture_;
     gs_texture_t *win_texture_ = nullptr;
     uint32_t win_texture_width_ = 0;
     uint32_t win_texture_height_ = 0;
@@ -196,13 +202,13 @@ private:
     // Cache for opened shared textures (avoid OpenSharedResource every frame)
     struct SharedTextureCache {
         void *shared_handle = nullptr;      // HANDLE
-        void *opened_texture = nullptr;     // ID3D11Texture2D*
+        ComPtr<ID3D11Texture2D> opened_texture;
     };
     static const size_t SHARED_CACHE_SIZE = 4;
     SharedTextureCache shared_cache_[SHARED_CACHE_SIZE] = {};
-    void *cached_obs_device_ = nullptr;     // ID3D11Device*
+    ID3D11Device *cached_obs_device_ = nullptr;  // non-owning
 
-    void *get_or_open_shared_texture(void *obs_device, void *shared_handle);
+    ID3D11Texture2D *get_or_open_shared_texture(ID3D11Device *obs_device, void *shared_handle);
     void release_shared_cache();
 
     OutputResult output_via_d3d11(const DecodedFrame &frame);

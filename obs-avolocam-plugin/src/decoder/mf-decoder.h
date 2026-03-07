@@ -18,6 +18,7 @@
 #include <mferror.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <util/windows/ComPtr.hpp>
 #include <mutex>
 #include <deque>
 #include <vector>
@@ -54,21 +55,21 @@ public:
     bool set_gpu_output(bool enable) override;
 
     // D3D11 device access for GPU output
-    void *get_d3d_device() const { return d3d_device_; }
-    void *get_d3d_context() const { return d3d_context_; }
+    void *get_d3d_device() const { return d3d_device_.Get(); }
+    void *get_d3d_context() const { return d3d_context_.Get(); }
 
 private:
     DecoderConfig config_;
 
     // Media Foundation objects
-    IMFTransform *decoder_ = nullptr;
-    IMFMediaType *output_type_ = nullptr;
-    IMFDXGIDeviceManager *device_manager_ = nullptr;
+    ComPtr<IMFTransform> decoder_;
+    ComPtr<IMFMediaType> output_type_;
+    ComPtr<IMFDXGIDeviceManager> device_manager_;
     UINT device_manager_token_ = 0;
 
     // D3D11 objects for hardware decoding
-    ID3D11Device *d3d_device_ = nullptr;
-    ID3D11DeviceContext *d3d_context_ = nullptr;
+    ComPtr<ID3D11Device> d3d_device_;
+    ComPtr<ID3D11DeviceContext> d3d_context_;
 
     // Video dimensions
     uint32_t width_ = 0;
@@ -83,7 +84,7 @@ private:
 
     // Async staging textures for low-latency GPU→CPU copy
     // Double-buffered: read from one while writing to the other
-    ID3D11Texture2D *staging_textures_[2] = {nullptr, nullptr};
+    ComPtr<ID3D11Texture2D> staging_textures_[2];
     int staging_write_idx_ = 0;      // Index to write next frame
     int staging_read_idx_ = -1;      // Index with valid data to read (-1 = none)
     uint32_t staging_width_ = 0;
@@ -123,7 +124,7 @@ private:
     bool process_output_gpu(DecodedFrame &out);  // GPU texture path
 
     // Create sample from data
-    IMFSample *create_sample(const uint8_t *data, size_t size);
+    ComPtr<IMFSample> create_sample(const uint8_t *data, size_t size);
 
     // Parse SPS for dimensions
     bool parse_sps_dimensions(const uint8_t *sps, size_t size);

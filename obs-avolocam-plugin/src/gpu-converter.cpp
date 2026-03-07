@@ -74,36 +74,31 @@ bool GPUConverter::initialize(ID3D11Device *device, ID3D11DeviceContext *context
         return false;
     }
 
+    // Option B: AddRef via operator= (safe even if decoder destroyed first)
     device_ = device;
     context_ = context;
 
-    // Don't AddRef - we don't own these
-    // The decoder owns the device lifetime
-
     if (!create_shader()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create shader");
-        device_ = nullptr;
-        context_ = nullptr;
+        device_.Clear();
+        context_.Clear();
         return false;
     }
 
     if (!create_constant_buffer()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create constant buffer");
-        shader_->Release();
-        shader_ = nullptr;
-        device_ = nullptr;
-        context_ = nullptr;
+        shader_.Clear();
+        device_.Clear();
+        context_.Clear();
         return false;
     }
 
     if (!create_sampler()) {
         blog(LOG_ERROR, "[avolocam] GPUConverter: failed to create sampler");
-        constant_buffer_->Release();
-        constant_buffer_ = nullptr;
-        shader_->Release();
-        shader_ = nullptr;
-        device_ = nullptr;
-        context_ = nullptr;
+        constant_buffer_.Clear();
+        shader_.Clear();
+        device_.Clear();
+        context_.Clear();
         return false;
     }
 
@@ -118,45 +113,23 @@ void GPUConverter::shutdown()
 
     release_input_srvs();
 
-    // Release staging NV12 texture
-    if (staging_nv12_) {
-        staging_nv12_->Release();
-        staging_nv12_ = nullptr;
-    }
+    staging_nv12_.Clear();
     staging_width_ = 0;
     staging_height_ = 0;
 
     // Release texture pool
     for (size_t i = 0; i < TEXTURE_POOL_SIZE; i++) {
-        if (texture_pool_[i].uav) {
-            texture_pool_[i].uav->Release();
-            texture_pool_[i].uav = nullptr;
-        }
-        if (texture_pool_[i].texture) {
-            texture_pool_[i].texture->Release();
-            texture_pool_[i].texture = nullptr;
-        }
+        texture_pool_[i].uav.Clear();
+        texture_pool_[i].texture.Clear();
         texture_pool_[i].shared_handle = nullptr;
         texture_pool_[i].in_use = false;
     }
 
-    if (sampler_) {
-        sampler_->Release();
-        sampler_ = nullptr;
-    }
-
-    if (constant_buffer_) {
-        constant_buffer_->Release();
-        constant_buffer_ = nullptr;
-    }
-
-    if (shader_) {
-        shader_->Release();
-        shader_ = nullptr;
-    }
-
-    device_ = nullptr;
-    context_ = nullptr;
+    sampler_.Clear();
+    constant_buffer_.Clear();
+    shader_.Clear();
+    device_.Clear();
+    context_.Clear();
     initialized_ = false;
 
     blog(LOG_INFO, "[avolocam] GPUConverter shutdown");
@@ -164,8 +137,8 @@ void GPUConverter::shutdown()
 
 bool GPUConverter::create_shader()
 {
-    ID3DBlob *bytecode = nullptr;
-    ID3DBlob *errors = nullptr;
+    ComPtr<ID3DBlob> bytecode;
+    ComPtr<ID3DBlob> errors;
 
     UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #ifdef _DEBUG
@@ -189,20 +162,15 @@ bool GPUConverter::create_shader()
         if (errors) {
             blog(LOG_ERROR, "[avolocam] Shader compile error: %s",
                  (const char *)errors->GetBufferPointer());
-            errors->Release();
         }
         return false;
     }
-
-    if (errors) errors->Release();
 
     hr = device_->CreateComputeShader(
         bytecode->GetBufferPointer(),
         bytecode->GetBufferSize(),
         nullptr,
         &shader_);
-
-    bytecode->Release();
 
     if (FAILED(hr)) {
         blog(LOG_ERROR, "[avolocam] CreateComputeShader failed: 0x%08X", hr);
@@ -280,8 +248,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-            ID3D11Texture2D *texture = nullptr;
-            HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture);
+            HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture_pool_[i].texture);
             if (FAILED(hr)) {
                 blog(LOG_ERROR, "[avolocam] CreateTexture2D (output) failed: 0x%08X", hr);
                 return nullptr;
@@ -293,25 +260,20 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
             uav_desc.Texture2D.MipSlice = 0;
 
-            ID3D11UnorderedAccessView *uav = nullptr;
-            hr = device_->CreateUnorderedAccessView(texture, &uav_desc, &uav);
+            hr = device_->CreateUnorderedAccessView(texture_pool_[i].texture, &uav_desc, &texture_pool_[i].uav);
             if (FAILED(hr)) {
-                texture->Release();
+                texture_pool_[i].texture.Clear();
                 blog(LOG_ERROR, "[avolocam] CreateUnorderedAccessView failed: 0x%08X", hr);
                 return nullptr;
             }
 
             // Get shared handle
-            IDXGIResource *dxgi_resource = nullptr;
-            hr = texture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgi_resource);
+            ComQIPtr<IDXGIResource> dxgi_resource(texture_pool_[i].texture);
             HANDLE shared_handle = nullptr;
-            if (SUCCEEDED(hr) && dxgi_resource) {
+            if (dxgi_resource) {
                 dxgi_resource->GetSharedHandle(&shared_handle);
-                dxgi_resource->Release();
             }
 
-            texture_pool_[i].texture = texture;
-            texture_pool_[i].uav = uav;
             texture_pool_[i].shared_handle = shared_handle;
             texture_pool_[i].width = width;
             texture_pool_[i].height = height;
@@ -327,12 +289,9 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
     // Pool full - find least recently used (first not in use, any size)
     for (size_t i = 0; i < TEXTURE_POOL_SIZE; i++) {
         if (!texture_pool_[i].in_use) {
-            // Release old resources and null out immediately to prevent
-            // double-free if CreateTexture2D fails below
-            if (texture_pool_[i].uav) texture_pool_[i].uav->Release();
-            if (texture_pool_[i].texture) texture_pool_[i].texture->Release();
-            texture_pool_[i].uav = nullptr;
-            texture_pool_[i].texture = nullptr;
+            // Release old resources
+            texture_pool_[i].uav.Clear();
+            texture_pool_[i].texture.Clear();
             texture_pool_[i].shared_handle = nullptr;
             texture_pool_[i].width = 0;
             texture_pool_[i].height = 0;
@@ -349,8 +308,7 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-            ID3D11Texture2D *texture = nullptr;
-            HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture);
+            HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &texture_pool_[i].texture);
             if (FAILED(hr)) {
                 blog(LOG_ERROR, "[avolocam] CreateTexture2D (pool resize) failed: 0x%08X", hr);
                 return nullptr;
@@ -360,23 +318,18 @@ GPUConverter::PooledTexture *GPUConverter::get_or_create_output_texture(
             uav_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 
-            ID3D11UnorderedAccessView *uav = nullptr;
-            hr = device_->CreateUnorderedAccessView(texture, &uav_desc, &uav);
+            hr = device_->CreateUnorderedAccessView(texture_pool_[i].texture, &uav_desc, &texture_pool_[i].uav);
             if (FAILED(hr)) {
-                texture->Release();
+                texture_pool_[i].texture.Clear();
                 return nullptr;
             }
 
-            IDXGIResource *dxgi_resource = nullptr;
-            hr = texture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgi_resource);
+            ComQIPtr<IDXGIResource> dxgi_resource(texture_pool_[i].texture);
             HANDLE shared_handle = nullptr;
-            if (SUCCEEDED(hr) && dxgi_resource) {
+            if (dxgi_resource) {
                 dxgi_resource->GetSharedHandle(&shared_handle);
-                dxgi_resource->Release();
             }
 
-            texture_pool_[i].texture = texture;
-            texture_pool_[i].uav = uav;
             texture_pool_[i].shared_handle = shared_handle;
             texture_pool_[i].width = width;
             texture_pool_[i].height = height;
@@ -403,10 +356,7 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     if (!staging_nv12_ || staging_width_ != tex_desc.Width || staging_height_ != tex_desc.Height) {
         // Release old resources
         release_input_srvs();
-        if (staging_nv12_) {
-            staging_nv12_->Release();
-            staging_nv12_ = nullptr;
-        }
+        staging_nv12_.Clear();
 
         // Create staging NV12 texture with SHADER_RESOURCE flag
         D3D11_TEXTURE2D_DESC staging_desc = {};
@@ -448,10 +398,9 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     release_input_srvs();
 
     // Need ID3D11Device3 for CreateShaderResourceView1 with PlaneSlice
-    ID3D11Device3 *device3 = nullptr;
-    HRESULT hr = device_->QueryInterface(__uuidof(ID3D11Device3), (void **)&device3);
-    if (FAILED(hr) || !device3) {
-        blog(LOG_ERROR, "[avolocam] Failed to get ID3D11Device3: 0x%08X", hr);
+    ComQIPtr<ID3D11Device3> device3(device_);
+    if (!device3) {
+        blog(LOG_ERROR, "[avolocam] Failed to get ID3D11Device3");
         return false;
     }
 
@@ -463,10 +412,9 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     y_srv_desc.Texture2D.MipLevels = 1;
     y_srv_desc.Texture2D.PlaneSlice = 0;  // Y plane
 
-    hr = device3->CreateShaderResourceView1(staging_nv12_, &y_srv_desc, (ID3D11ShaderResourceView1 **)&y_srv_);
+    HRESULT hr = device3->CreateShaderResourceView1(staging_nv12_, &y_srv_desc, (ID3D11ShaderResourceView1 **)&y_srv_);
     if (FAILED(hr)) {
         blog(LOG_ERROR, "[avolocam] CreateShaderResourceView1 (Y plane on staging) failed: 0x%08X", hr);
-        device3->Release();
         return false;
     }
 
@@ -479,12 +427,9 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
     uv_srv_desc.Texture2D.PlaneSlice = 1;  // UV plane
 
     hr = device3->CreateShaderResourceView1(staging_nv12_, &uv_srv_desc, (ID3D11ShaderResourceView1 **)&uv_srv_);
-    device3->Release();
-
     if (FAILED(hr)) {
         blog(LOG_ERROR, "[avolocam] CreateShaderResourceView1 (UV plane on staging) failed: 0x%08X", hr);
-        y_srv_->Release();
-        y_srv_ = nullptr;
+        y_srv_.Clear();
         return false;
     }
 
@@ -497,14 +442,8 @@ bool GPUConverter::create_input_srvs(ID3D11Texture2D *texture, uint32_t subresou
 
 void GPUConverter::release_input_srvs()
 {
-    if (y_srv_) {
-        y_srv_->Release();
-        y_srv_ = nullptr;
-    }
-    if (uv_srv_) {
-        uv_srv_->Release();
-        uv_srv_ = nullptr;
-    }
+    y_srv_.Clear();
+    uv_srv_.Clear();
     srv_width_ = 0;
     srv_height_ = 0;
 }
@@ -547,11 +486,14 @@ bool GPUConverter::convert(const GPUDecodedFrame &input, ConvertedFrame &output)
     context_->CSSetShader(shader_, nullptr, 0);
 
     // Set resources
-    ID3D11ShaderResourceView *srvs[] = { y_srv_, uv_srv_ };
+    ID3D11ShaderResourceView *srvs[] = { y_srv_.Get(), uv_srv_.Get() };
     context_->CSSetShaderResources(0, 2, srvs);
-    context_->CSSetUnorderedAccessViews(0, 1, &out_tex->uav, nullptr);
-    context_->CSSetConstantBuffers(0, 1, &constant_buffer_);
-    context_->CSSetSamplers(0, 1, &sampler_);
+    ID3D11UnorderedAccessView *uav_raw = out_tex->uav.Get();
+    context_->CSSetUnorderedAccessViews(0, 1, &uav_raw, nullptr);
+    ID3D11Buffer *cb_raw = constant_buffer_.Get();
+    context_->CSSetConstantBuffers(0, 1, &cb_raw);
+    ID3D11SamplerState *sampler_raw = sampler_.Get();
+    context_->CSSetSamplers(0, 1, &sampler_raw);
 
     // Dispatch compute shader
     // 16x16 threads per group
@@ -598,16 +540,13 @@ HANDLE GPUConverter::get_shared_handle(ID3D11Texture2D *texture)
 {
     if (!texture) return nullptr;
 
-    IDXGIResource *dxgi_resource = nullptr;
-    HRESULT hr = texture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgi_resource);
-    if (FAILED(hr) || !dxgi_resource) {
+    ComQIPtr<IDXGIResource> dxgi_resource(texture);
+    if (!dxgi_resource) {
         return nullptr;
     }
 
     HANDLE handle = nullptr;
     dxgi_resource->GetSharedHandle(&handle);
-    dxgi_resource->Release();
-
     return handle;
 }
 

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <d3d11.h>
+#include <util/windows/ComPtr.hpp>
 
 namespace avolocam {
 
@@ -100,17 +101,17 @@ public:
     double get_avg_conversion_time_ms() const;
 
 private:
-    ID3D11Device *device_ = nullptr;
-    ID3D11DeviceContext *context_ = nullptr;
-    ID3D11ComputeShader *shader_ = nullptr;
-    ID3D11Buffer *constant_buffer_ = nullptr;
-    ID3D11SamplerState *sampler_ = nullptr;
+    ComPtr<ID3D11Device> device_;
+    ComPtr<ID3D11DeviceContext> context_;
+    ComPtr<ID3D11ComputeShader> shader_;
+    ComPtr<ID3D11Buffer> constant_buffer_;
+    ComPtr<ID3D11SamplerState> sampler_;
 
     // Texture pool for output RGBA textures
     static const size_t TEXTURE_POOL_SIZE = 4;
     struct PooledTexture {
-        ID3D11Texture2D *texture = nullptr;
-        ID3D11UnorderedAccessView *uav = nullptr;
+        ComPtr<ID3D11Texture2D> texture;
+        ComPtr<ID3D11UnorderedAccessView> uav;
         HANDLE shared_handle = nullptr;
         uint32_t width = 0;
         uint32_t height = 0;
@@ -119,13 +120,13 @@ private:
     PooledTexture texture_pool_[TEXTURE_POOL_SIZE];
 
     // Staging NV12 texture for input (decoder textures don't have SHADER_RESOURCE flag)
-    ID3D11Texture2D *staging_nv12_ = nullptr;
+    ComPtr<ID3D11Texture2D> staging_nv12_;
     uint32_t staging_width_ = 0;
     uint32_t staging_height_ = 0;
 
     // SRVs for input textures (created on staging texture)
-    ID3D11ShaderResourceView *y_srv_ = nullptr;
-    ID3D11ShaderResourceView *uv_srv_ = nullptr;
+    ComPtr<ID3D11ShaderResourceView> y_srv_;
+    ComPtr<ID3D11ShaderResourceView> uv_srv_;
     uint32_t srv_width_ = 0;
     uint32_t srv_height_ = 0;
 
@@ -153,7 +154,7 @@ private:
  * @return true on success
  */
 bool compile_compute_shader(const char *source, const char *entry_point,
-                            ID3DBlob **bytecode);
+                            ComPtr<ID3DBlob> &bytecode);
 
 } // namespace avolocam
 

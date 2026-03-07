@@ -35,6 +35,7 @@
 
 #ifdef _WIN32
 #include <mfapi.h>
+#include <util/windows/ComPtr.hpp>
 #endif
 
 // Property keys
@@ -880,7 +881,8 @@ struct SourceData {
                     gpu.converter->release_frame(converted);
                     // Release IMFSample (MF decoder keeps texture alive via sample ref)
                     if (frame.platform_handle) {
-                        static_cast<IUnknown*>(frame.platform_handle)->Release();
+                        ComPtr<IUnknown> prevent_leak;
+                        prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
                         frame.platform_handle = nullptr;
                     }
                     return;
@@ -889,7 +891,8 @@ struct SourceData {
             }
             // Fall through to CPU path — release IMFSample since GPU didn't consume it
             if (frame.platform_handle) {
-                static_cast<IUnknown*>(frame.platform_handle)->Release();
+                ComPtr<IUnknown> prevent_leak;
+                prevent_leak.Set(static_cast<IUnknown*>(frame.platform_handle));
                 frame.platform_handle = nullptr;
             }
         }

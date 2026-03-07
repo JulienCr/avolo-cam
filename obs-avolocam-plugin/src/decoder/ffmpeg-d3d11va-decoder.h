@@ -22,6 +22,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <util/windows/ComPtr.hpp>
 #include <mutex>
 #include <vector>
 
@@ -71,8 +72,8 @@ public:
     bool set_gpu_output(bool enable) override;
 
     // D3D11 device access (returns OUR device, not OBS's)
-    void *get_d3d_device() const override { return d3d_device_; }
-    void *get_d3d_context() const override { return d3d_context_; }
+    void *get_d3d_device() const override { return d3d_device_.Get(); }
+    void *get_d3d_context() const override { return d3d_context_.Get(); }
 
     /**
      * Get current shared handle for OBS to open
@@ -97,12 +98,12 @@ private:
     AVPacket *packet_ = nullptr;
 
     // D3D11 device - SEPARATE from OBS (decode thread doesn't touch OBS graphics)
-    ID3D11Device *d3d_device_ = nullptr;
-    ID3D11DeviceContext *d3d_context_ = nullptr;
+    ComPtr<ID3D11Device> d3d_device_;
+    ComPtr<ID3D11DeviceContext> d3d_context_;
 
     // Shared texture pool for output (triple buffering)
     struct SharedTexture {
-        ID3D11Texture2D *texture = nullptr;
+        ComPtr<ID3D11Texture2D> texture;
         HANDLE shared_handle = nullptr;
         bool in_use = false;
         uint32_t width = 0;
