@@ -187,6 +187,13 @@ void SourceData::tick_tally(uint64_t now_ns) {
     }
 }
 
+static void format_tally_json(char *buf, size_t buf_size, bool program, bool preview) {
+    snprintf(buf, buf_size,
+             R"({"op":"tally","program":%s,"preview":%s})",
+             program ? "true" : "false",
+             preview ? "true" : "false");
+}
+
 void SourceData::send_tally_state() {
     if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
     if (!source) return;
@@ -204,10 +211,7 @@ void SourceData::send_tally_state() {
     tally_preview.store(is_preview);
 
     char json[128];
-    snprintf(json, sizeof(json),
-             R"({"op":"tally","program":%s,"preview":%s})",
-             is_program ? "true" : "false",
-             is_preview ? "true" : "false");
+    format_tally_json(json, sizeof(json), is_program, is_preview);
 
     pipeline.ws_client->send_command(json);
 
@@ -224,10 +228,7 @@ void SourceData::send_tally_heartbeat() {
     if (!source) return;
 
     char json[128];
-    snprintf(json, sizeof(json),
-             R"({"op":"tally","program":%s,"preview":%s})",
-             tally_program.load() ? "true" : "false",
-             tally_preview.load() ? "true" : "false");
+    format_tally_json(json, sizeof(json), tally_program.load(), tally_preview.load());
     pipeline.ws_client->send_command(json);
 }
 

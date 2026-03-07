@@ -32,4 +32,7 @@ namespace avolocam {
 
     // UDP buffer
     constexpr int UDP_RCVBUF_SIZE = 4 * 1024 * 1024;
+
+    // WebSocket default port
+    constexpr uint16_t DEFAULT_WS_PORT = 8888;
 }

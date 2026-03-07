@@ -20,9 +20,9 @@ struct BitmapGlyph {
 };
 
 // Glyph dimensions (pixels)
-static const int GLYPH_W = 5;
-static const int GLYPH_H = 7;
-static const int CHAR_SPACING = 1; // 1 pixel gap between characters (at glyph scale)
+inline constexpr int GLYPH_W = 5;
+inline constexpr int GLYPH_H = 7;
+inline constexpr int CHAR_SPACING = 1; // 1 pixel gap between characters (at glyph scale)
 
 // Get glyph for a character, returns space glyph for unsupported chars.
 // Lowercase a-z is rendered as uppercase A-Z.

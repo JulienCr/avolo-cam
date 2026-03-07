@@ -63,9 +63,6 @@
 #define DECODER_TYPE_FFMPEG_D3D11VA   2
 #define DECODER_TYPE_FFMPEG_SOFTWARE  3
 
-// WebSocket port (same as HTTP API)
-#define DEFAULT_WS_PORT 8888
-
 namespace avolocam {
 
 // Global mDNS discovery instance (shared across all sources)
@@ -105,7 +102,6 @@ struct SourceData {
         std::unique_ptr<AccessUnitAssembler> assembler;
         std::unique_ptr<SyncStateMachine> sync_state;
         std::unique_ptr<PlatformDecoder> decoder;
-        std::unique_ptr<MdnsDiscovery> discovery;
         std::unique_ptr<TimestampMapper> timestamp_mapper;
         std::unique_ptr<TextureOutput> texture_output;
         std::unique_ptr<WebSocketClient> ws_client;
@@ -144,12 +140,9 @@ struct SourceData {
 #endif
         bool converter_initialized = false;
 
-        // Sync texture output
-        gs_texture_t *current_texture = nullptr;
+        // GPU frame dimensions (written by decode thread, read by render thread)
         std::atomic<uint32_t> texture_width{0};
         std::atomic<uint32_t> texture_height{0};
-        std::mutex texture_mutex;
-        bool has_new_frame = false;
 
         // Zero-copy shared handle (CUSTOM_DRAW)
         std::atomic<void*> latest_shared_handle{nullptr};
@@ -158,8 +151,6 @@ struct SourceData {
 
         // CPU fallback
         gs_texture_t *cpu_fallback_texture = nullptr;
-        uint32_t cpu_fallback_width = 0;
-        uint32_t cpu_fallback_height = 0;
     };
     GpuState gpu;
 

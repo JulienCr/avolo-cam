@@ -281,41 +281,46 @@ void SourceData::decode_frame_async(const AccessUnit& au) {
  * Output the latest decoded frame to OBS
  */
 void SourceData::output_latest_frame() {
-    DecodeQueue::Frame* frame = decode_queue.latest.load();
+    DecodeQueue::Frame* frame = decode_queue.latest.load(std::memory_order_acquire);
     if (!frame || !frame->valid) return;
     if (!source) return;
-
-    // Lock to prevent store_cpu_frame from mutating the buffer while we read it
-    std::lock_guard<std::mutex> lock(frame_mutex);
 
     output_count++;
 
     struct obs_source_frame obs_frame = {};
-    obs_frame.width = frame->width;
-    obs_frame.height = frame->height;
-    obs_frame.format = VIDEO_FORMAT_NV12;
-    obs_frame.timestamp = os_gettime_ns();
 
-    size_t y_size = (size_t)frame->y_stride * frame->height;
+    // Copy frame info under lock
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex);
+        obs_frame.width = frame->width;
+        obs_frame.height = frame->height;
+        obs_frame.format = VIDEO_FORMAT_NV12;
+        obs_frame.timestamp = os_gettime_ns();
 
-    obs_frame.data[0] = frame->data.data();
-    obs_frame.data[1] = frame->data.data() + y_size;
-    obs_frame.linesize[0] = frame->y_stride;
-    obs_frame.linesize[1] = frame->uv_stride;
+        size_t y_size = (size_t)frame->y_stride * frame->height;
 
-    video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_FULL,
-                                obs_frame.color_matrix,
-                                obs_frame.color_range_min,
-                                obs_frame.color_range_max);
-    obs_frame.full_range = true;
+        obs_frame.data[0] = frame->data.data();
+        obs_frame.data[1] = frame->data.data() + y_size;
+        obs_frame.linesize[0] = frame->y_stride;
+        obs_frame.linesize[1] = frame->uv_stride;
 
+        video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_FULL,
+                                    obs_frame.color_matrix,
+                                    obs_frame.color_range_min,
+                                    obs_frame.color_range_max);
+        obs_frame.full_range = true;
+    }
+
+    // Output outside the lock — obs_source_output_video copies the data internally,
+    // and the double-buffer scheme ensures the latest buffer won't be overwritten
+    // until after the next store cycle (writer targets 1 - current_buffer).
     obs_source_output_video(source, &obs_frame);
 
     if (output_count == 1) {
-        ALOG(LOG_INFO, "First frame output: %ux%u", frame->width, frame->height);
+        ALOG(LOG_INFO, "First frame output: %ux%u", obs_frame.width, obs_frame.height);
     } else if (config.debug_mode && output_count % 300 == 0) {
         ALOG(LOG_DEBUG, "Output frame #%d: %ux%u",
-             output_count, frame->width, frame->height);
+             output_count, obs_frame.width, obs_frame.height);
     }
 }
 
