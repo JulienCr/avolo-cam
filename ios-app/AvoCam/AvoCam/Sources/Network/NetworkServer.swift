@@ -250,7 +250,6 @@ class NetworkServer {
 
         router.use(RateLimitMiddleware())
 
-        // Register routes temporarily (until Phase 5 DI integration)
         registerRoutes()
     }
 
@@ -327,8 +326,7 @@ class NetworkServer {
         return await router.route(path: path, method: method, headers: headers, body: body)
     }
 
-    // MARK: - Temporary Endpoint Handlers
-    // TODO: These will be removed in Phase 5 when DI is complete and controllers are used directly
+    // MARK: - Endpoint Handlers
 
     private func handleGetStatus() async -> HTTPResponse {
         guard let handler = requestHandler else {

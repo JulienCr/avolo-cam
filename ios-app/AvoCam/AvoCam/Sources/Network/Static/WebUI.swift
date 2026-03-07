@@ -273,7 +273,7 @@ struct WebUI {
                 <h2>Stream Control</h2>
                 <button id="btn-start" class="btn-primary">▶️ Start Stream</button>
                 <button id="btn-stop" class="btn-danger">⏹ Stop Stream</button>
-                <button id="btn-keyframe" class="btn-secondary">🔑 Force Keyframe</button>
+
             </div>
 
             <div class="card">
@@ -615,10 +615,6 @@ struct WebUI {
 
             document.getElementById('btn-stop').addEventListener('click', async () => {
                 await apiCall('/api/v1/stream/stop', 'POST');
-            });
-
-            document.getElementById('btn-keyframe').addEventListener('click', async () => {
-                await apiCall('/api/v1/encoder/force_keyframe', 'POST');
             });
 
             document.getElementById('btn-update-alias').addEventListener('click', async () => {

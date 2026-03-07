@@ -91,19 +91,6 @@ class BonjourService: NSObject {
         service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
     }
 
-    /// Update stream info dynamically when stream configuration changes
-    func updateStreamInfo(width: Int, height: Int, fps: Int, spsHash: String? = nil) {
-        var updates: [String: String] = [
-            "width": "\(width)",
-            "height": "\(height)",
-            "fps": "\(fps)"
-        ]
-        if let hash = spsHash {
-            updates["sps_hash"] = hash
-        }
-        updateTXTRecord(updates)
-    }
-
     /// Update Flash UDP port in mDNS announcement
     /// - Parameter port: UDP port used for Flash streaming (0 to clear)
     func updateFlashPort(_ port: UInt16) {

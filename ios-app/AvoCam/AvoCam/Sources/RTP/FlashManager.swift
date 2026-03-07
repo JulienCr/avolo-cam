@@ -73,9 +73,6 @@ actor FlashManager {
     private var frameCount: Int = 0
     private var fpsStartTime: CFAbsoluteTime = 0
 
-    // Keyframe control
-    private var keyframeRequested = false
-
     // Frame info callback for WebSocket correlation
     typealias FrameInfoCallback = @Sendable (WebSocketFrameInfo) -> Void
     private var onFrameInfo: FrameInfoCallback?
@@ -172,14 +169,6 @@ actor FlashManager {
             fpsStartTime = now
         }
 
-        // Check if keyframe was requested
-        if keyframeRequested {
-            // Note: Current H264Encoder doesn't support forcing keyframe per-frame
-            // This would require passing frameProperties to VTCompressionSessionEncodeFrame
-            // For now, just clear the flag
-            keyframeRequested = false
-        }
-
         // Encode frame (callback will handle packetization and transmission)
         await encoder.encode(pixelBuffer: pixelBuffer, presentationTime: timestamp, duration: duration)
     }
@@ -207,14 +196,6 @@ actor FlashManager {
     /// - Parameter callback: Callback to invoke with frame timing information
     func setFrameInfoCallback(_ callback: @escaping FrameInfoCallback) {
         onFrameInfo = callback
-    }
-
-    /// Force the next frame to be a keyframe (IDR)
-    func forceKeyframe() async {
-        guard isRunning else { return }
-
-        keyframeRequested = true
-        print("🔑 Keyframe requested for next frame")
     }
 
     // MARK: - Telemetry

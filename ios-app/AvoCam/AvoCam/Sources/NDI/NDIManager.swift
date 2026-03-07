@@ -300,21 +300,6 @@ class NDIManager {
         }
     }
 
-    func updateMetadata(whiteBalance: (mode: String, kelvin: Int?), iso: Int, shutter: Double) {
-        let metadataXML = """
-        <avocam>
-          <alias>\(alias)</alias>
-          <wb_mode>\(whiteBalance.mode)</wb_mode>
-          <wb_kelvin>\(whiteBalance.kelvin ?? 0)</wb_kelvin>
-          <iso>\(iso)</iso>
-          <shutter>\(shutter)</shutter>
-        </avocam>
-        """
-
-        sendMetadata(xml: metadataXML)
-        print("📝 NDI metadata updated")
-    }
-
     // MARK: - Status
 
     func getConnectionCount() -> Int {

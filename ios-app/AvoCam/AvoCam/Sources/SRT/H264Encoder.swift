@@ -188,15 +188,6 @@ actor H264Encoder {
         }
     }
 
-    /// Force the next frame to be a keyframe (IDR)
-    func forceKeyframe() async {
-        guard compressionSession != nil else { return }
-
-        // Note: To force a keyframe, pass properties in encode() frameProperties parameter
-        // For future implementation: store a flag and use it in the next encode() call
-        print("🔑 Keyframe requested (to be implemented in encode)")
-    }
-
     // MARK: - Lifecycle
 
     /// Stop encoding and clean up resources
