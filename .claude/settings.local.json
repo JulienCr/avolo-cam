@@ -32,11 +32,14 @@
       "Bash(git reset:*)",
       "Bash(pnpm run check:*)",
       "Bash(git rm:*)",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Skill(pr-review-toolkit:review-pr)"
     ],
     "deny": [],
     "ask": []
   },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": []
+  "enabledMcpjsonServers": [
+    "swiftlens"
+  ]
 }
