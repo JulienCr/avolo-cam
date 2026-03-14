@@ -1,6 +1,6 @@
 # AvoloCam Build Makefile
 
-.PHONY: build build-ios build-tauri build-obs install-obs clean clean-ios clean-tauri clean-obs help
+.PHONY: build build-ios install-ios build-tauri build-obs install-obs clean clean-ios clean-tauri clean-obs help
 
 # OBS plugin install path (override with OBS_PLUGINS_DIR=...)
 OBS_PLUGINS_DIR ?= C:\Program Files\obs-studio\obs-plugins\64bit
@@ -13,6 +13,13 @@ build-ios:
 	@echo "[ios] Building iOS app..."
 	@cd ios-app/AvoCam && ./build-ipa.sh
 	@echo "[ios] Done: ios-app/AvoCam/build/ipa/AvoloCam.ipa"
+
+# Install IPA on connected iOS devices
+# Usage: make install-ios              (interactive)
+#        make install-ios DEVICES=all  (all devices)
+#        make install-ios DEVICES="AvoloPhone,iPhone de Julien"
+install-ios:
+	@cd ios-app/AvoCam && ./install-ios.sh $(DEVICES)
 
 # Build Tauri desktop app
 build-tauri:
@@ -55,6 +62,7 @@ help:
 	@echo "  make build-ios    - Build iOS Ad Hoc IPA"
 	@echo "  make build-tauri  - Build Tauri desktop app"
 	@echo "  make build-obs    - Build OBS plugin"
+	@echo "  make install-ios  - Install IPA on connected iOS devices"
 	@echo "  make install-obs  - Build + install OBS plugin (UAC)"
 	@echo "  make clean        - Clean all build artifacts"
 	@echo "  make clean-ios    - Clean iOS build only"
