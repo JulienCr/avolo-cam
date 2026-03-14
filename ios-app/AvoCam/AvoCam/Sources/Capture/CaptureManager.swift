@@ -118,10 +118,8 @@ actor CaptureManager: NSObject {
                     // Begin atomic configuration
                     session.beginConfiguration()
 
-                    // Disable wide color to prevent implicit conversions (iOS 10+)
-                    if #available(iOS 10.0, *) {
-                        session.automaticallyConfiguresCaptureDeviceForWideColor = false
-                    }
+                    // Disable wide color to prevent implicit conversions
+                    session.automaticallyConfiguresCaptureDeviceForWideColor = false
 
                     // Remove existing inputs/outputs if reconfiguring
                     if self.captureSession != nil {
@@ -226,11 +224,11 @@ actor CaptureManager: NSObject {
 
     /// Synchronous format configuration for use on sessionQueue
     private func configureFormatSync(device: AVCaptureDevice, resolution: String, framerate: Int) throws {
-        let dimensions = try parseResolution(resolution)
+        let resolution = try parseResolution(resolution)
 
         // Check format cache first
         let cacheKey = formatCacheKey(deviceID: device.uniqueID, lens: currentLens,
-                                       width: Int(dimensions.width), height: Int(dimensions.height), fps: framerate)
+                                       width: resolution.width, height: resolution.height, fps: framerate)
         let format: AVCaptureDevice.Format
         if let cachedFormat = formatCache[cacheKey] {
             format = cachedFormat
@@ -239,7 +237,7 @@ actor CaptureManager: NSObject {
             // Find matching format using best-fit logic
             guard
                 let foundFormat = findFormat(
-                    for: device, width: Int(dimensions.width), height: Int(dimensions.height),
+                    for: device, width: resolution.width, height: resolution.height,
                     framerate: framerate)
             else {
                 throw CaptureError.formatNotSupported
@@ -257,8 +255,8 @@ actor CaptureManager: NSObject {
         device.activeVideoMinFrameDuration = frameDuration
         device.activeVideoMaxFrameDuration = frameDuration
 
-        // Force sRGB color space to avoid wide color processing (iOS 10+)
-        if #available(iOS 10.0, *), device.activeColorSpace != .sRGB {
+        // Force sRGB color space to avoid wide color processing
+        if device.activeColorSpace != .sRGB {
             device.activeColorSpace = .sRGB
             print("✅ Set color space to sRGB")
         }
@@ -273,7 +271,7 @@ actor CaptureManager: NSObject {
 
         // PERF: Create zero-copy buffer pool with IOSurface backing
         if enableBufferPoolOptimization {
-            createPixelBufferPool(width: Int(dimensions.width), height: Int(dimensions.height))
+            createPixelBufferPool(width: resolution.width, height: resolution.height)
         }
 
         print("✅ Configured format: \(format.formatDescription)")
@@ -334,11 +332,9 @@ actor CaptureManager: NSObject {
     /// IMPORTANT: Must be called while device.lockForConfiguration() is held
     private func applySensorLockOptimizationsLocked(device: AVCaptureDevice) {
         // Disable HDR processing (3-5% GPU overhead even when "off")
-        if #available(iOS 13.0, *) {
-            if device.activeFormat.isVideoHDRSupported {
-                device.automaticallyAdjustsVideoHDREnabled = false
-                print("✅ PERF: HDR auto-adjust disabled")
-            }
+        if device.activeFormat.isVideoHDRSupported {
+            device.automaticallyAdjustsVideoHDREnabled = false
+            print("✅ PERF: HDR auto-adjust disabled")
         }
 
         // NOTE: Torch is now managed by TorchController for NDI tally indication
@@ -466,17 +462,7 @@ actor CaptureManager: NSObject {
     // MARK: - Camera Settings
 
     func updateSettings(_ settings: CameraSettingsRequest) async throws {
-        print("🔧 CaptureManager.updateSettings called")
-        print("   Camera position request: \(settings.cameraPosition ?? "nil")")
-        print("   Lens request: \(settings.lens ?? "nil")")
-        print("   WB mode: \(settings.wbMode?.rawValue ?? "nil"), kelvin: \(settings.wbKelvin?.description ?? "nil")")
-        print("   ISO mode: \(settings.isoMode?.rawValue ?? "nil"), value: \(settings.iso?.description ?? "nil")")
-        print("   Shutter mode: \(settings.shutterMode?.rawValue ?? "nil"), value: \(settings.shutterS?.description ?? "nil")")
-        print("   Zoom factor: \(settings.zoomFactor?.description ?? "nil")")
-        print("   Current position: \(currentCameraPosition == .back ? "back" : "front")")
-        print("   Current lens: \(currentLens)")
-        print("   Current resolution: \(currentResolution ?? "nil")")
-        print("   Current framerate: \(currentFramerate?.description ?? "nil")")
+        print("🔧 updateSettings: cam=\(settings.cameraPosition ?? (currentCameraPosition == .back ? "back" : "front")) lens=\(settings.lens ?? currentLens) wb=\(settings.wbMode?.rawValue ?? "-")/\(settings.wbKelvin.map { "\($0)K" } ?? "-") iso=\(settings.isoMode?.rawValue ?? "-")/\(settings.iso?.description ?? "-") shutter=\(settings.shutterMode?.rawValue ?? "-")/\(settings.shutterS.map { String(format: "%.4fs", $0) } ?? "-") zoom=\(settings.zoomFactor.map { String(format: "%.1f", $0) } ?? "-") res=\(currentResolution ?? "-")@\(currentFramerate?.description ?? "-")fps")
 
         // Handle camera position change (requires session reconfiguration)
         var needsReconfigure = false
@@ -899,12 +885,11 @@ actor CaptureManager: NSObject {
 
     // MARK: - Helpers
 
-    private func parseResolution(_ resolution: String) throws -> (width: Int32, height: Int32) {
-        let components = resolution.split(separator: "x").compactMap { Int32($0) }
-        guard components.count == 2 else {
+    private func parseResolution(_ resolution: String) throws -> Resolution {
+        guard let parsed = Resolution(parsing: resolution) else {
             throw CaptureError.invalidResolution
         }
-        return (width: components[0], height: components[1])
+        return parsed
     }
 
     // MARK: - White Balance Helpers

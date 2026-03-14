@@ -41,7 +41,9 @@ nonisolated private func encodingOutputCallback(
         return
     }
 
-    // Extract encoder instance and call handler
+    // Extract encoder instance without consuming the retain.
+    // The refcon holds a +1 retain via passRetained; it is balanced
+    // by an explicit release in stop()/configure()/deinit.
     let encoder = Unmanaged<H264Encoder>.fromOpaque(refCon).takeUnretainedValue()
     encoder.handleEncodedFrame(sampleBuffer)
 }
@@ -79,13 +81,17 @@ actor H264Encoder {
         self.bitrate = Int32(bitrate)
         self.gopSize = Int32(gopSize)
 
-        // Invalidate existing session if any
+        // Invalidate existing session if any, and release the retained refcon
         if let session = compressionSession {
             VTCompressionSessionInvalidate(session)
             compressionSession = nil
+            // Balance the passRetained(self) from the previous session creation
+            Unmanaged.passUnretained(self).release()
         }
 
-        // Create compression session with callback bridge
+        // Create compression session with callback bridge.
+        // We pass an unretained pointer during creation, then add a +1 retain
+        // only after confirming the session was created successfully.
         var session: VTCompressionSession?
 
         // Hardware encoder specification (iOS 17.4+)
@@ -100,6 +106,10 @@ actor H264Encoder {
             encoderSpecification = nil
         }
 
+        // Use passUnretained for the create call; we add the +1 retain below
+        // only if the session is created successfully.
+        let refconPtr = Unmanaged.passUnretained(self).toOpaque()
+
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: self.width,
@@ -109,13 +119,18 @@ actor H264Encoder {
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
             outputCallback: encodingOutputCallback,
-            refcon: Unmanaged.passUnretained(self).toOpaque(),
+            refcon: refconPtr,
             compressionSessionOut: &session
         )
 
         guard status == noErr, let session = session else {
             throw H264EncoderError.sessionCreationFailed(status)
         }
+
+        // Session created successfully. Add +1 retain so self stays alive
+        // as long as the compression session's refcon can invoke the callback.
+        // This retain is balanced by the release in invalidateSession()/configure().
+        _ = Unmanaged.passRetained(self)
 
         compressionSession = session
 
@@ -201,11 +216,36 @@ actor H264Encoder {
 
     /// Stop encoding and clean up resources
     func stop() {
+        invalidateSession()
+    }
+
+    /// Invalidate the compression session and release the retained self reference.
+    /// This is separated so it can be called from both stop() and deinit.
+    private func invalidateSession() {
         if let session = compressionSession {
             VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
             compressionSession = nil
-            print("⏹ H264Encoder stopped")
+            // Balance the passRetained(self) from session creation.
+            // After this release, the session's refcon no longer prevents deallocation.
+            Unmanaged.passUnretained(self).release()
+            print("H264Encoder stopped")
+        }
+    }
+
+    deinit {
+        // Safety net: if stop() was never called, the passRetained refcon keeps us alive,
+        // so reaching deinit means the session was already invalidated (or never created).
+        // However, if someone manually nil'd the strong reference after invalidation
+        // but before stop(), we still guard here.
+        if compressionSession != nil {
+            print("H264Encoder deinit: session still active, invalidating")
+            // VTCompressionSessionInvalidate is synchronous and safe to call from deinit.
+            VTCompressionSessionInvalidate(compressionSession!)
+            compressionSession = nil
+            // Note: we do NOT call release() here because if deinit is running,
+            // ARC has already determined the retain count reached zero, meaning
+            // the passRetained was already balanced (or this is the final release).
         }
     }
 

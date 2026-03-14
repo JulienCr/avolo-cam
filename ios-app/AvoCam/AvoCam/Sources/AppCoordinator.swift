@@ -154,25 +154,21 @@ class AppCoordinator: ObservableObject {
         }
     }
 
-    func stop() {
+    func stop() async {
         print("🛑 Stopping AvoCam")
 
-        // Stop streaming if active
+        // Stop streaming first (must complete before tearing down network)
         if isStreaming {
-            Task {
-                await stopStreaming()
-            }
+            await stopStreaming()
         }
 
         // Stop preview session
-        Task {
-            await stopPreviewSession()
-        }
+        await stopPreviewSession()
 
-        // Stop all services
-        Task {
-            await telemetryAggregator.stopCollection()
-        }
+        // Stop telemetry collection
+        await telemetryAggregator.stopCollection()
+
+        // Stop remaining services (synchronous)
         tallyPoller.stop()
         bonjourService.stop()
         networkServer.stop()
@@ -445,7 +441,7 @@ class AppCoordinator: ObservableObject {
             alias: configuration.cameraAlias,
             ndiState: isStreaming ? .streaming : .idle,
             current: settings,
-            telemetry: telemetry ?? createDefaultTelemetry(),
+            telemetry: telemetry ?? Telemetry.makeDefault(),
             capabilities: await getCapabilities(),
             tallyProgram: tallyState?.program,
             tallyPreview: tallyState?.preview,
@@ -561,19 +557,6 @@ class AppCoordinator: ObservableObject {
         )
     }
 
-    private func createDefaultTelemetry() -> Telemetry {
-        return Telemetry(
-            fps: 0,
-            bitrate: 0,
-            battery: 1.0,
-            tempC: 25.0,
-            wifiRssi: -50,
-            cpuUsage: 0,
-            queueMs: nil,
-            droppedFrames: nil,
-            chargingState: nil
-        )
-    }
 }
 
 // MARK: - NetworkRequestHandler Extension

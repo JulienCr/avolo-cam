@@ -135,6 +135,23 @@ struct Telemetry: Codable {
         case droppedFrames = "dropped_frames"
         case chargingState = "charging_state"
     }
+
+    /// Default telemetry with zeroed counters and neutral sensor values.
+    ///
+    /// Used as a placeholder before the first real telemetry collection cycle completes.
+    static func makeDefault() -> Telemetry {
+        return Telemetry(
+            fps: 0,
+            bitrate: 0,
+            battery: 1.0,
+            tempC: 25.0,
+            wifiRssi: -50,
+            cpuUsage: 0,
+            queueMs: nil,
+            droppedFrames: nil,
+            chargingState: nil
+        )
+    }
 }
 
 enum ChargingState: String, Codable {

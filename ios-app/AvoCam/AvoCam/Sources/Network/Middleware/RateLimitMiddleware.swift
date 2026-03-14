@@ -6,10 +6,11 @@
 //
 
 import Foundation
+import os
 
 /// Middleware that rate limits camera setting updates
 final class RateLimitMiddleware: HTTPMiddleware {
-    private var lastCameraUpdateTime: Date = Date.distantPast
+    private let lastCameraUpdateTime = OSAllocatedUnfairLock(initialState: Date.distantPast)
     private let minInterval: TimeInterval
 
     init(minInterval: TimeInterval = 0.05) {  // 50ms default
@@ -21,19 +22,18 @@ final class RateLimitMiddleware: HTTPMiddleware {
         guard path.contains("/camera") else { return nil }
 
         let now = Date()
-        if now.timeIntervalSince(lastCameraUpdateTime) < minInterval {
-            return HTTPResponse(
-                status: 429,
-                body: errorJSON(code: "RATE_LIMITED", message: "Too many camera updates, wait \(Int(minInterval * 1000))ms")
-            )
+        let shouldRateLimit = lastCameraUpdateTime.withLock { lastTime -> Bool in
+            if now.timeIntervalSince(lastTime) < minInterval {
+                return true
+            }
+            lastTime = now
+            return false
         }
 
-        lastCameraUpdateTime = now
-        return nil
-    }
+        if shouldRateLimit {
+            return HTTPResponse.error(status: 429, code: "RATE_LIMITED", message: "Too many camera updates, wait \(Int(minInterval * 1000))ms")
+        }
 
-    private func errorJSON(code: String, message: String) -> Data {
-        let error = ["code": code, "message": message]
-        return (try? JSONSerialization.data(withJSONObject: error)) ?? Data()
+        return nil
     }
 }

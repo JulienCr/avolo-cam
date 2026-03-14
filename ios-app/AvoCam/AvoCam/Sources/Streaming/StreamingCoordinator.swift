@@ -8,6 +8,29 @@
 import Foundation
 import AVFoundation
 
+/// Thread-safe counter for debug frame logging in capture callbacks.
+/// Uses `os_unfair_lock` for minimal overhead in the real-time capture path.
+private final class FrameCounter: @unchecked Sendable {
+    private var _value: Int = 0
+    private var _lock = os_unfair_lock()
+
+    /// Atomically increments the counter and returns the new value.
+    func increment() -> Int {
+        os_unfair_lock_lock(&_lock)
+        _value += 1
+        let v = _value
+        os_unfair_lock_unlock(&_lock)
+        return v
+    }
+
+    /// Resets the counter to zero.
+    func reset() {
+        os_unfair_lock_lock(&_lock)
+        _value = 0
+        os_unfair_lock_unlock(&_lock)
+    }
+}
+
 /// Actor that coordinates the streaming pipeline between capture and output (NDI, SRT, or Flash)
 actor StreamingCoordinator: StreamingService {
     // MARK: - Properties
@@ -20,6 +43,9 @@ actor StreamingCoordinator: StreamingService {
     private let srtManager: SRTManager
     private let flashManager: FlashManager
     private var tallyPoller: NDITallyPoller?
+
+    /// Debug frame counter for Flash mode logging (replaces leaked UnsafeMutablePointer)
+    private let flashFrameCounter = FrameCounter()
 
     // MARK: - Initialization
 
@@ -57,8 +83,9 @@ actor StreamingCoordinator: StreamingService {
             framerate: request.framerate
         )
 
-        let width = parseWidth(from: request.resolution)
-        let height = parseHeight(from: request.resolution)
+        let resolution = Resolution.parseWithDefault(request.resolution)
+        let width = resolution.width
+        let height = resolution.height
 
         // 2. Start appropriate streaming backend
         switch mode {
@@ -115,11 +142,11 @@ actor StreamingCoordinator: StreamingService {
 
             try await flashManager.start(config: flashConfig)
 
-            // Debug: frame counter for logging
-            let frameCounter = UnsafeMutablePointer<Int>.allocate(capacity: 1)
-            frameCounter.initialize(to: 0)
+            // Reset debug frame counter for this streaming session
+            flashFrameCounter.reset()
 
             // Start capture with frame callback that feeds Flash encoder
+            let counter = flashFrameCounter
             try await captureManager.startCapture { [flashManager] sampleBuffer in
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                     print("⚠️ FLASH: No pixel buffer in sample")
@@ -129,9 +156,9 @@ actor StreamingCoordinator: StreamingService {
                 let duration = CMSampleBufferGetDuration(sampleBuffer)
 
                 // Debug logging every 30 frames
-                frameCounter.pointee += 1
-                if frameCounter.pointee % 30 == 1 {
-                    print("📹 FLASH: Sending frame \(frameCounter.pointee) to encoder")
+                let count = counter.increment()
+                if count % 30 == 1 {
+                    print("📹 FLASH: Sending frame \(count) to encoder")
                 }
 
                 Task {
@@ -196,15 +223,4 @@ actor StreamingCoordinator: StreamingService {
         return currentMode
     }
 
-    // MARK: - Private Helpers
-
-    private func parseWidth(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.first ?? "1920") ?? 1920
-    }
-
-    private func parseHeight(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.last ?? "1080") ?? 1080
-    }
 }

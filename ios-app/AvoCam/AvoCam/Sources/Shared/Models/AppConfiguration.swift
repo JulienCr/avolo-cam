@@ -97,7 +97,6 @@ struct AppConfiguration {
     /// - Parameter newAlias: New camera alias
     /// - Returns: Updated configuration
     func withAlias(_ newAlias: String) -> AppConfiguration {
-        var updated = self
         var mutable = AppConfiguration(
             cameraAlias: newAlias,
             bearerToken: bearerToken,

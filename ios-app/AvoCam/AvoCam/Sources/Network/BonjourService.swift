@@ -58,8 +58,22 @@ class BonjourService: NSObject {
 
     // MARK: - TXT Record
 
-    private func createTXTRecord() -> Data? {
-        var txtDict: [String: Data] = [
+    /// Builds the base TXT record dictionary shared by all TXT record operations.
+    ///
+    /// - Note: The bearer token is intentionally included in the mDNS TXT record.
+    ///   This is by design for zero-configuration discovery: the Tauri controller
+    ///   resolves `_avolocam._tcp` services on the local network and reads the token
+    ///   from the TXT record to auto-authenticate against the camera's REST API and
+    ///   WebSocket. mDNS is inherently local-network-only, so the token is only
+    ///   visible to devices on the same LAN/WLAN segment -- the same trust boundary
+    ///   that already has direct IP access to the camera.
+    private func baseTXTDictionary() -> [String: Data] {
+        // TODO: width, height, fps, codec, and profile are placeholders.
+        // These should reflect the actual active stream configuration.
+        // Currently updateStreamInfo() exists but is never called from
+        // AppCoordinator when a stream starts. Wire it up so the TXT
+        // record advertises real values once streaming begins.
+        return [
             "alias": alias.data(using: .utf8) ?? Data(),
             "version": "1.0".data(using: .utf8) ?? Data(),
             "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
@@ -71,8 +85,11 @@ class BonjourService: NSObject {
             "codec": "h264".data(using: .utf8) ?? Data(),
             "profile": "high".data(using: .utf8) ?? Data()
         ]
+    }
 
-        // Add Flash UDP port if active (non-zero)
+    private func createTXTRecord() -> Data? {
+        var txtDict = baseTXTDictionary()
+
         if flashUdpPort > 0 {
             txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
         }
@@ -91,7 +108,7 @@ class BonjourService: NSObject {
         service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
     }
 
-    /// Update stream info dynamically when stream configuration changes
+    /// Update stream info dynamically when stream configuration changes.
     func updateStreamInfo(width: Int, height: Int, fps: Int, spsHash: String? = nil) {
         var updates: [String: String] = [
             "width": "\(width)",
@@ -104,35 +121,22 @@ class BonjourService: NSObject {
         updateTXTRecord(updates)
     }
 
-    /// Update Flash UDP port in mDNS announcement
+    /// Update Flash UDP port in mDNS announcement.
     /// - Parameter port: UDP port used for Flash streaming (0 to clear)
     func updateFlashPort(_ port: UInt16) {
         flashUdpPort = port
 
         guard let service = netService else { return }
 
-        // Rebuild full TXT record with new Flash port
-        var txtDict: [String: Data] = [
-            "alias": alias.data(using: .utf8) ?? Data(),
-            "version": "1.0".data(using: .utf8) ?? Data(),
-            "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
-            "token": bearerToken.data(using: .utf8) ?? Data(),
-            "ws_port": "\(self.port)".data(using: .utf8) ?? Data(),
-            "width": "1920".data(using: .utf8) ?? Data(),
-            "height": "1080".data(using: .utf8) ?? Data(),
-            "fps": "25".data(using: .utf8) ?? Data(),
-            "codec": "h264".data(using: .utf8) ?? Data(),
-            "profile": "high".data(using: .utf8) ?? Data()
-        ]
+        var txtDict = baseTXTDictionary()
 
-        // Add Flash UDP port if active (non-zero)
         if port > 0 {
             txtDict["flash_udp_port"] = "\(port)".data(using: .utf8) ?? Data()
         }
 
         service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
 
-        print("📢 Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
+        print("Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
     }
 }
 

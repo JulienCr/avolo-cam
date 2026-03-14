@@ -69,46 +69,57 @@ actor UDPTransmitter {
         parameters.allowLocalEndpointReuse = false
         parameters.includePeerToPeer = false
 
-        // Disable congestion control for lowest latency (fire-and-forget)
-        if let udpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolUDP.Options {
-            // UDP options can be configured here if needed
-            // For now, we use defaults which is suitable for RTP
-        }
-
         // Set quality of service
         parameters.serviceClass = .responsiveData
 
         // Create connection
         let newConnection = NWConnection(to: endpoint, using: parameters)
 
-        // Set up state handler
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            var hasContinued = false
+        // Wait for connection to reach a terminal state using a single continuation
+        // instead of a polling loop. Timeout via a racing Task.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { @Sendable in
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    // Guard against multiple resumes since stateUpdateHandler fires for every transition
+                    var hasResumed = false
 
-            newConnection.stateUpdateHandler = { [weak self] state in
-                Task {
-                    await self?.handleStateChange(state)
+                    newConnection.stateUpdateHandler = { [weak self] state in
+                        Task {
+                            await self?.handleStateChange(state)
+                        }
 
-                    // Resume continuation on first state update
-                    if !hasContinued {
-                        hasContinued = true
-                        continuation.resume()
+                        guard !hasResumed else { return }
+
+                        switch state {
+                        case .ready:
+                            hasResumed = true
+                            continuation.resume()
+                        case .failed(let error):
+                            hasResumed = true
+                            continuation.resume(throwing: UDPTransmitterError.connectionFailed(error))
+                        case .cancelled:
+                            hasResumed = true
+                            continuation.resume(throwing: UDPTransmitterError.connectionFailed(
+                                NSError(domain: "UDPTransmitter", code: -2, userInfo: [
+                                    NSLocalizedDescriptionKey: "Connection cancelled"
+                                ])
+                            ))
+                        case .setup, .preparing, .waiting:
+                            // Intermediate states -- keep waiting
+                            break
+                        @unknown default:
+                            break
+                        }
                     }
+
+                    // Start connection on the dedicated queue
+                    newConnection.start(queue: self.queue)
                 }
             }
 
-            // Start connection
-            newConnection.start(queue: queue)
-        }
-
-        connection = newConnection
-
-        // Wait for connection to be ready (with timeout)
-        let startTime = Date()
-        let timeout: TimeInterval = 5.0
-
-        while connectionState != .ready {
-            if Date().timeIntervalSince(startTime) > timeout {
+            // Timeout task
+            group.addTask { @Sendable in
+                try await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
                 throw UDPTransmitterError.connectionFailed(
                     NSError(domain: "UDPTransmitter", code: -1, userInfo: [
                         NSLocalizedDescriptionKey: "Connection timeout"
@@ -116,20 +127,14 @@ actor UDPTransmitter {
                 )
             }
 
-            if case .failed(let error) = connectionState {
-                throw UDPTransmitterError.connectionFailed(error)
-            }
-
-            if connectionState == .cancelled {
-                throw UDPTransmitterError.connectionFailed(
-                    NSError(domain: "UDPTransmitter", code: -2, userInfo: [
-                        NSLocalizedDescriptionKey: "Connection cancelled"
-                    ])
-                )
-            }
-
-            try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+            // Wait for the first task to complete (either connected or timed out)
+            // then cancel the remaining task
+            try await group.next()
+            group.cancelAll()
         }
+
+        connection = newConnection
+        connectionState = .ready
 
         print("✅ UDP connected to \(host):\(port)")
     }
@@ -148,9 +153,11 @@ actor UDPTransmitter {
 
     // MARK: - Data Transmission
 
-    /// Send data via UDP
+    /// Send data via UDP (fire-and-forget for ultra-low latency)
     /// - Parameter data: Data to send
-    func send(_ data: Data) async throws {
+    /// - Note: Does not await send completion. Errors are tracked via telemetry counters,
+    ///   not thrown per-packet. This avoids 30-40 sequential awaits per 4K frame.
+    func send(_ data: Data) throws {
         guard let conn = connection else {
             throw UDPTransmitterError.notConnected
         }
@@ -159,23 +166,22 @@ actor UDPTransmitter {
             throw UDPTransmitterError.notConnected
         }
 
-        // Send data (fire-and-forget for low latency)
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            conn.send(
-                content: data,
-                completion: .contentProcessed { [weak self] error in
-                    Task {
-                        if let error = error {
-                            await self?.recordSendError()
-                            print("⚠️ UDP send error: \(error)")
-                        } else {
-                            await self?.recordSentData(bytes: data.count)
-                        }
-                        continuation.resume()
+        let byteCount = data.count
+
+        // Fire-and-forget: no await, errors tracked asynchronously via telemetry
+        conn.send(
+            content: data,
+            completion: .contentProcessed { [weak self] error in
+                guard let self = self else { return }
+                Task {
+                    if error != nil {
+                        await self.recordSendError()
+                    } else {
+                        await self.recordSentData(bytes: byteCount)
                     }
                 }
-            )
-        }
+            }
+        )
     }
 
     // MARK: - Telemetry
