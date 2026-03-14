@@ -262,6 +262,34 @@ UDP recv -> Jitter Buffer -> RTP Depack -> AU Assembler -> Sync FSM -> D3D11VA D
 }
 ```
 
+## Roadmap
+
+### Current: Lot A - MCP Core
+
+Single app build, multi-transport streaming (NDI/SRT/Flash up to 4K), Tauri controller with discovery, grid view, and group control. Target: ≥3 iPhones streaming stably for ≥2 hours.
+
+### Planned Enhancements
+
+| Feature | Complexity | Description |
+|---------|-----------|-------------|
+| **Audio capture (AAC)** | Low | Mic capture + AAC encoding, muxed into existing transports |
+| **USB transport (usbmuxd)** | Medium | Zero packet loss, ~1-2ms latency via Lightning/USB-C tunnel |
+| **120 FPS support** | Medium | Slow-motion / high-framerate capture for specialized use cases |
+| **HDR HLG / BT.2020** | High | HDR metadata (ContentLightLevel, MasteringDisplay), OBS color space support |
+| **Android support** | High | Kotlin app with identical API surface |
+
+### Lot B — Stability & Multi-Cam Hardening
+Reconnect logic, thermal management, RSSI telemetry, settings profiles
+
+### Lot C — Image Quality & Ops
+Orientation lock, lens selection, anti-banding, WB presets, test patterns
+
+### Lot D — Diagnostics & Admin
+Diagnostics endpoint, log download, telemetry charts, config backup/restore
+
+### Lot E — Polish & Extensions
+Adaptive bitrate, NTP timestamps, TLS, Ethernet detection, LUT/HDR→SDR
+
 ## Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Architecture and implementation guidance
