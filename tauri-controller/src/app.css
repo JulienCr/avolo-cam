@@ -4,26 +4,31 @@
 
 @layer base {
   :root {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 90%;
-    --card: 0 0% 8%;
-    --card-foreground: 0 0% 90%;
-    --popover: 0 0% 8%;
-    --popover-foreground: 0 0% 90%;
-    --primary: 217 91% 60%;
+    /* Palette: #151518 #1C1D22 #24252C #31343F #3370E5 #DD3735 */
+    --background: 240 7% 9%;       /* #151518 — deepest bg */
+    --foreground: 224 20% 91%;     /* #E2E5EE — bright blue-white */
+    --card: 233 10% 16%;           /* #24252C — panels, cards */
+    --card-foreground: 224 20% 91%;
+    --popover: 233 10% 16%;
+    --popover-foreground: 224 20% 91%;
+    --primary: 220 78% 55%;        /* #3370E5 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 10%;
-    --secondary-foreground: 0 0% 90%;
-    --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 55%;
-    --accent: 0 0% 12%;
-    --accent-foreground: 0 0% 90%;
-    --destructive: 0 72% 51%;
+    --secondary: 227 13% 22%;      /* #31343F — controls, inputs */
+    --secondary-foreground: 224 15% 82%;
+    --muted: 227 13% 22%;
+    --muted-foreground: 225 12% 62%;  /* #8E96AB — lisible sur #31343F */
+    --accent: 228 11% 25%;         /* #383B48 — hover */
+    --accent-foreground: 224 20% 91%;
+    --destructive: 1 70% 54%;      /* #DD3735 */
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 217 91% 60%;
-    --radius: 0.125rem;
+    --border: 226 12% 28%;         /* #3E4150 — visible against surfaces */
+    --input: 227 13% 22%;          /* #31343F — same as secondary */
+    --ring: 220 78% 55%;
+    --radius: 0.1875rem;
+
+    --surface: 229 10% 20%;        /* #2D2F38 — intermediate */
+    --warning: 38 92% 50%;
+    --success: 152 60% 48%;
 
     /* Temperature: warm -> neutral -> cool */
     --k-2000: #FF8C3A;
@@ -76,5 +81,77 @@
 
   .mode-badge-flash {
     @apply bg-orange-900/30 text-orange-400;
+  }
+
+  /* Custom range slider — filled track via inline style background gradient */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: hsl(var(--secondary));
+    outline: none;
+    cursor: pointer;
+    border: none;
+  }
+
+  input[type="range"]:disabled {
+    cursor: default;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: hsl(var(--foreground));
+    border: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+
+  input[type="range"]:hover::-webkit-slider-thumb {
+    transform: scale(1.15);
+  }
+
+  input[type="range"]:disabled::-webkit-slider-thumb {
+    background: hsl(var(--muted-foreground));
+    box-shadow: none;
+    cursor: default;
+    transform: none;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: hsl(var(--foreground));
+    border: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+  }
+
+  input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: hsl(var(--secondary));
+  }
+
+  input[type="range"]::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: hsl(var(--primary));
+  }
+
+  input[type="range"]:disabled::-moz-range-thumb {
+    background: hsl(var(--muted-foreground));
+    box-shadow: none;
+    cursor: default;
+  }
+
+  input[type="range"]:disabled::-moz-range-progress {
+    background: hsl(var(--muted-foreground) / 0.3);
   }
 }

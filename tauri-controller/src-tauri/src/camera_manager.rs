@@ -1013,6 +1013,11 @@ impl CameraManager {
         self.persisted_settings.get(camera_id).and_then(|(_, cam)| cam.clone())
     }
 
+    /// Get persisted stream settings for a camera (used to init UI on reload)
+    pub fn get_persisted_stream_settings(&self, camera_id: &str) -> Option<StreamStartRequest> {
+        self.persisted_settings.get(camera_id).and_then(|(stream, _)| stream.clone())
+    }
+
     // MARK: - MIDI Channel Management
 
     /// Find the next available MIDI channel (1-8)

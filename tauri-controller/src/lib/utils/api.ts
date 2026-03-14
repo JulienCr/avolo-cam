@@ -110,6 +110,12 @@ export async function getPersistedCameraSettings(
   return invoke('get_persisted_camera_settings', { cameraId });
 }
 
+export async function getPersistedStreamSettings(
+  cameraId: string
+): Promise<Partial<StreamSettings> | null> {
+  return invoke('get_persisted_stream_settings', { cameraId });
+}
+
 // Group Operations
 export async function groupStartStream(
   cameraIds: string[],
