@@ -58,17 +58,16 @@ export async function discoverCamerasAction(): Promise<void> {
       );
     });
 
-    // Auto-add new cameras using token from TXT records (token is optional)
-    for (const discovered of newCameras) {
+    // Auto-add new cameras in parallel using token from TXT records (token is optional)
+    await Promise.all(newCameras.map(async (discovered) => {
       const token = discovered.txt_records?.token || '';
-
       try {
         await api.addCameraManual(discovered.ip, discovered.port, token);
         console.log(`Auto-added camera: ${discovered.alias}`);
       } catch (e) {
         console.error(`Failed to auto-add camera ${discovered.alias}:`, e);
       }
-    }
+    }));
 
     // Refresh camera list after adding
     if (newCameras.length > 0) {

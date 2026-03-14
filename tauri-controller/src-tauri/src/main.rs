@@ -12,6 +12,7 @@ use tauri::{Manager, State, AppHandle};
 use tokio::sync::RwLock;
 
 use camera_manager::CameraManager;
+use futures_util::future::join_all;
 use midi_manager::{MidiManager, MidiCommand};
 use models::*;
 
@@ -120,9 +121,8 @@ async fn handle_midi_command(
 
             let manager = camera_manager.read().await;
             if let Some(camera_id) = manager.get_camera_id_by_midi_channel(channel) {
-                // Check if camera is in manual focus mode
-                let camera = manager.get_all_cameras().await.into_iter()
-                    .find(|c| c.id == camera_id);
+                // Check if camera is in manual focus mode (use cached info, no HTTP)
+                let camera = manager.get_cached_camera_info(&camera_id);
 
                 if let Some(camera_info) = camera {
                     let is_manual = camera_info.status
@@ -211,11 +211,31 @@ async fn remove_camera(
 async fn get_cameras(
     state: State<'_, AppState>,
 ) -> Result<Vec<CameraInfo>, String> {
-    // Use read lock for HTTP polling (can take seconds, must not block writes)
-    let cameras = {
+    // Brief read lock: snapshot camera info + client handles (no HTTP, instant)
+    let snapshots = {
         let manager = state.camera_manager.read().await;
-        manager.get_all_cameras().await
+        manager.get_camera_snapshots()
     };
+
+    // Poll all cameras in parallel WITHOUT holding any lock
+    let futures: Vec<_> = snapshots.into_iter().map(|(id, mut info, client)| {
+        async move {
+            match client.read().await.get_status().await {
+                Ok(status) => {
+                    info.status = Some(status);
+                    info.connection_state = ConnectionState::Connected;
+                }
+                Err(e) => {
+                    log::warn!("Failed to get status for camera {}: {}", id, e);
+                    info.connection_state = ConnectionState::Error;
+                }
+            }
+            info
+        }
+    }).collect();
+
+    let cameras = join_all(futures).await;
+
     // Brief write lock only to update connection states and auto-apply on reconnect
     {
         let mut manager = state.camera_manager.write().await;

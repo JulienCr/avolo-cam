@@ -203,68 +203,82 @@ impl CameraManager {
 
         log::info!("Loading {} cameras from {:?}", persistence.cameras.len(), path);
 
-        for persisted in persistence.cameras {
-            let camera_id = persisted.id.clone();
-            let stream_settings = persisted.stream_settings.clone();
-            let camera_settings = persisted.camera_settings.clone();
-            let midi_channel = persisted.midi_channel;
+        // Spawn parallel connection attempts for all persisted cameras
+        let futures: Vec<_> = persistence.cameras.into_iter().map(|persisted| {
+            let midi_manager = self.midi_manager.clone();
+            async move {
+                let camera_id = format!("{}:{}", persisted.ip, persisted.port);
+                let client = CameraClient::new(persisted.ip.clone(), persisted.port, persisted.token.clone());
 
-            // Clone fields needed for offline fallback (add_camera_manual moves the originals)
-            let alias_clone = persisted.alias.clone();
-            let ip_clone = persisted.ip.clone();
-            let port_val = persisted.port;
-            let token_clone = persisted.token.clone();
+                // Try to connect (get_status + get_capabilities + websocket)
+                match client.get_status().await {
+                    Ok(status) => {
+                        let capabilities = match client.get_capabilities().await {
+                            Ok(caps) => Some(caps),
+                            Err(e) => {
+                                log::warn!("Failed to load capabilities for camera {}: {}", camera_id, e);
+                                None
+                            }
+                        };
 
-            // Try to add camera, but don't fail if one camera fails
-            match self.add_camera_manual(persisted.ip, persisted.port, persisted.token).await {
-                Ok(id) => {
-                    log::info!("Loaded camera: ({})", id);
+                        let client_arc = Arc::new(RwLock::new(client));
+                        let _midi_manager_clone = midi_manager;
+                        client_arc.write().await.connect_websocket(move |_telemetry| {}).await.ok();
 
-                    // Restore MIDI channel assignment
-                    if let Some(channel) = midi_channel {
-                        if let Some(camera) = self.cameras.get_mut(&id) {
-                            camera.info.midi_channel = Some(channel);
-                            log::info!("Restored MIDI channel {} for camera: {}", channel, id);
-                        }
+                        let info = CameraInfo {
+                            id: camera_id.clone(),
+                            alias: status.alias.clone(),
+                            ip: persisted.ip,
+                            port: persisted.port,
+                            token: persisted.token,
+                            status: Some(status),
+                            connection_state: ConnectionState::Connected,
+                            midi_channel: persisted.midi_channel,
+                            capabilities,
+                            flash_port: None,
+                        };
+
+                        log::info!("Loaded camera: ({})", camera_id);
+                        (persisted.id, info, client_arc, persisted.stream_settings, persisted.camera_settings)
                     }
+                    Err(e) => {
+                        log::warn!("Failed to connect to camera {} ({}): {} — adding as offline",
+                            persisted.alias, camera_id, e);
 
-                    // Store persisted settings for this camera
-                    if stream_settings.is_some() || camera_settings.is_some() {
-                        self.persisted_settings.insert(camera_id, (stream_settings, camera_settings));
-                        log::info!("Stored persisted settings for camera: {}", id);
+                        let offline_client = CameraClient::new(persisted.ip.clone(), persisted.port, persisted.token.clone());
+                        let offline_client_arc = Arc::new(RwLock::new(offline_client));
+
+                        let info = CameraInfo {
+                            id: camera_id.clone(),
+                            alias: persisted.alias,
+                            ip: persisted.ip,
+                            port: persisted.port,
+                            token: persisted.token,
+                            status: None,
+                            connection_state: ConnectionState::Disconnected,
+                            midi_channel: persisted.midi_channel,
+                            capabilities: None,
+                            flash_port: None,
+                        };
+
+                        (persisted.id, info, offline_client_arc, persisted.stream_settings, persisted.camera_settings)
                     }
                 }
-                Err(e) => {
-                    log::warn!("Failed to connect to camera {} ({}): {} — adding as offline", alias_clone, camera_id, e);
+            }
+        }).collect();
 
-                    // Insert camera as offline (disconnected) so it still appears in the UI
-                    let offline_info = CameraInfo {
-                        id: camera_id.clone(),
-                        alias: alias_clone,
-                        ip: ip_clone.clone(),
-                        port: port_val,
-                        token: token_clone.clone(),
-                        status: None,
-                        connection_state: ConnectionState::Disconnected,
-                        midi_channel,
-                        capabilities: None,
-                        flash_port: None,
-                    };
+        let results = futures_util::future::join_all(futures).await;
 
-                    // Create a dummy client (not connected) for the camera entry
-                    let offline_client = CameraClient::new(ip_clone, port_val, token_clone);
-                    let offline_client_arc = Arc::new(RwLock::new(offline_client));
+        // Insert all results into the manager (fast, no I/O)
+        for (persisted_id, info, client_arc, stream_settings, camera_settings) in results {
+            let camera_id = info.id.clone();
+            self.cameras.insert(camera_id.clone(), Camera {
+                info,
+                client: client_arc,
+            });
 
-                    self.cameras.insert(camera_id.clone(), Camera {
-                        info: offline_info,
-                        client: offline_client_arc,
-                    });
-
-                    // Store persisted settings for this camera
-                    if stream_settings.is_some() || camera_settings.is_some() {
-                        self.persisted_settings.insert(camera_id, (stream_settings, camera_settings));
-                    }
-                }
+            if stream_settings.is_some() || camera_settings.is_some() {
+                self.persisted_settings.insert(persisted_id, (stream_settings, camera_settings));
             }
         }
 
@@ -570,27 +584,29 @@ impl CameraManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn get_all_cameras(&self) -> Vec<CameraInfo> {
-        let mut result = Vec::new();
-
-        for (id, camera) in &self.cameras {
+        // Poll all cameras in parallel using join_all
+        let futures: Vec<_> = self.cameras.iter().map(|(id, camera)| {
+            let id = id.clone();
             let mut info = camera.info.clone();
-
-            // Fetch fresh status from camera
-            match camera.client.read().await.get_status().await {
-                Ok(status) => {
-                    info.status = Some(status);
-                    info.connection_state = ConnectionState::Connected;
+            let client = camera.client.clone();
+            async move {
+                match client.read().await.get_status().await {
+                    Ok(status) => {
+                        info.status = Some(status);
+                        info.connection_state = ConnectionState::Connected;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to get status for camera {}: {}", id, e);
+                        info.connection_state = ConnectionState::Error;
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Failed to get status for camera {}: {}", id, e);
-                    info.connection_state = ConnectionState::Error;
-                    // Keep existing status if available
-                }
+                info
             }
+        }).collect();
 
-            result.push(info);
-        }
+        let result = futures_util::future::join_all(futures).await;
 
         // Send MIDI feedback for cameras in manual focus mode
         self.send_midi_feedback_for_cameras(&result).await;
@@ -598,16 +614,35 @@ impl CameraManager {
         result
     }
 
+    /// Snapshot camera info + client handles for lock-free polling.
+    /// Returns (camera_id, cloned CameraInfo, Arc<client>) — no HTTP, no blocking.
+    pub fn get_camera_snapshots(&self) -> Vec<(String, CameraInfo, Arc<RwLock<CameraClient>>)> {
+        self.cameras.iter().map(|(id, camera)| {
+            (id.clone(), camera.info.clone(), camera.client.clone())
+        }).collect()
+    }
+
+    /// Get cached camera info by ID without any HTTP calls.
+    pub fn get_cached_camera_info(&self, camera_id: &str) -> Option<CameraInfo> {
+        self.cameras.get(camera_id).map(|c| c.info.clone())
+    }
+
     /// Update stored connection states and auto-apply persisted settings on reconnect.
-    /// Call this after get_all_cameras() with its results.
+    /// Call this after polling with the fresh results.
     pub async fn apply_reconnect_settings(&mut self, fresh_cameras: &[CameraInfo]) {
         for info in fresh_cameras {
             let Some(camera) = self.cameras.get_mut(&info.id) else { continue };
-            let was_offline = camera.info.connection_state != ConnectionState::Connected;
+            let was_disconnected = camera.info.connection_state == ConnectionState::Disconnected;
             camera.info.connection_state = info.connection_state;
 
-            // Auto-apply persisted settings on reconnect
-            if was_offline && info.connection_state == ConnectionState::Connected {
+            // Cache last-known-good status so future snapshots don't start with None
+            if info.status.is_some() {
+                camera.info.status = info.status.clone();
+            }
+
+            // Auto-apply persisted settings only on first connect (Disconnected → Connected),
+            // NOT on Error → Connected (which is a temporary network glitch, not a camera restart)
+            if was_disconnected && info.connection_state == ConnectionState::Connected {
                 if let Some((_, Some(cam_settings))) = self.persisted_settings.get(&info.id) {
                     let settings = cam_settings.clone();
                     log::info!("Camera {} reconnected, applying persisted settings", info.id);
@@ -620,6 +655,7 @@ impl CameraManager {
     }
 
     /// Send MIDI feedback for all cameras in manual focus mode
+    #[allow(dead_code)]
     async fn send_midi_feedback_for_cameras(&self, cameras: &[CameraInfo]) {
         let Some(ref midi_manager) = self.midi_manager else {
             return; // No MIDI manager configured

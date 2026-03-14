@@ -9,7 +9,6 @@
     getStreamSettings,
   } from '$lib/stores/settings';
   import * as api from '$lib/utils/api';
-  import { refreshCameras } from '$lib/stores/cameras';
   import { debounce } from '$lib/utils/debounce';
   import { onMount } from 'svelte';
   import { toastError } from '$lib/stores/toast';
@@ -167,7 +166,6 @@
   async function handleStartStream() {
     try {
       await api.startStream(camera.id, streamSettings);
-      await refreshCameras();
     } catch (e) {
       toastError(`Failed to start stream: ${e}`);
     }
@@ -176,7 +174,6 @@
   async function handleStopStream() {
     try {
       await api.stopStream(camera.id);
-      await refreshCameras();
     } catch (e) {
       toastError(`Failed to stop stream: ${e}`);
     }
