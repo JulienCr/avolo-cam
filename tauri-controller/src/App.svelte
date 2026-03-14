@@ -68,9 +68,7 @@
         initFlashDefaults(),
       ]);
       startAutoRefresh(2000);
-      setTimeout(async () => {
-        await discoverCamerasAction();
-      }, 2000);
+      discoverCamerasAction();
     })();
 
     return () => {

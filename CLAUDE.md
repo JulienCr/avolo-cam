@@ -12,8 +12,8 @@ make install-obs    # Build + install OBS plugin to OBS dir (Windows, UAC)
 make clean          # Clean all build artifacts
 
 # Dev
-cd tauri-controller && pnpm install && pnpm tauri:dev        # Dev mode (RUST_LOG=info)
-cd tauri-controller && pnpm tauri:dev:verbose                # Verbose dev mode (RUST_LOG=debug)
+cd tauri-controller && pnpm install && pnpm dev              # Dev mode
+cd tauri-controller && pnpm dev:verbose                      # Verbose dev mode (RUST_LOG=debug)
 
 # OBS plugin (macOS local build)
 cd obs-avolocam-plugin && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
