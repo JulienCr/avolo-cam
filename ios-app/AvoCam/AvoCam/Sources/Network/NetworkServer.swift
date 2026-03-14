@@ -347,11 +347,7 @@ class NetworkServer {
         }
 
         let status = await handler.handleGetStatus()
-        guard let jsonData = try? JSONEncoder().encode(status) else {
-            return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode status")
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(status)
     }
 
     private func handleGetCapabilities() async -> HTTPResponse {
@@ -360,11 +356,7 @@ class NetworkServer {
         }
 
         let capabilities = await handler.handleGetCapabilities()
-        guard let jsonData = try? JSONEncoder().encode(capabilities) else {
-            return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode capabilities")
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(capabilities)
     }
 
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
@@ -443,11 +435,7 @@ class NetworkServer {
         }
 
         let settings = await handler.handleGetVideoSettings()
-        guard let jsonData = try? JSONEncoder().encode(settings) else {
-            return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode video settings")
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(settings)
     }
 
     private func handlePutVideoSettings(body: Data?) async -> HTTPResponse {
@@ -477,12 +465,7 @@ class NetworkServer {
         do {
             let result = try await handler.handleMeasureWhiteBalance()
             print("✅ White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
-
-            guard let jsonData = try? JSONEncoder().encode(result) else {
-                return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode response")
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(result)
         } catch {
             print("❌ White balance measure failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "MEASURE_FAILED", message: error.localizedDescription)
@@ -508,12 +491,7 @@ class NetworkServer {
         do {
             let result = try await handler.handleUpdateAlias(request)
             print("✅ Alias updated to: \(result.alias)")
-
-            guard let jsonData = try? JSONEncoder().encode(result) else {
-                return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode response")
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(result)
         } catch {
             print("❌ Alias update failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription)
@@ -526,11 +504,7 @@ class NetworkServer {
         }
 
         let response = await handler.handleGetTorchLevel()
-        guard let jsonData = try? JSONEncoder().encode(response) else {
-            return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode torch level")
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(response)
     }
 
     private func handlePutTorchLevel(body: Data?) async -> HTTPResponse {
@@ -546,12 +520,7 @@ class NetworkServer {
         do {
             let response = try await handler.handleUpdateTorchLevel(request)
             print("✅ Torch level updated to: \(response.currentLevel)")
-
-            guard let jsonData = try? JSONEncoder().encode(response) else {
-                return HTTPResponse.internalError(code: "ENCODING_ERROR", message: "Failed to encode response")
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(response)
         } catch {
             print("❌ Torch level update failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "TORCH_UPDATE_FAILED", message: error.localizedDescription)

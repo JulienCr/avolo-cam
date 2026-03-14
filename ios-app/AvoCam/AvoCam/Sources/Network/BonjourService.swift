@@ -100,7 +100,10 @@ class BonjourService: NSObject {
     func updateTXTRecord(_ updates: [String: String]) {
         guard let service = netService else { return }
 
-        var txtDict: [String: Data] = [:]
+        var txtDict = baseTXTDictionary()
+        if flashUdpPort > 0 {
+            txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
+        }
         for (key, value) in updates {
             txtDict[key] = value.data(using: .utf8) ?? Data()
         }

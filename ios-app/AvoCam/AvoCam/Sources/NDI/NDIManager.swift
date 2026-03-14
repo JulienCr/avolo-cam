@@ -60,8 +60,6 @@ class NDIManager {
         var isActive: Bool = false
         var currentFPS: Int = 30
         var ndiVideoFrame = NDIlib_video_frame_v2_t()
-        var frameCount: Int = 0
-        var lastLogTime: Date = Date()
         var frameStatsCounter: Int = 0
         var frameStatsLastPrint: UInt64 = 0
     }
@@ -121,8 +119,6 @@ class NDIManager {
             state.ndiSender = sender
             state.isActive = true
             state.currentFPS = fps
-            state.frameCount = 0
-            state.lastLogTime = Date()
 
             // PERF: Pre-initialize reusable frame struct
             if enableReducedAllocation {
@@ -162,12 +158,13 @@ class NDIManager {
 
     /// PERF: Optimized frame send with backpressure, dedicated queue, and zero-alloc stats
     func send(pixelBuffer: CVPixelBuffer) {
-        // Snapshot sender and active state under lock
-        let snapshot = stateLock.withLock { state -> (active: Bool, sender: NDIlib_send_instance_t?)? in
+        // Snapshot sender, frame template, and stats in a single lock acquisition
+        let snapshot = stateLock.withLock { state -> (sender: NDIlib_send_instance_t, frameTemplate: NDIlib_video_frame_v2_t, fps: Int)? in
             guard state.isActive, let sender = state.ndiSender else { return nil }
-            return (true, sender)
+            return (sender, state.ndiVideoFrame, state.currentFPS)
         }
-        guard let snapshot = snapshot, let sender = snapshot.sender else { return }
+        guard let snapshot = snapshot else { return }
+        let sender = snapshot.sender
 
         // PERF: Backpressure - drop frame if NDI queue is full (prevents latency buildup)
         if enableBackpressure {
@@ -203,12 +200,12 @@ class NDIManager {
                     _ = buffer
                 }
                 guard let self = self else { return }
-                self.sendFrameSync(pixelBuffer: buffer, sender: sender)
+                self.sendFrameSync(pixelBuffer: buffer, sender: sender, frameTemplate: snapshot.frameTemplate, fps: snapshot.fps)
                 self.statsLock.withLock { $0.sent += 1 }
             }
         } else {
             // Original synchronous behavior for rollback
-            sendFrameSync(pixelBuffer: pixelBuffer, sender: sender)
+            sendFrameSync(pixelBuffer: pixelBuffer, sender: sender, frameTemplate: snapshot.frameTemplate, fps: snapshot.fps)
             statsLock.withLock { $0.sent += 1 }
             if enableBackpressure {
                 ndiSemaphore.signal()
@@ -217,7 +214,7 @@ class NDIManager {
     }
 
     /// PERF: Synchronous frame send with signposts and reused structs
-    private func sendFrameSync(pixelBuffer: CVPixelBuffer, sender: NDIlib_send_instance_t) {
+    private func sendFrameSync(pixelBuffer: CVPixelBuffer, sender: NDIlib_send_instance_t, frameTemplate: NDIlib_video_frame_v2_t, fps: Int) {
         // PERF: Signpost begin
         if enableSignposts {
             os_signpost(.begin, log: perfLog, name: "NDI Send", signpostID: sendSignpostID)
@@ -232,15 +229,12 @@ class NDIManager {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
 
-        // Build the video frame, pulling reusable struct from state if enabled
-        var videoFrame = stateLock.withLock { state -> NDIlib_video_frame_v2_t in
-            enableReducedAllocation ? state.ndiVideoFrame : NDIlib_video_frame_v2_t()
-        }
+        // Use pre-snapshotted frame template (no lock needed on hot path)
+        var videoFrame = frameTemplate
         videoFrame.xres = Int32(width)
         videoFrame.yres = Int32(height)
 
         if !enableReducedAllocation {
-            let fps = stateLock.withLock { $0.currentFPS }
             videoFrame.frame_rate_N = Int32(fps * 1000)
             videoFrame.frame_rate_D = 1000
         }
@@ -277,29 +271,9 @@ class NDIManager {
 
     /// PERF: Zero-allocation frame stats using mach_absolute_time
     private func updateFrameStats() {
-        if !enableReducedAllocation {
-            // Original behavior with Date() allocations
-            let (count, shouldLog) = stateLock.withLock { state -> (Int, Bool) in
-                state.frameCount += 1
-                let now = Date()
-                if now.timeIntervalSince(state.lastLogTime) >= 1.0 {
-                    let c = state.frameCount
-                    state.frameCount = 0
-                    state.lastLogTime = now
-                    return (c, true)
-                }
-                return (0, false)
-            }
-            if shouldLog {
-                let connections = getConnectionCount()
-                print("📡 NDI sending at \(count) fps (connections: \(connections))")
-            }
-            return
-        }
-
         let now = mach_absolute_time()
 
-        let shouldLog = stateLock.withLock { state -> (counter: Int, connections: Bool)? in
+        let logCounter = stateLock.withLock { state -> Int? in
             state.frameStatsCounter += 1
 
             if state.frameStatsLastPrint == 0 {
@@ -309,21 +283,20 @@ class NDIManager {
 
             let timebase = NDIManager.machTimebase
             let elapsed = (now - state.frameStatsLastPrint) * UInt64(timebase.numer) / UInt64(timebase.denom)
-            let oneSecondNanos: UInt64 = 1_000_000_000
 
-            if elapsed >= oneSecondNanos {
+            if elapsed >= 1_000_000_000 {
                 let counter = state.frameStatsCounter
                 state.frameStatsCounter = 0
                 state.frameStatsLastPrint = now
-                return (counter, true)
+                return counter
             }
             return nil
         }
 
-        if let info = shouldLog {
+        if let counter = logCounter {
             let connections = getConnectionCount()
             let stats = statsLock.withLock { $0 }
-            print("📡 NDI: \(info.counter) fps, \(connections) conn, sent: \(stats.sent), dropped: \(stats.dropped)")
+            print("📡 NDI: \(counter) fps, \(connections) conn, sent: \(stats.sent), dropped: \(stats.dropped)")
         }
     }
 
@@ -386,8 +359,7 @@ class NDIManager {
     func getTelemetryStats() -> (fps: Double, sentFrames: Int64, droppedFrames: Int64) {
         let (active, fps) = stateLock.withLock { state -> (Bool, Double) in
             guard state.isActive else { return (false, 0.0) }
-            let f = Double(enableReducedAllocation ? state.frameStatsCounter : state.frameCount)
-            return (true, f)
+            return (true, Double(state.frameStatsCounter))
         }
         guard active else {
             return (0.0, 0, 0)
