@@ -84,7 +84,6 @@ final class ThermalManager: Sendable {
         let newLevel = ThermalLevel(from: thermalState)
 
         let action: ThermalAction = state.withLock { s in
-            let previousLevel = s.currentLevel
             s.currentLevel = newLevel
 
             // Only act if streaming
@@ -97,7 +96,6 @@ final class ThermalManager: Sendable {
 
             return Self.determineAction(
                 newLevel: newLevel,
-                previousLevel: previousLevel,
                 state: &s
             )
         }
@@ -116,7 +114,6 @@ final class ThermalManager: Sendable {
     /// Must be called inside `state.withLock`.
     private static func determineAction(
         newLevel: ThermalLevel,
-        previousLevel: ThermalLevel,
         state: inout State
     ) -> ThermalAction {
         switch newLevel {

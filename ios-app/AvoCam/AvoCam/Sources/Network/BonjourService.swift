@@ -73,7 +73,7 @@ class BonjourService: NSObject {
         // Currently updateStreamInfo() exists but is never called from
         // AppCoordinator when a stream starts. Wire it up so the TXT
         // record advertises real values once streaming begins.
-        return [
+        var dict: [String: Data] = [
             "alias": alias.data(using: .utf8) ?? Data(),
             "version": "1.0".data(using: .utf8) ?? Data(),
             "protocol": "avocam-v1".data(using: .utf8) ?? Data(),
@@ -85,25 +85,20 @@ class BonjourService: NSObject {
             "codec": "h264".data(using: .utf8) ?? Data(),
             "profile": "high".data(using: .utf8) ?? Data()
         ]
+        if flashUdpPort > 0 {
+            dict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
+        }
+        return dict
     }
 
     private func createTXTRecord() -> Data? {
-        var txtDict = baseTXTDictionary()
-
-        if flashUdpPort > 0 {
-            txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
-        }
-
-        return NetService.data(fromTXTRecord: txtDict)
+        return NetService.data(fromTXTRecord: baseTXTDictionary())
     }
 
     func updateTXTRecord(_ updates: [String: String]) {
         guard let service = netService else { return }
 
         var txtDict = baseTXTDictionary()
-        if flashUdpPort > 0 {
-            txtDict["flash_udp_port"] = "\(flashUdpPort)".data(using: .utf8) ?? Data()
-        }
         for (key, value) in updates {
             txtDict[key] = value.data(using: .utf8) ?? Data()
         }
@@ -131,13 +126,7 @@ class BonjourService: NSObject {
 
         guard let service = netService else { return }
 
-        var txtDict = baseTXTDictionary()
-
-        if port > 0 {
-            txtDict["flash_udp_port"] = "\(port)".data(using: .utf8) ?? Data()
-        }
-
-        service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
+        service.setTXTRecord(NetService.data(fromTXTRecord: baseTXTDictionary()))
 
         print("Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
     }

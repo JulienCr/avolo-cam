@@ -57,8 +57,10 @@ class NDITallyPoller {
             if pvc { state.lastPreview = preview }
             return (pc, pvc)
         }
-        // Update published state for UI observation (must happen outside lock)
-        currentTallyState = (program: program, preview: preview)
+        // Update published state only when changed (avoids no-op Combine emissions at 20Hz)
+        if changes.programChanged || changes.previewChanged {
+            currentTallyState = (program: program, preview: preview)
+        }
         return changes
     }
 
@@ -136,7 +138,7 @@ class NDITallyPoller {
 
         let tally = ndiManager.getTallyState()
         let changes = applyTallyUpdate(program: tally.program, preview: tally.preview, isExternal: false)
-        await handleTallyChanges(changes, program: tally.program, preview: tally.preview, source: "Program")
+        await handleTallyChanges(changes, program: tally.program, preview: tally.preview, source: "NDI")
     }
 
     // MARK: - Public Accessors
