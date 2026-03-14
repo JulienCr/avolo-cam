@@ -16,9 +16,13 @@ if [ ! -f "$IPA_PATH" ]; then
     exit 1
 fi
 
+# Cleanup function for all temp files
+cleanup() { rm -f "$TMP_JSON"; rm -rf "$TMP_LOGS"; }
+trap cleanup EXIT
+
 # Get available devices as "name|identifier|model" lines using JSON output
 TMP_JSON=$(mktemp /tmp/avolo-devices.XXXXXX.json)
-trap "rm -f '$TMP_JSON'" EXIT
+TMP_LOGS=""
 
 xcrun devicectl list devices --json-output "$TMP_JSON" >/dev/null 2>&1
 
@@ -26,9 +30,9 @@ xcrun devicectl list devices --json-output "$TMP_JSON" >/dev/null 2>&1
 devices=()
 while IFS= read -r line; do
     [ -n "$line" ] && devices+=("$line")
-done < <(python3 -c "
+done < <(python3 - "$TMP_JSON" <<'PYEOF'
 import json, sys
-with open('$TMP_JSON') as f:
+with open(sys.argv[1]) as f:
     data = json.load(f)
 for d in data['result']['devices']:
     tunnel = d['connectionProperties'].get('tunnelState', '')
@@ -38,13 +42,19 @@ for d in data['result']['devices']:
     cid = d['identifier']
     model = d['hardwareProperties'].get('marketingName', '?')
     print(f'{name}|{cid}|{model}')
-")
+PYEOF
+)
 
 if [ ${#devices[@]} -eq 0 ]; then
     echo "No available iOS devices found."
     echo "Make sure devices are connected via USB and paired."
     exit 1
 fi
+
+# Parse pipe-delimited device record consistently
+dev_name()  { local tmp="${1%%|*}"; echo "$tmp"; }
+dev_id()    { local tmp="${1#*|}"; echo "${tmp%%|*}"; }
+dev_model() { echo "${1##*|}"; }
 
 install_on_device() {
     local name="$1"
@@ -72,14 +82,13 @@ elif [ -n "$DEVICES_ARG" ]; then
         req=$(echo "$req" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         found=false
         for dev in "${devices[@]}"; do
-            dev_name="${dev%%|*}"
-            if [ "$dev_name" = "$req" ]; then
+            if [ "$(dev_name "$dev")" = "$req" ]; then
                 selected+=("$dev")
                 found=true
                 break
             fi
         done
-        if ! $found; then
+        if [[ "$found" == false ]]; then
             echo "Warning: device '$req' not found or not available, skipping."
         fi
     done
@@ -88,10 +97,7 @@ else
     echo "Available devices:"
     echo ""
     for i in "${!devices[@]}"; do
-        dev="${devices[$i]}"
-        name="${dev%%|*}"
-        model="${dev##*|}"
-        echo "  $((i + 1)). $name ($model)"
+        echo "  $((i + 1)). $(dev_name "${devices[$i]}") ($(dev_model "${devices[$i]}"))"
     done
     echo ""
     echo "Select devices (e.g. '1 3', 'all', or Enter for all):"
@@ -125,9 +131,9 @@ pid_names=()
 pid_logs=()
 
 for dev in "${selected[@]}"; do
-    name="${dev%%|*}"
-    identifier=$(echo "$dev" | cut -d'|' -f2)
-    logfile="$TMP_LOGS/$(echo "$name" | tr ' ' '_').log"
+    name="$(dev_name "$dev")"
+    identifier="$(dev_id "$dev")"
+    logfile="$TMP_LOGS/${name// /_}.log"
     install_on_device "$name" "$identifier" "$logfile" &
     pids+=($!)
     pid_names+=("$name")
@@ -145,8 +151,6 @@ for i in "${!pids[@]}"; do
         echo "---"
     fi
 done
-
-rm -rf "$TMP_LOGS"
 
 echo ""
 if [ $failures -eq 0 ]; then

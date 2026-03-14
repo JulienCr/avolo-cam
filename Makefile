@@ -19,7 +19,7 @@ build-ios:
 #        make install-ios DEVICES=all  (all devices)
 #        make install-ios DEVICES="AvoloPhone,iPhone de Julien"
 install-ios:
-	@cd ios-app/AvoCam && ./install-ios.sh $(DEVICES)
+	@cd ios-app/AvoCam && ./install-ios.sh "$(DEVICES)"
 
 # Build Tauri desktop app
 build-tauri:
