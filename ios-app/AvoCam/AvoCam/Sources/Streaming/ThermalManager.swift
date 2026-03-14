@@ -6,22 +6,23 @@
 //
 
 import Foundation
+import os
 
 /// Callback for thermal events that require stream action
 typealias ThermalActionCallback = (ThermalManager.ThermalAction) async -> Void
 
 /// Manages thermal state monitoring and protective actions for streaming
-final class ThermalManager {
+final class ThermalManager: Sendable {
     // MARK: - Types
 
-    enum ThermalAction: Equatable {
+    enum ThermalAction: Equatable, Sendable {
         case none
         case warning(message: String)
         case stopStream(message: String)
         case recovered
     }
 
-    enum ThermalLevel: String, CustomStringConvertible {
+    enum ThermalLevel: String, CustomStringConvertible, Sendable {
         case nominal
         case fair
         case serious
@@ -40,15 +41,18 @@ final class ThermalManager {
         }
     }
 
-    // MARK: - Properties
+    // MARK: - Thread-Safe State
 
-    private(set) var currentLevel: ThermalLevel = .nominal
-    private var warningIssued = false
-    private var criticalStopped = false
-    private var actionCallback: ThermalActionCallback?
+    /// All mutable state grouped for lock-protected access
+    private struct State: Sendable {
+        var isStreaming = false
+        var currentLevel: ThermalLevel = .nominal
+        var warningIssued = false
+        var criticalStopped = false
+        var actionCallback: ThermalActionCallback?
+    }
 
-    /// Whether streaming is currently active (must be set externally)
-    var isStreaming: Bool = false
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     // MARK: - Initialization
 
@@ -56,59 +60,83 @@ final class ThermalManager {
 
     /// Set callback for thermal actions
     func setActionCallback(_ callback: @escaping ThermalActionCallback) {
-        self.actionCallback = callback
+        state.withLock { $0.actionCallback = callback }
+    }
+
+    // MARK: - Properties
+
+    /// Whether streaming is currently active (must be set externally)
+    var isStreaming: Bool {
+        get { state.withLock { $0.isStreaming } }
+        set { state.withLock { $0.isStreaming = newValue } }
+    }
+
+    /// Current thermal level
+    var currentLevel: ThermalLevel {
+        state.withLock { $0.currentLevel }
     }
 
     // MARK: - Monitoring
 
     /// Check thermal state and trigger appropriate actions
     /// Call this periodically (e.g., every second during telemetry collection)
-    func checkThermalState(_ state: ProcessInfo.ThermalState) {
-        let newLevel = ThermalLevel(from: state)
-        let previousLevel = currentLevel
-        currentLevel = newLevel
+    func checkThermalState(_ thermalState: ProcessInfo.ThermalState) {
+        let newLevel = ThermalLevel(from: thermalState)
 
-        // Only act if streaming
-        guard isStreaming else {
-            // Reset flags when not streaming
-            if !isStreaming {
-                warningIssued = false
-                criticalStopped = false
+        let action: ThermalAction = state.withLock { s in
+            s.currentLevel = newLevel
+
+            // Only act if streaming
+            guard s.isStreaming else {
+                // Reset flags when not streaming
+                s.warningIssued = false
+                s.criticalStopped = false
+                return .none
             }
-            return
+
+            return Self.determineAction(
+                newLevel: newLevel,
+                state: &s
+            )
         }
 
-        let action = determineAction(newLevel: newLevel, previousLevel: previousLevel)
-
         if action != .none {
-            Task { @MainActor in
-                await self.actionCallback?(action)
+            let callback = state.withLock { $0.actionCallback }
+            if let callback {
+                Task { @MainActor in
+                    await callback(action)
+                }
             }
         }
     }
 
-    private func determineAction(newLevel: ThermalLevel, previousLevel: ThermalLevel) -> ThermalAction {
+    /// Pure logic to determine what action to take based on thermal transition.
+    /// Must be called inside `state.withLock`.
+    private static func determineAction(
+        newLevel: ThermalLevel,
+        state: inout State
+    ) -> ThermalAction {
         switch newLevel {
         case .serious:
-            if !warningIssued {
-                warningIssued = true
+            if !state.warningIssued {
+                state.warningIssued = true
                 print("⚠️ Thermal throttle activated: device heating up")
                 return .warning(message: "Device is heating up. Consider reducing quality or stopping stream.")
             }
             return .none
 
         case .critical:
-            if !criticalStopped {
-                criticalStopped = true
+            if !state.criticalStopped {
+                state.criticalStopped = true
                 print("🔥 Thermal state CRITICAL: stopping stream to prevent damage")
                 return .stopStream(message: "Stream stopped: device overheating. Please let it cool down.")
             }
             return .none
 
         case .nominal, .fair:
-            if warningIssued || criticalStopped {
-                warningIssued = false
-                criticalStopped = false
+            if state.warningIssued || state.criticalStopped {
+                state.warningIssued = false
+                state.criticalStopped = false
                 print("✅ Thermal state returned to normal")
                 return .recovered
             }
@@ -120,9 +148,11 @@ final class ThermalManager {
 
     /// Reset thermal tracking state (e.g., when stream stops)
     func reset() {
-        warningIssued = false
-        criticalStopped = false
-        isStreaming = false
+        state.withLock { s in
+            s.warningIssued = false
+            s.criticalStopped = false
+            s.isStreaming = false
+        }
     }
 
     // MARK: - Status
@@ -139,6 +169,7 @@ final class ThermalManager {
 
     /// Whether device is in a concerning thermal state
     var isOverheating: Bool {
-        return currentLevel == .serious || currentLevel == .critical
+        let level = currentLevel
+        return level == .serious || level == .critical
     }
 }

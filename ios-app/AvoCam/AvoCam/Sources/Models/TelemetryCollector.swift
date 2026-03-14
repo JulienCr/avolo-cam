@@ -25,6 +25,11 @@ actor TelemetryCollector {
     private var lastNetworkCheck: Date?
     private var lastBytesSent: UInt64 = 0
 
+    init() {
+        // Enable battery monitoring once at init rather than on every 1Hz poll
+        UIDevice.current.isBatteryMonitoringEnabled = true
+    }
+
     func collect() async -> SystemTelemetry {
         let battery = getBatteryLevel()
         let temperature = getDeviceTemperature()
@@ -48,7 +53,6 @@ actor TelemetryCollector {
     // MARK: - Battery
 
     private func getBatteryLevel() -> Double {
-        UIDevice.current.isBatteryMonitoringEnabled = true
         let level = UIDevice.current.batteryLevel
 
         // batteryLevel returns -1 if unknown, so clamp to 0-1 range
@@ -56,8 +60,6 @@ actor TelemetryCollector {
     }
 
     private func getChargingState() -> ChargingState {
-        UIDevice.current.isBatteryMonitoringEnabled = true
-
         switch UIDevice.current.batteryState {
         case .charging:
             return .charging
@@ -227,6 +229,11 @@ actor TelemetryCollector {
             if threadBasicInfo.flags & TH_FLAGS_IDLE == 0 {
                 totalUsageOfCPU += (Double(threadBasicInfo.cpu_usage) / Double(TH_USAGE_SCALE)) * 100.0
             }
+        }
+
+        // Deallocate Mach port rights for each thread to prevent port rights leak
+        for index in 0..<threadsCount {
+            mach_port_deallocate(mach_task_self_, threadsList[Int(index)])
         }
 
         vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threadsList)), vm_size_t(Int(threadsCount) * MemoryLayout<thread_t>.stride))

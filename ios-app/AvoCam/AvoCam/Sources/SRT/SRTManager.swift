@@ -113,16 +113,17 @@ actor SRTManager {
             }
         }
 
+        // SRT expects latency in MICROSECONDS (1ms = 1000us)
+        let latencyUs = config.latency * 1000
+        let rcvLatencyUs = config.rcvLatency * 1000
+        let peerLatencyUs = config.peerLatency * 1000
+        let tlpktdrop = config.tlPktDrop ? 1 : 0
+
         // Create and configure SRT socket in listener mode
         do {
             let socket = SRTSocket()
 
             // Build the SRT URL for binding with all latency parameters
-            // SRT expects latency in MICROSECONDS (1ms = 1000us)
-            let latencyUs = config.latency * 1000
-            let rcvLatencyUs = config.rcvLatency * 1000
-            let peerLatencyUs = config.peerLatency * 1000
-            let tlpktdrop = config.tlPktDrop ? 1 : 0
             let srtUrl = URL(string: "srt://0.0.0.0:\(config.port)?transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")!
 
             // Bind to the port
@@ -157,10 +158,6 @@ actor SRTManager {
         isRunning = true
 
         // Log connection info
-        let latencyUs = config.latency * 1000
-        let rcvLatencyUs = config.rcvLatency * 1000
-        let peerLatencyUs = config.peerLatency * 1000
-        let tlpktdrop = config.tlPktDrop ? 1 : 0
         print("✅ SRT stream started successfully - waiting for OBS connection on port \(config.port)")
         print("📺 Connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
     }

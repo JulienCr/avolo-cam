@@ -10,8 +10,8 @@ import Combine
 import os.log
 
 /// Polls NDI tally state at 10-20Hz and controls torch accordingly
-/// - Program tally → Torch ON at minimum level
-/// - Preview tally → UI badge only (no torch)
+/// - Program tally -> Torch ON at minimum level
+/// - Preview tally -> UI badge only (no torch)
 class NDITallyPoller {
 
     // MARK: - Properties
@@ -21,20 +21,68 @@ class NDITallyPoller {
     private let pollingInterval: UInt64 = 50_000_000  // 50ms = 20Hz
     private let logger = Logger(subsystem: "com.avocam.tally", category: "NDITallyPoller")
 
-    // Tally state tracking
-    private var lastProgram: Bool = false
-    private var lastPreview: Bool = false
-
-    // External tally priority tracking
-    // When external tally (WebSocket) is received, NDI polling is suppressed for a timeout period
-    private var lastExternalTallyTime: UInt64 = 0
+    // External tally priority tracking timeout
     private let externalTallyTimeout: UInt64 = 5_000_000_000  // 5 seconds in nanoseconds
 
     // Task control
     private var pollingTask: Task<Void, Never>?
 
+    /// Thread-safe lock protecting all mutable tally state.
+    /// Protected fields: lastProgram, lastPreview, lastExternalTallyTime, currentTallyState
+    private let tallyLock = OSAllocatedUnfairLock(uncheckedState: TallyState())
+
     // Published state for UI (optional)
     @Published private(set) var currentTallyState: (program: Bool, preview: Bool) = (false, false)
+
+    // MARK: - State Container
+
+    /// All mutable tally state bundled for lock protection.
+    private struct TallyState {
+        var lastProgram: Bool = false
+        var lastPreview: Bool = false
+        var lastExternalTallyTime: UInt64 = 0
+        var currentTally: (program: Bool, preview: Bool) = (false, false)
+    }
+
+    /// Applies a tally update to state under lock and returns what changed.
+    private func applyTallyUpdate(program: Bool, preview: Bool, isExternal: Bool) -> (programChanged: Bool, previewChanged: Bool) {
+        let changes = tallyLock.withLock { state -> (programChanged: Bool, previewChanged: Bool) in
+            if isExternal {
+                state.lastExternalTallyTime = DispatchTime.now().uptimeNanoseconds
+            }
+            state.currentTally = (program: program, preview: preview)
+            let pc = program != state.lastProgram
+            let pvc = preview != state.lastPreview
+            if pc { state.lastProgram = program }
+            if pvc { state.lastPreview = preview }
+            return (pc, pvc)
+        }
+        // Update published state only when changed (avoids no-op Combine emissions at 20Hz)
+        if changes.programChanged || changes.previewChanged {
+            currentTallyState = (program: program, preview: preview)
+        }
+        return changes
+    }
+
+    /// Handles torch control and logging after a tally change.
+    private func handleTallyChanges(_ changes: (programChanged: Bool, previewChanged: Bool), program: Bool, preview: Bool, source: String) async {
+        if changes.programChanged {
+            await torchController.set(programOn: program)
+            if program {
+                logger.info("🔴 \(source) tally ON → Torch ON")
+            } else {
+                logger.info("⚫️ \(source) tally OFF → Torch OFF")
+            }
+        }
+
+        if changes.previewChanged {
+            if preview {
+                logger.debug("🟢 \(source) preview tally ON")
+            } else {
+                logger.debug("⚫️ \(source) preview tally OFF")
+            }
+        }
+    }
 
     // MARK: - Initialization
 
@@ -82,51 +130,22 @@ class NDITallyPoller {
     /// Poll tally state and update torch/UI accordingly
     private func pollTallyState() async {
         // Skip NDI polling if external tally was received recently
-        // This prevents NDI polling from overriding WebSocket tally in Flash mode
         let now = DispatchTime.now().uptimeNanoseconds
-        if now - lastExternalTallyTime < externalTallyTimeout {
-            // External tally is active, skip NDI polling
-            return
+        let suppressed = tallyLock.withLock { state -> Bool in
+            now - state.lastExternalTallyTime < externalTallyTimeout
         }
+        if suppressed { return }
 
-        // Get current tally state from NDI
         let tally = ndiManager.getTallyState()
-
-        // Update published state for UI observation
-        currentTallyState = tally
-
-        // Handle program state change → control torch
-        if tally.program != lastProgram {
-            lastProgram = tally.program
-            await torchController.set(programOn: tally.program)
-
-            if tally.program {
-                logger.info("🔴 Program tally ON → Torch ON")
-            } else {
-                logger.info("⚫️ Program tally OFF → Torch OFF")
-            }
-        }
-
-        // Handle preview state change → UI badge only
-        if tally.preview != lastPreview {
-            lastPreview = tally.preview
-
-            if tally.preview {
-                logger.debug("🟢 Preview tally ON")
-            } else {
-                logger.debug("⚫️ Preview tally OFF")
-            }
-
-            // TODO: Notify UI for preview badge update
-            // Could use NotificationCenter or Combine publisher
-        }
+        let changes = applyTallyUpdate(program: tally.program, preview: tally.preview, isExternal: false)
+        await handleTallyChanges(changes, program: tally.program, preview: tally.preview, source: "NDI")
     }
 
     // MARK: - Public Accessors
 
     /// Get current tally state (for telemetry/status endpoints)
     func getCurrentState() -> (program: Bool, preview: Bool) {
-        return currentTallyState
+        return tallyLock.withLock { $0.currentTally }
     }
 
     // MARK: - External Tally Control
@@ -137,32 +156,8 @@ class NDITallyPoller {
     ///   - program: Whether the camera is in Program (live) mode
     ///   - preview: Whether the camera is in Preview mode
     func setExternalTally(program: Bool, preview: Bool) async {
-        // Record the time of external tally to suppress NDI polling
-        lastExternalTallyTime = DispatchTime.now().uptimeNanoseconds
-
-        // Update published state for UI
-        currentTallyState = (program: program, preview: preview)
-
-        // Only update torch if state changed
-        if program != lastProgram {
-            lastProgram = program
-            await torchController.set(programOn: program)
-
-            if program {
-                logger.info("🔴 External tally ON → Torch ON (NDI polling suppressed for 5s)")
-            } else {
-                logger.info("⚫️ External tally OFF → Torch OFF (NDI polling suppressed for 5s)")
-            }
-        }
-
-        if preview != lastPreview {
-            lastPreview = preview
-            if preview {
-                logger.debug("🟢 External preview tally ON")
-            } else {
-                logger.debug("⚫️ External preview tally OFF")
-            }
-        }
+        let changes = applyTallyUpdate(program: program, preview: preview, isExternal: true)
+        await handleTallyChanges(changes, program: program, preview: preview, source: "External")
     }
 
     // MARK: - Torch Configuration

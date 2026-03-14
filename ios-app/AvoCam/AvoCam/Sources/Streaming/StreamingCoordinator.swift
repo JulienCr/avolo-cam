@@ -7,6 +7,7 @@
 
 import Foundation
 import AVFoundation
+import os
 
 /// Actor that coordinates the streaming pipeline between capture and output (NDI, SRT, or Flash)
 actor StreamingCoordinator: StreamingService {
@@ -20,6 +21,9 @@ actor StreamingCoordinator: StreamingService {
     private let srtManager: SRTManager
     private let flashManager: FlashManager
     private var tallyPoller: NDITallyPoller?
+
+    /// Debug frame counter for Flash mode logging
+    private let flashFrameCounter = OSAllocatedUnfairLock(initialState: 0)
 
     // MARK: - Initialization
 
@@ -57,8 +61,9 @@ actor StreamingCoordinator: StreamingService {
             framerate: request.framerate
         )
 
-        let width = parseWidth(from: request.resolution)
-        let height = parseHeight(from: request.resolution)
+        let resolution = Resolution.parseWithDefault(request.resolution)
+        let width = resolution.width
+        let height = resolution.height
 
         // 2. Start appropriate streaming backend
         switch mode {
@@ -115,11 +120,11 @@ actor StreamingCoordinator: StreamingService {
 
             try await flashManager.start(config: flashConfig)
 
-            // Debug: frame counter for logging
-            let frameCounter = UnsafeMutablePointer<Int>.allocate(capacity: 1)
-            frameCounter.initialize(to: 0)
+            // Reset debug frame counter for this streaming session
+            flashFrameCounter.withLock { $0 = 0 }
 
             // Start capture with frame callback that feeds Flash encoder
+            let counter = flashFrameCounter
             try await captureManager.startCapture { [flashManager] sampleBuffer in
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                     print("⚠️ FLASH: No pixel buffer in sample")
@@ -129,9 +134,9 @@ actor StreamingCoordinator: StreamingService {
                 let duration = CMSampleBufferGetDuration(sampleBuffer)
 
                 // Debug logging every 30 frames
-                frameCounter.pointee += 1
-                if frameCounter.pointee % 30 == 1 {
-                    print("📹 FLASH: Sending frame \(frameCounter.pointee) to encoder")
+                let count = counter.withLock { c -> Int in c += 1; return c }
+                if count % 30 == 1 {
+                    print("📹 FLASH: Sending frame \(count) to encoder")
                 }
 
                 Task {
@@ -196,15 +201,4 @@ actor StreamingCoordinator: StreamingService {
         return currentMode
     }
 
-    // MARK: - Private Helpers
-
-    private func parseWidth(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.first ?? "1920") ?? 1920
-    }
-
-    private func parseHeight(from resolution: String) -> Int {
-        let components = resolution.split(separator: "x")
-        return Int(components.last ?? "1080") ?? 1080
-    }
 }

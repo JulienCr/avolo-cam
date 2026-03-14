@@ -73,9 +73,9 @@ struct SRTConfiguration {
     /// - Parameter request: The stream start request
     /// - Returns: SRT configuration
     static func from(request: StreamStartRequest) -> SRTConfiguration {
-        let components = request.resolution.split(separator: "x")
-        let width = Int(components.first ?? "1920") ?? 1920
-        let height = Int(components.last ?? "1080") ?? 1080
+        let resolution = Resolution.parseWithDefault(request.resolution)
+        let width = resolution.width
+        let height = resolution.height
 
         // Default GOP to framerate (1 second) if not specified
         let defaultGop = request.framerate

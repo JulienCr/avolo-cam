@@ -90,10 +90,15 @@ class NetworkServer {
 
                 // Configure HTTP pipeline with WebSocket upgrade support
                 let upgrader = NIOWebSocketServerUpgrader(
-                    shouldUpgrade: { (channel: Channel, head: HTTPRequestHead) in
+                    shouldUpgrade: { [weak self] (channel: Channel, head: HTTPRequestHead) in
                         // Check for WebSocket upgrade request
                         guard head.uri == "/ws",
                               head.headers["upgrade"].first?.lowercased() == "websocket" else {
+                            return channel.eventLoop.makeSucceededFuture(nil)
+                        }
+
+                        // If server was deallocated, reject the upgrade
+                        guard let self = self else {
                             return channel.eventLoop.makeSucceededFuture(nil)
                         }
 
@@ -108,9 +113,12 @@ class NetworkServer {
 
                         return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
                     },
-                    upgradePipelineHandler: { (channel: Channel, _: HTTPRequestHead) in
+                    upgradePipelineHandler: { [weak self] (channel: Channel, _: HTTPRequestHead) in
                         // Add WebSocket handler to the pipeline
                         // NIO automatically removes HTTP decoder/encoder before calling this
+                        guard let self = self else {
+                            return channel.eventLoop.makeFailedFuture(NetworkError.serverStartFailed)
+                        }
                         let wsHandler = WebSocketServerHandler(server: self)
                         return channel.pipeline.addHandler(wsHandler).flatMap {
                             // After adding WS handler, try to remove HTTP handler
@@ -130,8 +138,11 @@ class NetworkServer {
                 return channel.pipeline.configureHTTPServerPipeline(
                     withPipeliningAssistance: false,
                     withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
-                ).flatMap {
-                    channel.pipeline.addHandler(HTTPServerHandler(server: self), name: "HTTPHandler")
+                ).flatMap { [weak self] in
+                    guard let self = self else {
+                        return channel.eventLoop.makeFailedFuture(NetworkError.serverStartFailed)
+                    }
+                    return channel.pipeline.addHandler(HTTPServerHandler(server: self), name: "HTTPHandler")
                 }
             }
 
@@ -332,237 +343,195 @@ class NetworkServer {
 
     private func handleGetStatus() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         let status = await handler.handleGetStatus()
-        guard let jsonData = try? JSONEncoder().encode(status) else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode status"))
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(status)
     }
 
     private func handleGetCapabilities() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         let capabilities = await handler.handleGetCapabilities()
-        guard let jsonData = try? JSONEncoder().encode(capabilities) else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode capabilities"))
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(capabilities)
     }
 
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(StreamStartRequest.self, from: body) else {
             print("⚠️ Invalid stream start request body")
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid stream start request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid stream start request")
         }
 
         guard let handler = requestHandler else {
             print("⚠️ No request handler available")
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleStreamStart(request)
             print("✅ Stream started: \(request.resolution)@\(request.framerate)fps")
-            return HTTPResponse(status: 200, body: successJSON(message: "Stream started"))
+            return HTTPResponse.success(message: "Stream started")
         } catch {
             print("❌ Stream start failed: \(error.localizedDescription)")
-            return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_START_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "STREAM_START_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleStreamStop() async -> HTTPResponse {
         guard let handler = requestHandler else {
             print("⚠️ No request handler available")
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleStreamStop()
             print("✅ Stream stopped")
-            return HTTPResponse(status: 200, body: successJSON(message: "Stream stopped"))
+            return HTTPResponse.success(message: "Stream stopped")
         } catch {
             print("❌ Stream stop failed: \(error.localizedDescription)")
-            return HTTPResponse(status: 500, body: errorJSON(code: "STREAM_STOP_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "STREAM_STOP_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleCameraSettings(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let settings = try? JSONDecoder().decode(CameraSettingsRequest.self, from: body) else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid camera settings request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid camera settings request")
         }
 
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleCameraSettings(settings)
-            return HTTPResponse(status: 200, body: successJSON(message: "Camera settings updated"))
+            return HTTPResponse.success(message: "Camera settings updated")
         } catch {
-            return HTTPResponse(status: 500, body: errorJSON(code: "CAMERA_UPDATE_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "CAMERA_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleScreenBrightness(body: Data?) -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(ScreenBrightnessRequest.self, from: body) else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid screen brightness request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid screen brightness request")
         }
 
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         handler.handleScreenBrightness(request)
-        return HTTPResponse(status: 200, body: successJSON(message: "Screen brightness updated"))
+        return HTTPResponse.success(message: "Screen brightness updated")
     }
 
     private func handleGetVideoSettings() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         let settings = await handler.handleGetVideoSettings()
-        guard let jsonData = try? JSONEncoder().encode(settings) else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode video settings"))
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(settings)
     }
 
     private func handlePutVideoSettings(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(VideoSettingsUpdateRequest.self, from: body) else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid video settings request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid video settings request")
         }
 
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleUpdateVideoSettings(request)
-            return HTTPResponse(status: 200, body: successJSON(message: "Video settings updated"))
+            return HTTPResponse.success(message: "Video settings updated")
         } catch {
-            return HTTPResponse(status: 500, body: errorJSON(code: "VIDEO_SETTINGS_UPDATE_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "VIDEO_SETTINGS_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleMeasureWhiteBalance() async -> HTTPResponse {
         guard let handler = requestHandler else {
             print("⚠️ No request handler available")
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             let result = try await handler.handleMeasureWhiteBalance()
             print("✅ White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
-
-            guard let jsonData = try? JSONEncoder().encode(result) else {
-                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(result)
         } catch {
             print("❌ White balance measure failed: \(error.localizedDescription)")
-            return HTTPResponse(status: 500, body: errorJSON(code: "MEASURE_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "MEASURE_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleUpdateAlias(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(AliasUpdateRequest.self, from: body) else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid alias update request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid alias update request")
         }
 
         // Validate alias (no empty strings, reasonable length)
         let trimmedAlias = request.alias.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedAlias.isEmpty, trimmedAlias.count <= 64 else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_ALIAS", message: "Alias must be 1-64 characters"))
+            return HTTPResponse.badRequest(code: "INVALID_ALIAS", message: "Alias must be 1-64 characters")
         }
 
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             let result = try await handler.handleUpdateAlias(request)
             print("✅ Alias updated to: \(result.alias)")
-
-            guard let jsonData = try? JSONEncoder().encode(result) else {
-                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(result)
         } catch {
             print("❌ Alias update failed: \(error.localizedDescription)")
-            return HTTPResponse(status: 500, body: errorJSON(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleGetTorchLevel() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         let response = await handler.handleGetTorchLevel()
-        guard let jsonData = try? JSONEncoder().encode(response) else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode torch level"))
-        }
-
-        return HTTPResponse(status: 200, body: jsonData)
+        return HTTPResponse.json(response)
     }
 
     private func handlePutTorchLevel(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(TorchLevelUpdateRequest.self, from: body) else {
-            return HTTPResponse(status: 400, body: errorJSON(code: "INVALID_REQUEST", message: "Invalid torch level request"))
+            return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid torch level request")
         }
 
         guard let handler = requestHandler else {
-            return HTTPResponse(status: 500, body: errorJSON(code: "INTERNAL_ERROR", message: "No request handler"))
+            return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             let response = try await handler.handleUpdateTorchLevel(request)
             print("✅ Torch level updated to: \(response.currentLevel)")
-
-            guard let jsonData = try? JSONEncoder().encode(response) else {
-                return HTTPResponse(status: 500, body: errorJSON(code: "ENCODING_ERROR", message: "Failed to encode response"))
-            }
-
-            return HTTPResponse(status: 200, body: jsonData)
+            return HTTPResponse.json(response)
         } catch {
             print("❌ Torch level update failed: \(error.localizedDescription)")
-            return HTTPResponse(status: 500, body: errorJSON(code: "TORCH_UPDATE_FAILED", message: error.localizedDescription))
+            return HTTPResponse.internalError(code: "TORCH_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleLogsDownload() -> HTTPResponse {
         // TODO: Implement rotating logs and zip creation
-        return HTTPResponse(status: 501, body: errorJSON(code: "NOT_IMPLEMENTED", message: "Logs download not yet implemented"))
+        return HTTPResponse.error(status: 501, code: "NOT_IMPLEMENTED", message: "Logs download not yet implemented")
     }
 
-    // MARK: - Helpers
-
-    private func errorJSON(code: String, message: String) -> Data {
-        let error = ErrorResponse(code: code, message: message)
-        return (try? JSONEncoder().encode(error)) ?? Data()
-    }
-
-    private func successJSON(message: String) -> Data {
-        let response = ["success": true, "message": message] as [String : Any]
-        return (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
-    }
 }
 
 // MARK: - HTTP Response
@@ -644,7 +613,7 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
-    private let server: NetworkServer
+    private weak var server: NetworkServer?
     private var requestParts: [HTTPServerRequestPart] = []
     private var headers: HTTPHeaders = HTTPHeaders()
     private var uri: String = ""
@@ -695,6 +664,8 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
 
 
     private func processHTTPRequest(context: ChannelHandlerContext) {
+        guard let server = server else { return }
+
         // Convert headers to dictionary
         var headersDict: [String: String] = [:]
         for (name, value) in headers {
@@ -711,7 +682,8 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
         let methodString = method.rawValue  // Capture method string NOW before reset()
 
         // Handle request asynchronously
-        Task {
+        Task { [weak server] in
+            guard let server = server else { return }
             let response = await server.handleHTTPRequest(
                 path: path,
                 method: methodString,  // Use captured value
@@ -773,7 +745,7 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
     typealias OutboundOut = WebSocketFrame
 
-    private let server: NetworkServer
+    private weak var server: NetworkServer?
     private var wsClient: WebSocketClient?
 
     init(server: NetworkServer) {
@@ -783,13 +755,13 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
     func handlerAdded(context: ChannelHandlerContext) {
         wsClient = WebSocketClient(channel: context.channel)
         if let client = wsClient {
-            server.addWebSocketClient(client)
+            server?.addWebSocketClient(client)
         }
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
         if let client = wsClient {
-            server.removeWebSocketClient(client)
+            server?.removeWebSocketClient(client)
         }
         wsClient = nil
     }
@@ -843,8 +815,8 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
         case "tally":
             // Handle tally update from OBS
             if let tallyMsg = try? JSONDecoder().decode(WebSocketTallyMessage.self, from: data) {
-                Task { [weak self] in
-                    await self?.server.handleTallyUpdate(program: tallyMsg.program, preview: tallyMsg.preview)
+                Task { [weak server] in
+                    await server?.handleTallyUpdate(program: tallyMsg.program, preview: tallyMsg.preview)
                 }
             }
 

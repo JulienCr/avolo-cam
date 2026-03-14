@@ -40,7 +40,7 @@ actor TelemetryAggregator: TelemetryProvider {
     }
 
     private func _getCurrentTelemetry() async -> Telemetry {
-        return currentTelemetry ?? createDefaultTelemetry()
+        return currentTelemetry ?? Telemetry.makeDefault()
     }
 
     // MARK: - Lifecycle
@@ -113,19 +113,4 @@ actor TelemetryAggregator: TelemetryProvider {
         )
     }
 
-    // MARK: - Helpers
-
-    private func createDefaultTelemetry() -> Telemetry {
-        return Telemetry(
-            fps: 0,
-            bitrate: 0,
-            battery: 1.0,
-            tempC: 25.0,
-            wifiRssi: -50,
-            cpuUsage: 0,
-            queueMs: nil,
-            droppedFrames: nil,
-            chargingState: nil
-        )
-    }
 }

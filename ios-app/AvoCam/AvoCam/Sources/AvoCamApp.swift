@@ -19,7 +19,9 @@ struct AvoCamApp: App {
                     coordinator.start()
                 }
                 .onDisappear {
-                    coordinator.stop()
+                    Task {
+                        await coordinator.stop()
+                    }
                 }
         }
     }
