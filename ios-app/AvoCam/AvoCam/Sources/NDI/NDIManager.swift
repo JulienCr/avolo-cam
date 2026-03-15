@@ -68,13 +68,13 @@ class NDIManager {
 
     init(alias: String) {
         self.alias = alias
-        print("📡 NDI Manager initialized with alias: \(alias)")
+        Log.ndi.info("NDI Manager initialized with alias: \(alias)")
 
         // Initialize NDI library
         if !NDIlib_initialize() {
-            print("❌ Failed to initialize NDI library")
+            Log.ndi.error("Failed to initialize NDI library")
         } else {
-            print("✅ NDI library initialized")
+            Log.ndi.info("NDI library initialized")
         }
     }
 
@@ -88,7 +88,7 @@ class NDIManager {
     func start(width: Int = 1920, height: Int = 1080, fps: Int = 25) throws {
         let alreadyActive = stateLock.withLock { $0.isActive }
         guard !alreadyActive else {
-            print("⚠️ NDI sender already active")
+            Log.ndi.warning("NDI sender already active")
             return
         }
 
@@ -133,10 +133,10 @@ class NDIManager {
         }
 
         if enableReducedAllocation {
-            print("✅ PERF: NDI frame struct pre-initialized")
+            Log.ndi.info("PERF: NDI frame struct pre-initialized")
         }
 
-        print("✅ NDI sender started: \(senderName) (\(width)x\(height)@\(fps)fps)")
+        Log.ndi.info("NDI sender started: \(senderName) (\(width)x\(height)@\(fps)fps)")
     }
 
     func stop() {
@@ -150,7 +150,7 @@ class NDIManager {
 
         if let sender = sender {
             NDIlib_send_destroy(sender)
-            print("⏹ NDI sender stopped")
+            Log.ndi.info("NDI sender stopped")
         }
     }
 
@@ -177,7 +177,7 @@ class NDIManager {
                 }
                 // Log every 30 drops to avoid spam
                 if dropped % 30 == 1 {
-                    print("⚠️ NDI backpressure: dropped \(dropped) frames total")
+                    Log.ndi.warning("NDI backpressure: dropped \(dropped) frames total")
                 }
                 return
             }
@@ -296,7 +296,7 @@ class NDIManager {
         if let counter = logCounter {
             let connections = getConnectionCount()
             let stats = statsLock.withLock { $0 }
-            print("📡 NDI: \(counter) fps, \(connections) conn, sent: \(stats.sent), dropped: \(stats.dropped)")
+            Log.ndi.debug("NDI: \(counter) fps, \(connections) conn, sent: \(stats.sent), dropped: \(stats.dropped)")
         }
     }
 
@@ -332,7 +332,7 @@ class NDIManager {
         """
 
         sendMetadata(xml: metadataXML)
-        print("📝 NDI metadata updated")
+        Log.ndi.debug("NDI metadata updated")
     }
 
     // MARK: - Status

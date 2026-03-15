@@ -215,7 +215,7 @@ struct StreamControlOverlay: View {
             do {
                 try await coordinator.startStreaming(request: request)
             } catch {
-                print("❌ Failed to start stream: \(error)")
+                Log.ui.error("Failed to start stream: \(error)")
             }
         }
     }

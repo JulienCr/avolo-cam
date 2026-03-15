@@ -32,7 +32,7 @@ final class AuthMiddleware: HTTPMiddleware {
         // Validate Bearer token
         guard let authHeader = headers["Authorization"],
               authHeader == "Bearer \(bearerToken)" else {
-            print("⚠️ Authentication failed for \(method) \(path)")
+            Log.network.warning("Authentication failed for \(method) \(path)")
             return HTTPResponse.error(status: 401, code: "UNAUTHORIZED", message: "Invalid or missing bearer token")
         }
 

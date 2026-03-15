@@ -31,13 +31,13 @@ nonisolated private func encodingOutputCallback(
 ) {
     guard status == noErr, let sampleBuffer = sampleBuffer else {
         if status != noErr {
-            print("⚠️ Encoding callback error: \(status)")
+            Log.encoder.warning("Encoding callback error: \(status)")
         }
         return
     }
 
     guard let refCon = outputCallbackRefCon else {
-        print("⚠️ Missing refCon in encoding callback")
+        Log.encoder.warning("Missing refCon in encoding callback")
         return
     }
 
@@ -72,7 +72,7 @@ actor H264Encoder {
     ///   - bitrate: Target bitrate in bits per second
     ///   - gopSize: Keyframe interval in frames (default: 3 for low latency)
     func configure(width: Int, height: Int, fps: Int, bitrate: Int, gopSize: Int = 3) throws {
-        print("🎬 Configuring H264Encoder: \(width)x\(height) @ \(fps)fps, \(bitrate)bps, GOP=\(gopSize)")
+        Log.encoder.info("Configuring H264Encoder: \(width)x\(height) @ \(fps)fps, \(bitrate)bps, GOP=\(gopSize)")
 
         // Store parameters
         self.width = Int32(width)
@@ -156,14 +156,14 @@ actor H264Encoder {
             throw H264EncoderError.sessionCreationFailed(prepareStatus)
         }
 
-        print("✅ H264Encoder configured successfully (hardware-accelerated)")
+        Log.encoder.info("H264Encoder configured successfully (hardware-accelerated)")
     }
 
     /// Set a compression session property
     private func setProperty<T>(session: VTCompressionSession, key: CFString, value: T) throws {
         let status = VTSessionSetProperty(session, key: key, value: value as CFTypeRef)
         guard status == noErr else {
-            print("⚠️ Failed to set property \(key): \(status)")
+            Log.encoder.warning("Failed to set property \(key): \(status)")
             throw H264EncoderError.propertySetFailed(status)
         }
     }
@@ -184,7 +184,7 @@ actor H264Encoder {
     ///   - duration: Frame duration
     func encode(pixelBuffer: CVPixelBuffer, presentationTime: CMTime, duration: CMTime) {
         guard let session = compressionSession else {
-            print("⚠️ Encoder not configured")
+            Log.encoder.warning("Encoder not configured")
             return
         }
 
@@ -199,7 +199,7 @@ actor H264Encoder {
         )
 
         if status != noErr {
-            print("⚠️ Encode frame failed: \(status)")
+            Log.encoder.warning("Encode frame failed: \(status)")
         }
     }
 
@@ -209,7 +209,7 @@ actor H264Encoder {
 
         // Note: To force a keyframe, pass properties in encode() frameProperties parameter
         // For future implementation: store a flag and use it in the next encode() call
-        print("🔑 Keyframe requested (to be implemented in encode)")
+        Log.encoder.debug("Keyframe requested (to be implemented in encode)")
     }
 
     // MARK: - Lifecycle
@@ -229,7 +229,7 @@ actor H264Encoder {
             // Balance the passRetained(self) from session creation.
             // After this release, the session's refcon no longer prevents deallocation.
             Unmanaged.passUnretained(self).release()
-            print("H264Encoder stopped")
+            Log.encoder.info("H264Encoder stopped")
         }
     }
 
@@ -239,7 +239,7 @@ actor H264Encoder {
         // However, if someone manually nil'd the strong reference after invalidation
         // but before stop(), we still guard here.
         if compressionSession != nil {
-            print("H264Encoder deinit: session still active, invalidating")
+            Log.encoder.warning("H264Encoder deinit: session still active, invalidating")
             // VTCompressionSessionInvalidate is synchronous and safe to call from deinit.
             VTCompressionSessionInvalidate(compressionSession!)
             compressionSession = nil

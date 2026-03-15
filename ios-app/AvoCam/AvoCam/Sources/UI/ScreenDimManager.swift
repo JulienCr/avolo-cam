@@ -25,7 +25,7 @@ class ScreenDimManager: ObservableObject {
 
         // Dim screen immediately when streaming starts
         dimScreen()
-        print("💡 Screen dimmed for streaming (original: \(String(format: "%.2f", originalBrightness)))")
+        Log.ui.info("Screen dimmed for streaming (original: \(String(format: "%.2f", originalBrightness)))")
     }
 
     func stopStreaming() {
@@ -37,7 +37,7 @@ class ScreenDimManager: ObservableObject {
         dimTimer = nil
 
         isScreenAwake = true
-        print("💡 Screen brightness restored to \(String(format: "%.2f", originalBrightness))")
+        Log.ui.info("Screen brightness restored to \(String(format: "%.2f", originalBrightness))")
     }
 
     func wakeScreen() {
@@ -46,7 +46,7 @@ class ScreenDimManager: ObservableObject {
         // Wake up screen to original brightness
         restoreBrightness()
         isScreenAwake = true
-        print("💡 Screen woken (tap detected)")
+        Log.ui.info("Screen woken (tap detected)")
 
         // Schedule auto-dim
         scheduleAutoDim()
@@ -72,7 +72,7 @@ class ScreenDimManager: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor in
                 self.dimScreen()
-                print("💡 Screen auto-dimmed after \(self.autoDimDelay)s inactivity")
+                Log.ui.info("Screen auto-dimmed after \(self.autoDimDelay)s inactivity")
             }
         }
     }

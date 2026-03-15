@@ -19,7 +19,7 @@
     onAliasUpdated: (alias: string) => void;
   } = $props();
 
-  const ctrl = useCameraSettings(camera);
+  const ctrl = useCameraSettings(() => camera);
 
   let telemetry = $derived(camera.status?.telemetry);
   let streamingMode = $derived(camera.status?.current?.streaming_mode || 'ndi');

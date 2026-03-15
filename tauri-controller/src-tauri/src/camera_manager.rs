@@ -37,8 +37,12 @@ impl PersistedCamera {
         info: &CameraInfo,
         fallback: Option<&(Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
     ) -> Self {
-        // Extract current settings from status if available
-        let (stream_settings, camera_settings) = if let Some(ref status) = info.status {
+        // persisted_settings is the source of truth for stream/camera settings.
+        // Only fall back to status.current when no persisted settings exist yet.
+        let (stream_settings, camera_settings) = if let Some((stream, camera)) = fallback {
+            (stream.clone(), camera.clone())
+        } else if let Some(ref status) = info.status {
+            // No persisted settings — seed from camera's live status
             let stream = StreamStartRequest {
                 resolution: status.current.resolution.clone(),
                 framerate: status.current.fps,
@@ -70,15 +74,12 @@ impl PersistedCamera {
                 lens: Some(status.current.lens.clone()),
                 camera_position: Some(status.current.camera_position.clone()),
                 orientation_lock: None,
-                torch_level: None, // Not stored in CurrentSettings
+                torch_level: None,
             };
 
             (Some(stream), Some(camera))
         } else {
-            // Camera offline: use fallback from persisted_settings
-            let stream = fallback.and_then(|(s, _)| s.clone());
-            let camera = fallback.and_then(|(_, c)| c.clone());
-            (stream, camera)
+            (None, None)
         };
 
         Self {

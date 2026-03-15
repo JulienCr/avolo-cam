@@ -60,7 +60,7 @@ actor RTPPacketizer {
         // Start with random sequence number for security
         self.sequenceNumber = UInt16.random(in: 0...UInt16.max)
 
-        print("📦 RTPPacketizer initialized (SSRC: 0x\(String(format: "%08X", ssrc)))")
+        Log.rtp.info("RTPPacketizer initialized (SSRC: 0x\(String(format: "%08X", ssrc)))")
     }
 
     // MARK: - Packetization
@@ -194,7 +194,7 @@ actor RTPPacketizer {
         )
 
         guard status == noErr else {
-            print("⚠️ Failed to get H.264 parameter set count: \(status)")
+            Log.rtp.warning("Failed to get H.264 parameter set count: \(status)")
             return parameterSets
         }
 
@@ -215,12 +215,6 @@ actor RTPPacketizer {
             if status == noErr, let pointer = parameterSetPointer, parameterSetSize > 0 {
                 let data = Data(bytes: pointer, count: parameterSetSize)
                 parameterSets.append(data)
-
-                // Debug: identify NAL type and show base64 for SDP
-                let nalType = data[0] & 0x1F
-                let typeName = nalType == 7 ? "SPS" : (nalType == 8 ? "PPS" : "NAL(\(nalType))")
-                let base64 = data.base64EncodedString()
-                print("📦 Extracted \(typeName): \(parameterSetSize) bytes, base64: \(base64)")
             }
         }
 

@@ -44,7 +44,7 @@ actor UDPTransmitter {
     ///   - host: Destination IP address or hostname
     ///   - port: Destination UDP port
     func connect(host: String, port: UInt16) async throws {
-        print("🌐 Connecting UDP to \(host):\(port)")
+        Log.rtp.info("Connecting UDP to \(host):\(port)")
 
         // Close existing connection if any
         if let existing = connection {
@@ -136,19 +136,17 @@ actor UDPTransmitter {
         connection = newConnection
         connectionState = .ready
 
-        print("✅ UDP connected to \(host):\(port)")
+        Log.rtp.info("UDP connected to \(host):\(port)")
     }
 
     /// Disconnect UDP connection
     func disconnect() async {
         guard let conn = connection else { return }
 
-        print("🔌 Disconnecting UDP")
         conn.cancel()
         connection = nil
         connectionState = .cancelled
-
-        print("✅ UDP disconnected")
+        Log.rtp.info("UDP disconnected")
     }
 
     // MARK: - Data Transmission
@@ -208,19 +206,19 @@ actor UDPTransmitter {
 
         switch state {
         case .setup:
-            print("🔄 UDP state: setup")
+            Log.rtp.debug("UDP state: setup")
         case .preparing:
-            print("🔄 UDP state: preparing")
+            Log.rtp.debug("UDP state: preparing")
         case .ready:
-            print("✅ UDP state: ready")
+            Log.rtp.info("UDP state: ready")
         case .waiting(let error):
-            print("⏳ UDP state: waiting (\(error))")
+            Log.rtp.warning("UDP state: waiting (\(error))")
         case .failed(let error):
-            print("❌ UDP state: failed (\(error))")
+            Log.rtp.error("UDP state: failed (\(error))")
         case .cancelled:
-            print("🛑 UDP state: cancelled")
+            Log.rtp.info("UDP state: cancelled")
         @unknown default:
-            print("⚠️ UDP state: unknown")
+            Log.rtp.warning("UDP state: unknown")
         }
     }
 

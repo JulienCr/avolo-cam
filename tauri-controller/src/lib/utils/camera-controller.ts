@@ -5,6 +5,7 @@ import { getStreamSettings, updateStreamSettings } from '$lib/stores/settings';
 import * as api from '$lib/utils/api';
 import { debounce } from '$lib/utils/debounce';
 import { toastError } from '$lib/stores/toast';
+import { refreshCameras } from '$lib/stores/cameras';
 
 function toCameraSettings(source: Partial<CameraSettings>): CameraSettings {
   return { ...DEFAULT_CAMERA_SETTINGS, ...source, torch_mode: 'auto' };
@@ -121,6 +122,7 @@ export function createDebouncedPersistCamera(cameraId: string, getSettings: () =
 export async function startStream(cameraId: string, streamSettings: StreamSettings): Promise<void> {
   try {
     await api.startStream(cameraId, streamSettings);
+    refreshCameras();
   } catch (e) {
     toastError(`Failed to start stream: ${e}`);
   }
@@ -129,6 +131,7 @@ export async function startStream(cameraId: string, streamSettings: StreamSettin
 export async function stopStream(cameraId: string): Promise<void> {
   try {
     await api.stopStream(cameraId);
+    refreshCameras();
   } catch (e) {
     toastError(`Failed to stop stream: ${e}`);
   }

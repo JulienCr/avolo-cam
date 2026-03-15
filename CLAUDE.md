@@ -10,6 +10,7 @@ make build-tauri    # Build Tauri desktop app (pnpm install + tauri build)
 make build-obs      # Build OBS plugin (cmake Release)
 make install-obs    # Build + install OBS plugin to OBS dir (Windows, UAC)
 make clean          # Clean all build artifacts
+make debug-ios      # Debug build + install + live console logs on connected iPhones
 
 # Dev
 cd tauri-controller && pnpm install && pnpm dev              # Dev mode

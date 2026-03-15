@@ -7,7 +7,6 @@
 
 import Foundation
 import AVFoundation
-import os
 
 /// Actor that coordinates the streaming pipeline between capture and output (NDI, SRT, or Flash)
 actor StreamingCoordinator: StreamingService {
@@ -21,9 +20,6 @@ actor StreamingCoordinator: StreamingService {
     private let srtManager: SRTManager
     private let flashManager: FlashManager
     private var tallyPoller: NDITallyPoller?
-
-    /// Debug frame counter for Flash mode logging
-    private let flashFrameCounter = OSAllocatedUnfairLock(initialState: 0)
 
     // MARK: - Initialization
 
@@ -53,7 +49,7 @@ actor StreamingCoordinator: StreamingService {
         let mode = request.streamingMode ?? .ndi
         currentMode = mode
 
-        print("▶️ Starting \(mode.rawValue.uppercased()) stream: \(request.resolution) @ \(request.framerate)fps, \(request.bitrate)bps")
+        Log.streaming.info("Starting \(mode.rawValue.uppercased()) stream: \(request.resolution) @ \(request.framerate)fps, \(request.bitrate)bps")
 
         // 1. Configure capture
         try await captureManager.configure(
@@ -120,24 +116,14 @@ actor StreamingCoordinator: StreamingService {
 
             try await flashManager.start(config: flashConfig)
 
-            // Reset debug frame counter for this streaming session
-            flashFrameCounter.withLock { $0 = 0 }
-
             // Start capture with frame callback that feeds Flash encoder
-            let counter = flashFrameCounter
             try await captureManager.startCapture { [flashManager] sampleBuffer in
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                    print("⚠️ FLASH: No pixel buffer in sample")
+                    Log.streaming.warning("FLASH: No pixel buffer in sample")
                     return
                 }
                 let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 let duration = CMSampleBufferGetDuration(sampleBuffer)
-
-                // Debug logging every 30 frames
-                let count = counter.withLock { c -> Int in c += 1; return c }
-                if count % 30 == 1 {
-                    print("📹 FLASH: Sending frame \(count) to encoder")
-                }
 
                 Task {
                     await flashManager.send(pixelBuffer: pixelBuffer, timestamp: timestamp, duration: duration)
@@ -147,13 +133,13 @@ actor StreamingCoordinator: StreamingService {
 
         isStreaming = true
 
-        print("✅ \(mode.rawValue.uppercased()) streaming started successfully")
+        Log.streaming.info("\(mode.rawValue.uppercased()) streaming started successfully")
     }
 
     func stopStreaming() async {
         guard isStreaming else { return }
 
-        print("⏹ Stopping \(currentMode.rawValue.uppercased()) stream")
+        Log.streaming.info("Stopping \(currentMode.rawValue.uppercased()) stream")
 
         // Stop in reverse order based on current mode
         switch currentMode {
@@ -173,7 +159,7 @@ actor StreamingCoordinator: StreamingService {
 
         isStreaming = false
 
-        print("✅ Streaming stopped")
+        Log.streaming.info("Streaming stopped")
     }
 
     // MARK: - NDI Status

@@ -63,7 +63,7 @@ struct AppConfiguration {
             serverPort: defaultServerPort
         )
 
-        print("📋 Configuration loaded: \(alias), auth: \(authEnabled ? "enabled" : "disabled")")
+        Log.config.info("Configuration loaded: \(alias), auth: \(authEnabled ? "enabled" : "disabled")")
         return config
     }
 
@@ -73,7 +73,7 @@ struct AppConfiguration {
         defaults.cameraAlias = cameraAlias
         defaults.bearerToken = bearerToken
         defaults.isAuthenticationEnabled = isAuthenticationEnabled
-        print("💾 Configuration saved: \(cameraAlias), auth: \(isAuthenticationEnabled ? "enabled" : "disabled")")
+        Log.config.info("Configuration saved: \(cameraAlias), auth: \(isAuthenticationEnabled ? "enabled" : "disabled")")
     }
 
     // MARK: - Generation Helpers

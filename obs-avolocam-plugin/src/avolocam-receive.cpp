@@ -168,10 +168,10 @@ void SourceData::send_tally_state() {
     if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
     if (!source) return;
 
-    // obs_source_showing() returns true if the source is visible on the final output (Program)
-    // obs_source_active() returns true if the source is active (either Program OR Preview)
-    bool is_program = obs_source_showing(source);
-    bool is_preview = obs_source_active(source) && !is_program;
+    // obs_source_active()  = activate_refs != 0 → true for PROGRAM only (MAIN_VIEW)
+    // obs_source_showing() = show_refs != 0    → true for PROGRAM + PREVIEW (any view)
+    bool is_program = obs_source_active(source);
+    bool is_preview = obs_source_showing(source) && !is_program;
 
     // Only send if state changed
     if (is_program == tally_program.load() && is_preview == tally_preview.load())
@@ -185,10 +185,9 @@ void SourceData::send_tally_state() {
 
     pipeline.ws_client->send_command(json);
 
-    ALOG(LOG_INFO, "Tally sent: program=%s, preview=%s (ws=%s)",
+    ALOG(LOG_INFO, "Tally changed: program=%s, preview=%s",
          is_program ? "true" : "false",
-         is_preview ? "true" : "false",
-         pipeline.ws_client->is_connected() ? "connected" : "disconnected");
+         is_preview ? "true" : "false");
 }
 
 // Unconditional tally re-send (guards against lost WebSocket messages).
@@ -197,8 +196,11 @@ void SourceData::send_tally_heartbeat() {
     if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
     if (!source) return;
 
+    bool program = tally_program.load();
+    bool preview = tally_preview.load();
+
     char json[128];
-    format_tally_json(json, sizeof(json), tally_program.load(), tally_preview.load());
+    format_tally_json(json, sizeof(json), program, preview);
     pipeline.ws_client->send_command(json);
 }
 

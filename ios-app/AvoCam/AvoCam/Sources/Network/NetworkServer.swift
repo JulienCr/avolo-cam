@@ -69,7 +69,7 @@ class NetworkServer {
     // MARK: - Server Control
 
     func start() throws {
-        print("🌐 Starting HTTP/WebSocket server on port \(port)")
+        Log.network.info("Starting HTTP/WebSocket server on port \(port)")
 
         // Initialize router with middleware and routes
         setupRouter()
@@ -152,7 +152,7 @@ class NetworkServer {
 
         channel = try bootstrap.bind(host: "0.0.0.0", port: port).wait()
 
-        print("✅ Server started on port \(port)")
+        Log.network.info("Server started on port \(port)")
     }
 
     func stop() {
@@ -172,7 +172,7 @@ class NetworkServer {
         bootstrap = nil
         group = nil
 
-        print("⏹ Server stopped")
+        Log.network.info("Server stopped")
     }
 
     // MARK: - WebSocket Management
@@ -183,7 +183,7 @@ class NetworkServer {
             return clients.count
         }
 
-        print("🔌 WebSocket client connected (total: \(count))")
+        Log.network.info("WebSocket client connected (total: \(count))")
     }
 
     func removeWebSocketClient(_ client: WebSocketClient) {
@@ -192,7 +192,7 @@ class NetworkServer {
             return clients.count
         }
 
-        print("🔌 WebSocket client disconnected (total: \(count))")
+        Log.network.info("WebSocket client disconnected (total: \(count))")
     }
 
     func broadcastTelemetry(_ telemetry: Telemetry, ndiState: NDIState, flashUdpPort: Int? = nil) {
@@ -244,7 +244,6 @@ class NetworkServer {
 
     /// Handle tally update from OBS via WebSocket
     func handleTallyUpdate(program: Bool, preview: Bool) async {
-        print("📥 Tally update: program=\(program), preview=\(preview)")
         await onTallyUpdate?(program, preview)
     }
 
@@ -334,7 +333,6 @@ class NetworkServer {
     // MARK: - Request Handling
 
     func handleHTTPRequest(path: String, method: String, headers: [String: String], body: Data?) async -> HTTPResponse {
-        print("📥 HTTP \(method) \(path)")
         return await router.route(path: path, method: method, headers: headers, body: body)
     }
 
@@ -362,37 +360,37 @@ class NetworkServer {
     private func handleStreamStart(body: Data?) async -> HTTPResponse {
         guard let body = body,
               let request = try? JSONDecoder().decode(StreamStartRequest.self, from: body) else {
-            print("⚠️ Invalid stream start request body")
+            Log.network.warning("Invalid stream start request body")
             return HTTPResponse.badRequest(code: "INVALID_REQUEST", message: "Invalid stream start request")
         }
 
         guard let handler = requestHandler else {
-            print("⚠️ No request handler available")
+            Log.network.warning("No request handler available")
             return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleStreamStart(request)
-            print("✅ Stream started: \(request.resolution)@\(request.framerate)fps")
+            Log.network.info("Stream started: \(request.resolution)@\(request.framerate)fps")
             return HTTPResponse.success(message: "Stream started")
         } catch {
-            print("❌ Stream start failed: \(error.localizedDescription)")
+            Log.network.error("Stream start failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "STREAM_START_FAILED", message: error.localizedDescription)
         }
     }
 
     private func handleStreamStop() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            print("⚠️ No request handler available")
+            Log.network.warning("No request handler available")
             return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             try await handler.handleStreamStop()
-            print("✅ Stream stopped")
+            Log.network.info("Stream stopped")
             return HTTPResponse.success(message: "Stream stopped")
         } catch {
-            print("❌ Stream stop failed: \(error.localizedDescription)")
+            Log.network.error("Stream stop failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "STREAM_STOP_FAILED", message: error.localizedDescription)
         }
     }
@@ -458,16 +456,16 @@ class NetworkServer {
 
     private func handleMeasureWhiteBalance() async -> HTTPResponse {
         guard let handler = requestHandler else {
-            print("⚠️ No request handler available")
+            Log.network.warning("No request handler available")
             return HTTPResponse.internalError(code: "INTERNAL_ERROR", message: "No request handler")
         }
 
         do {
             let result = try await handler.handleMeasureWhiteBalance()
-            print("✅ White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
+            Log.network.info("White balance measured: SceneCCT_K = \(result.sceneCCT_K)K (physical), tint = \(String(format: "%.1f", result.tint))")
             return HTTPResponse.json(result)
         } catch {
-            print("❌ White balance measure failed: \(error.localizedDescription)")
+            Log.network.error("White balance measure failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "MEASURE_FAILED", message: error.localizedDescription)
         }
     }
@@ -490,10 +488,10 @@ class NetworkServer {
 
         do {
             let result = try await handler.handleUpdateAlias(request)
-            print("✅ Alias updated to: \(result.alias)")
+            Log.network.info("Alias updated to: \(result.alias)")
             return HTTPResponse.json(result)
         } catch {
-            print("❌ Alias update failed: \(error.localizedDescription)")
+            Log.network.error("Alias update failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "ALIAS_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
@@ -519,10 +517,10 @@ class NetworkServer {
 
         do {
             let response = try await handler.handleUpdateTorchLevel(request)
-            print("✅ Torch level updated to: \(response.currentLevel)")
+            Log.network.info("Torch level updated to: \(response.currentLevel)")
             return HTTPResponse.json(response)
         } catch {
-            print("❌ Torch level update failed: \(error.localizedDescription)")
+            Log.network.error("Torch level update failed: \(error.localizedDescription)")
             return HTTPResponse.internalError(code: "TORCH_UPDATE_FAILED", message: error.localizedDescription)
         }
     }
@@ -733,7 +731,7 @@ final class HTTPServerHandler: ChannelInboundHandler, @unchecked Sendable {
 
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        print("❌ HTTP handler error: \(error)")
+        Log.network.error("HTTP handler error: \(error)")
         context.close(promise: nil)
     }
 }
@@ -800,14 +798,14 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private func handleWebSocketMessage(text: String, client: WebSocketClient?) {
         guard let data = text.data(using: .utf8) else {
-            print("⚠️ Invalid WebSocket message encoding")
+            Log.network.warning("Invalid WebSocket message encoding")
             return
         }
 
         // Try to decode as a generic message to get the "op" field
         struct OpMessage: Codable { let op: String }
         guard let opMsg = try? JSONDecoder().decode(OpMessage.self, from: data) else {
-            print("⚠️ Invalid WebSocket message: missing 'op' field")
+            Log.network.warning("Invalid WebSocket message: missing 'op' field")
             return
         }
 
@@ -827,7 +825,7 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
                 Task {
                     // Forward to request handler
                     // Note: This would require async support in the handler
-                    print("📥 WS camera command: \(cameraSettings)")
+                    Log.network.debug("WS camera command: \(cameraSettings)")
                 }
             }
 
@@ -837,21 +835,21 @@ final class WebSocketServerHandler: ChannelInboundHandler, @unchecked Sendable {
             if let subMsg = try? JSONDecoder().decode(SubscribeMessage.self, from: data) {
                 if subMsg.channels.contains("frame_info") {
                     client?.subscribedToFrameInfo = true
-                    print("📡 WS client subscribed to frame_info")
+                    Log.network.debug("WS client subscribed to frame_info")
                 }
             }
 
         default:
-            print("⚠️ Unknown WebSocket op: \(opMsg.op)")
+            Log.network.warning("Unknown WebSocket op: \(opMsg.op)")
         }
     }
 
     private func handleWebSocketMessage(data: Data) {
-        print("📥 WS binary data received: \(data.count) bytes")
+        Log.network.debug("WS binary data received: \(data.count) bytes")
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        print("❌ WebSocket handler error: \(error)")
+        Log.network.error("WebSocket handler error: \(error)")
         context.close(promise: nil)
     }
 }

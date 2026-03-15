@@ -6,7 +6,6 @@
 //
 
 import AVFoundation
-import os.log
 
 /// Actor-based torch controller for safe, concurrent torch management
 /// Uses device-specific minimum torch level to avoid glare and heat
@@ -16,7 +15,6 @@ actor TorchController {
 
     private var currentState: Bool = false
     private var torchLevel: Float
-    private let logger = Logger(subsystem: "com.avocam.torch", category: "TorchController")
 
     // UserDefaults key for persisting custom torch level
     private static let torchLevelKey = "com.avocam.customTorchLevel"
@@ -24,45 +22,25 @@ actor TorchController {
     // MARK: - Device-Specific Defaults
 
     /// Get default torch level based on device model
+    ///
+    /// iPhone internal identifiers use "iPhoneNN" where NN is the hardware generation:
+    ///   iPhone17 = iPhone 16 series, iPhone16 = iPhone 15, iPhone15 = iPhone 14,
+    ///   iPhone14 = iPhone 13, iPhone13 = iPhone 12, iPhone12 = iPhone 11,
+    ///   iPhone11 = XS/XR, iPhone10 = X
     private static func getDefaultTorchLevel() -> Float {
         let deviceModel = getDeviceModel()
 
-        // iPhone 16 series
+        // iPhone 16 series has a very dim minimum
         if deviceModel.contains("iPhone17") {
             return 0.01
         }
-        // iPhone 15 series
-        else if deviceModel.contains("iPhone16") {
+        // iPhone 12-15 series (iPhone13 through iPhone16 identifiers)
+        if deviceModel.contains("iPhone16") || deviceModel.contains("iPhone15")
+            || deviceModel.contains("iPhone14") || deviceModel.contains("iPhone13") {
             return 0.02
         }
-        // iPhone 14 series
-        else if deviceModel.contains("iPhone15") {
-            return 0.02
-        }
-        // iPhone 13 series
-        else if deviceModel.contains("iPhone14") {
-            return 0.02
-        }
-        // iPhone 12 series
-        else if deviceModel.contains("iPhone13") {
-            return 0.02
-        }
-        // iPhone 11 series
-        else if deviceModel.contains("iPhone12") {
-            return 0.03
-        }
-        // iPhone XS/XR series (iPhone11,x)
-        else if deviceModel.contains("iPhone11") {
-            return 0.03
-        }
-        // iPhone X series (iPhone10,x)
-        else if deviceModel.contains("iPhone10") {
-            return 0.03
-        }
-        // Default for older/unknown models
-        else {
-            return 0.03
-        }
+        // iPhone X/XS/XR/11 and older (iPhone10-12 identifiers)
+        return 0.03
     }
 
     /// Get device model identifier (e.g., "iPhone14,5")
@@ -89,28 +67,27 @@ actor TorchController {
 
         let deviceModel = Self.getDeviceModel()
         let level = self.torchLevel  // Capture for logging
-        logger.info("✅ TorchController initialized for \(deviceModel) with level: \(level)")
+        Log.torch.info("✅ TorchController initialized for \(deviceModel) with level: \(level)")
     }
 
     // MARK: - Public API
 
     /// Set torch state based on NDI program tally
     /// - Parameter programOn: true if camera is on program, false otherwise
-    func set(programOn: Bool) async {
+    /// - Returns: true if the torch was set successfully (or was already in the requested state)
+    @discardableResult
+    func set(programOn: Bool) async -> Bool {
         // Avoid redundant configuration changes
-        guard programOn != currentState else { return }
+        guard programOn != currentState else { return true }
 
-        currentState = programOn
-
-        // Get video device
         guard let device = AVCaptureDevice.default(for: .video) else {
-            logger.warning("No video device available for torch control")
-            return
+            Log.torch.warning("No video device available for torch control")
+            return false
         }
 
         guard device.hasTorch else {
-            logger.warning("Device does not support torch")
-            return
+            Log.torch.warning("Device does not support torch")
+            return false
         }
 
         do {
@@ -118,19 +95,23 @@ actor TorchController {
             defer { device.unlockForConfiguration() }
 
             if programOn {
-                // Turn torch ON at minimum level
-                if device.isTorchModeSupported(.on) {
-                    let level = torchLevel  // Capture for logging
-                    try device.setTorchModeOn(level: level)
-                    logger.info("🔦 Torch ON (program tally) at level \(level)")
+                guard device.isTorchModeSupported(.on) else {
+                    Log.torch.warning("Torch on mode not supported")
+                    return false
                 }
+                let level = torchLevel
+                try device.setTorchModeOn(level: level)
+                currentState = true
+                Log.torch.info("🔦 Torch ON (program tally) at level \(level)")
             } else {
-                // Turn torch OFF
                 device.torchMode = .off
-                logger.info("🔦 Torch OFF (not on program)")
+                currentState = false
+                Log.torch.info("🔦 Torch OFF (not on program)")
             }
+            return true
         } catch {
-            logger.error("Failed to set torch mode: \(error.localizedDescription)")
+            Log.torch.error("Failed to set torch mode: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -138,19 +119,18 @@ actor TorchController {
     func forceOff() async {
         guard currentState else { return }
 
-        currentState = false
-
         guard let device = AVCaptureDevice.default(for: .video),
             device.hasTorch
         else { return }
 
         do {
             try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
             device.torchMode = .off
-            device.unlockForConfiguration()
-            logger.info("🔦 Torch force OFF")
+            currentState = false
+            Log.torch.info("🔦 Torch force OFF")
         } catch {
-            logger.error("Failed to force torch off: \(error.localizedDescription)")
+            Log.torch.error("Failed to force torch off: \(error.localizedDescription)")
         }
     }
 
@@ -166,14 +146,14 @@ actor TorchController {
     /// - Returns: true if level was valid and set, false otherwise
     func setTorchLevel(_ level: Float) -> Bool {
         // Validate level (AVFoundation requires 0.01 - 1.0)
-        guard level >= 0.01 && level <= 1.0 else {
-            logger.error("Invalid torch level: \(level). Must be 0.01 - 1.0")
+        guard (0.01...1.0).contains(level) else {
+            Log.torch.error("Invalid torch level: \(level). Must be 0.01 - 1.0")
             return false
         }
 
         torchLevel = level
         UserDefaults.standard.set(level, forKey: Self.torchLevelKey)
-        logger.info("✅ Torch level set to \(level)")
+        Log.torch.info("✅ Torch level set to \(level)")
 
         return true
     }
@@ -188,7 +168,7 @@ actor TorchController {
         let defaultLevel = Self.getDefaultTorchLevel()
         torchLevel = defaultLevel
         UserDefaults.standard.removeObject(forKey: Self.torchLevelKey)
-        logger.info("✅ Torch level reset to default: \(defaultLevel)")
+        Log.torch.info("✅ Torch level reset to default: \(defaultLevel)")
     }
 
     /// Get device model identifier for debugging/telemetry

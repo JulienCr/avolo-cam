@@ -86,7 +86,7 @@ actor FlashManager {
         encoder = H264Encoder()
         packetizer = RTPPacketizer()
         transmitter = UDPTransmitter()
-        print("⚡️ FlashManager initialized (RTP/UDP streaming)")
+        Log.flash.info("FlashManager initialized (RTP/UDP streaming)")
     }
 
     // MARK: - Lifecycle
@@ -94,9 +94,7 @@ actor FlashManager {
     /// Start Flash streaming with the given configuration
     /// - Parameter config: Flash streaming configuration
     func start(config: Configuration) async throws {
-        print("🚀 Starting Flash stream: \(config.width)x\(config.height) @ \(config.fps)fps")
-        print("🎯 Destination: \(config.destinationHost):\(config.destinationPort)")
-        print("📊 Bitrate: \(config.bitrate / 1_000_000) Mbps, GOP: \(config.gopSize)")
+        Log.flash.info("Starting Flash stream: \(config.width)x\(config.height)@\(config.fps)fps → \(config.destinationHost):\(config.destinationPort), \(config.bitrate / 1_000_000)Mbps, GOP=\(config.gopSize)")
 
         currentConfig = config
 
@@ -115,7 +113,7 @@ actor FlashManager {
                 gopSize: config.gopSize
             )
         } catch {
-            print("❌ Failed to configure encoder: \(error)")
+            Log.flash.error("Failed to configure encoder: \(error)")
             throw FlashError.encoderConfigurationFailed
         }
 
@@ -133,7 +131,7 @@ actor FlashManager {
                 port: config.destinationPort
             )
         } catch {
-            print("❌ Failed to connect UDP: \(error)")
+            Log.flash.error("Failed to connect UDP: \(error)")
             throw FlashError.connectionFailed(error)
         }
 
@@ -147,8 +145,7 @@ actor FlashManager {
         fpsStartTime = CFAbsoluteTimeGetCurrent()
         isRunning = true
 
-        print("✅ Flash stream started successfully")
-        print("📺 Streaming RTP/H.264 to \(config.destinationHost):\(config.destinationPort)")
+        Log.flash.info("Flash stream started successfully")
     }
 
     /// Send a pixel buffer for encoding and transmission
@@ -158,7 +155,7 @@ actor FlashManager {
     ///   - duration: Frame duration
     func send(pixelBuffer: CVPixelBuffer, timestamp: CMTime, duration: CMTime) async {
         guard isRunning else {
-            print("⚠️ FLASH send: not running, skipping frame")
+            Log.flash.warning("FLASH send: not running, skipping frame")
             return
         }
 
@@ -188,7 +185,7 @@ actor FlashManager {
     func stop() async {
         guard isRunning else { return }
 
-        print("⏹ Stopping Flash stream")
+        Log.flash.info("Stopping Flash stream")
         isRunning = false
 
         // Clear active UDP port
@@ -200,7 +197,7 @@ actor FlashManager {
         // Disconnect UDP
         await transmitter.disconnect()
 
-        print("✅ Flash stream stopped")
+        Log.flash.info("Flash stream stopped")
     }
 
     /// Set callback for frame info notifications (for WebSocket correlation)
@@ -214,7 +211,7 @@ actor FlashManager {
         guard isRunning else { return }
 
         keyframeRequested = true
-        print("🔑 Keyframe requested for next frame")
+        Log.flash.debug("Keyframe requested for next frame")
     }
 
     // MARK: - Telemetry
@@ -259,21 +256,12 @@ actor FlashManager {
             // Packetize H.264 into RTP packets
             let rtpPackets = try await packetizer.packetize(sampleBuffer: sampleBuffer)
 
-            // Debug: log packet info periodically
-            if sentFrames % 30 == 0 {
-                print("📤 FLASH TX: Frame \(sentFrames), \(rtpPackets.count) RTP packets")
-                if let first = rtpPackets.first {
-                    let header = first.data.prefix(16)
-                    print("   First packet: \(first.data.count) bytes, header: \(header.map { String(format: "%02X", $0) }.joined(separator: " "))")
-                }
-            }
-
             // Send each RTP packet via UDP
             for packet in rtpPackets {
                 do {
                     try await transmitter.send(packet.data)
                 } catch {
-                    print("⚠️ Failed to send RTP packet (seq: \(packet.sequenceNumber)): \(error)")
+                    Log.flash.warning("Failed to send RTP packet (seq: \(packet.sequenceNumber)): \(error)")
                     droppedFrames += 1
                     return
                 }
@@ -300,7 +288,7 @@ actor FlashManager {
             }
 
         } catch {
-            print("⚠️ Failed to packetize frame: \(error)")
+            Log.flash.warning("Failed to packetize frame: \(error)")
             droppedFrames += 1
         }
     }

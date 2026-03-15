@@ -79,7 +79,7 @@ actor SRTManager {
     init() {
         encoder = H264Encoder()
         tsMuxer = TSMuxer()
-        print("🎥 SRTManager initialized with MPEG-TS muxer")
+        Log.srt.info("SRTManager initialized with MPEG-TS muxer")
     }
 
     // MARK: - Lifecycle
@@ -87,8 +87,7 @@ actor SRTManager {
     /// Start SRT streaming with the given configuration
     /// - Parameter config: SRT and encoding configuration
     func start(config: Configuration) async throws {
-        print("🚀 Starting SRT stream: \(config.width)x\(config.height) @ \(config.fps)fps")
-        print("🔌 SRT Port: \(config.port), Latency: \(config.latency)ms")
+        Log.srt.info("Starting SRT stream: \(config.width)x\(config.height)@\(config.fps)fps, port=\(config.port), latency=\(config.latency)ms")
 
         currentConfig = config
 
@@ -102,7 +101,7 @@ actor SRTManager {
                 gopSize: config.gopSize
             )
         } catch {
-            print("❌ Failed to configure encoder: \(error)")
+            Log.srt.error("Failed to configure encoder: \(error)")
             throw SRTError.encoderConfigurationFailed
         }
 
@@ -128,11 +127,11 @@ actor SRTManager {
 
             // Bind to the port
             try socket.bind(to: srtUrl)
-            print("✅ SRT socket bound to port \(config.port)")
+            Log.srt.info("SRT socket bound to port \(config.port)")
 
             // Start listening for connections
             try socket.listen(withBacklog: 1)
-            print("👂 SRT listening for connections...")
+            Log.srt.info("SRT listening for connections...")
 
             self.srtSocket = socket
 
@@ -142,7 +141,7 @@ actor SRTManager {
             }
 
         } catch {
-            print("❌ Failed to setup SRT socket: \(error)")
+            Log.srt.error("Failed to setup SRT socket: \(error)")
             throw SRTError.socketCreationFailed
         }
 
@@ -158,8 +157,7 @@ actor SRTManager {
         isRunning = true
 
         // Log connection info
-        print("✅ SRT stream started successfully - waiting for OBS connection on port \(config.port)")
-        print("📺 Connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
+        Log.srt.info("SRT stream started, connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
     }
 
     /// Accept incoming SRT connections
@@ -168,7 +166,7 @@ actor SRTManager {
             guard let socket = srtSocket else {
                 // Socket was closed, try to recreate it
                 if isRunning, let config = currentConfig {
-                    print("🔄 Attempting to recreate SRT listener...")
+                    Log.srt.info("Attempting to recreate SRT listener...")
                     await recreateListener(config: config)
                 }
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
@@ -184,7 +182,7 @@ actor SRTManager {
             do {
                 // Accept blocks until a client connects
                 let client = try socket.accept()
-                print("🔗 SRT client connected!")
+                Log.srt.info("SRT client connected!")
 
                 // Store the connected client
                 self.connectedClient = client
@@ -194,13 +192,13 @@ actor SRTManager {
                     let errorString = "\(error)"
                     // Check if the socket became invalid (common after client disconnect)
                     if errorString.contains("einvsock") || errorString.contains("invalid") {
-                        print("⚠️ SRT listener socket invalid, will recreate...")
+                        Log.srt.warning("SRT listener socket invalid, will recreate...")
                         // Close the invalid socket
                         srtSocket?.close()
                         srtSocket = nil
                         // Will be recreated on next loop iteration
                     } else {
-                        print("⚠️ Error accepting SRT connection: \(error)")
+                        Log.srt.warning("Error accepting SRT connection: \(error)")
                     }
                     // Brief delay before retrying
                     try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
@@ -225,14 +223,14 @@ actor SRTManager {
             let srtUrl = URL(string: "srt://0.0.0.0:\(config.port)?transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")!
 
             try socket.bind(to: srtUrl)
-            print("✅ SRT socket re-bound to port \(config.port)")
+            Log.srt.info("SRT socket re-bound to port \(config.port)")
 
             try socket.listen(withBacklog: 1)
-            print("👂 SRT listening for connections (recreated)...")
+            Log.srt.info("SRT listening for connections (recreated)...")
 
             self.srtSocket = socket
         } catch {
-            print("❌ Failed to recreate SRT listener: \(error)")
+            Log.srt.error("Failed to recreate SRT listener: \(error)")
         }
     }
 
@@ -266,7 +264,7 @@ actor SRTManager {
     func stop() async {
         guard isRunning else { return }
 
-        print("⏹ Stopping SRT stream")
+        Log.srt.info("Stopping SRT stream")
         isRunning = false
 
         // Cancel accept task
@@ -284,7 +282,7 @@ actor SRTManager {
         srtSocket?.close()
         srtSocket = nil
 
-        print("✅ SRT stream stopped")
+        Log.srt.info("SRT stream stopped")
     }
 
     // MARK: - Telemetry
@@ -317,7 +315,7 @@ actor SRTManager {
         let tsData = tsMuxer.mux(sampleBuffer: sampleBuffer)
 
         guard !tsData.isEmpty else {
-            print("⚠️ TSMuxer returned empty data")
+            Log.srt.warning("TSMuxer returned empty data")
             droppedFrames += 1
             return
         }
@@ -348,7 +346,7 @@ actor SRTManager {
                 sentBytes += Int64(alignedChunkSize)
                 chunksSent += 1
             } catch {
-                print("⚠️ SRT send failed at chunk \(chunksSent): \(error)")
+                Log.srt.warning("SRT send failed at chunk \(chunksSent): \(error)")
                 sendError = true
                 droppedFrames += 1
                 connectedClient = nil

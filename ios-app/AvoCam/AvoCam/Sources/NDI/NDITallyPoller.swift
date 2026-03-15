@@ -7,7 +7,7 @@
 
 import Foundation
 import Combine
-import os.log
+import os
 
 /// Polls NDI tally state at 10-20Hz and controls torch accordingly
 /// - Program tally -> Torch ON at minimum level
@@ -19,7 +19,6 @@ class NDITallyPoller {
     private let ndiManager: NDIManager
     private let torchController = TorchController()
     private let pollingInterval: UInt64 = 50_000_000  // 50ms = 20Hz
-    private let logger = Logger(subsystem: "com.avocam.tally", category: "NDITallyPoller")
 
     // External tally priority tracking timeout
     private let externalTallyTimeout: UInt64 = 5_000_000_000  // 5 seconds in nanoseconds
@@ -67,20 +66,20 @@ class NDITallyPoller {
     /// Handles torch control and logging after a tally change.
     private func handleTallyChanges(_ changes: (programChanged: Bool, previewChanged: Bool), program: Bool, preview: Bool, source: String) async {
         if changes.programChanged {
-            await torchController.set(programOn: program)
-            if program {
-                logger.info("🔴 \(source) tally ON → Torch ON")
+            let success = await torchController.set(programOn: program)
+            if success {
+                Log.tally.info("\(program ? "🔴" : "⚫️") \(source) tally \(program ? "ON → Torch ON" : "OFF → Torch OFF")")
             } else {
-                logger.info("⚫️ \(source) tally OFF → Torch OFF")
+                // Reset lastProgram so next heartbeat/poll retries
+                tallyLock.withLock { state in
+                    state.lastProgram = !program
+                }
+                Log.tally.warning("Torch operation failed, will retry on next heartbeat")
             }
         }
 
         if changes.previewChanged {
-            if preview {
-                logger.debug("🟢 \(source) preview tally ON")
-            } else {
-                logger.debug("⚫️ \(source) preview tally OFF")
-            }
+            Log.tally.debug("\(preview ? "🟢" : "⚫️") \(source) preview tally \(preview ? "ON" : "OFF")")
         }
     }
 
@@ -88,7 +87,7 @@ class NDITallyPoller {
 
     init(ndiManager: NDIManager) {
         self.ndiManager = ndiManager
-        logger.info("✅ NDI Tally Poller initialized")
+        Log.tally.info("✅ NDI Tally Poller initialized")
     }
 
     // MARK: - Lifecycle
@@ -96,11 +95,11 @@ class NDITallyPoller {
     /// Start polling NDI tally state
     func start() {
         guard pollingTask == nil else {
-            logger.warning("Tally poller already running")
+            Log.tally.warning("Tally poller already running")
             return
         }
 
-        logger.info("▶️ Starting tally poller (20Hz)")
+        Log.tally.info("▶️ Starting tally poller (20Hz)")
 
         pollingTask = Task { [weak self] in
             guard let self = self else { return }
@@ -114,7 +113,7 @@ class NDITallyPoller {
 
             // Cleanup: ensure torch is off when polling stops
             await self.torchController.forceOff()
-            self.logger.info("⏹ Tally poller stopped, torch forced off")
+            Log.tally.info("⏹ Tally poller stopped, torch forced off")
         }
     }
 
@@ -122,7 +121,7 @@ class NDITallyPoller {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
-        logger.info("⏹ Tally poller stop requested")
+        Log.tally.info("⏹ Tally poller stop requested")
     }
 
     // MARK: - Private Methods
