@@ -146,9 +146,9 @@
     await refreshCameras();
   }
 
-  // Alias Update
-  async function handleAliasUpdated(_cameraId: string, _newAlias: string) {
-    await refreshCameras();
+  // Alias Update — update the store directly instead of a full refresh
+  function handleAliasUpdated(cameraId: string, newAlias: string) {
+    cameras.update(cams => cams.map(c => c.id === cameraId ? { ...c, alias: newAlias } : c));
   }
 
   // Detail view camera
@@ -188,7 +188,6 @@
   {/if}
 
   <div class="flex-1 overflow-auto p-3">
-    <main>
       {#if $loading}
         <div class="flex-1 flex items-center justify-center text-xs text-muted-foreground h-full">
           Loading cameras...
@@ -206,7 +205,6 @@
           onAliasUpdated={(alias) => handleAliasUpdated(detailCamera!.id, alias)}
         />
       {/if}
-    </main>
   </div>
 </div>
 

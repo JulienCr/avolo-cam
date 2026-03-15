@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { StreamSettings } from '$lib/types/settings';
   import { detectedLocalIP } from '$lib/stores/settings';
-  import { get } from 'svelte/store';
   import SliderField from '$lib/components/ui/SliderField.svelte';
 
   let {
@@ -70,7 +69,7 @@
       : 0
   );
 
-  let localIP = $derived(get(detectedLocalIP) || '');
+  let localIP = $derived($detectedLocalIP || '');
 </script>
 
 <!-- Shared core fields: Mode, Res, FPS+Codec, Bitrate -->

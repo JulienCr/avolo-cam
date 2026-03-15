@@ -79,15 +79,24 @@ export const allPresets = writable<Record<string, CameraPreset>>({
   ...loadCustomPresets(),
 });
 
+function getCustomFromStore(): Record<string, CameraPreset> {
+  const all = get(allPresets);
+  const custom: Record<string, CameraPreset> = {};
+  for (const [k, v] of Object.entries(all)) {
+    if (!v.builtin) custom[k] = v;
+  }
+  return custom;
+}
+
 export function saveCustomPreset(key: string, preset: CameraPreset) {
-  const custom = loadCustomPresets();
+  const custom = getCustomFromStore();
   custom[key] = { ...preset, builtin: false };
   saveCustomPresets(custom);
   allPresets.set({ ...BUILTIN_PRESETS, ...custom });
 }
 
 export function deleteCustomPreset(key: string) {
-  const custom = loadCustomPresets();
+  const custom = getCustomFromStore();
   delete custom[key];
   saveCustomPresets(custom);
   allPresets.set({ ...BUILTIN_PRESETS, ...custom });
