@@ -135,7 +135,7 @@ class AppCoordinator: ObservableObject {
             Log.app.info("🔐 Authentication: \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
         } catch {
             self.error = "Failed to start network server: \(error.localizedDescription)"
-            Log.app.error("❌ Failed to start network server: \(error)")
+            Log.app.error("Failed to start network server: \(error)")
         }
 
         bonjourService.start()
@@ -201,7 +201,7 @@ class AppCoordinator: ObservableObject {
                 await self.stopStreaming()
                 self.error = message
             case .warning(let message):
-                Log.app.warning("⚠️ Thermal warning: \(message)")
+                Log.app.warning("Thermal warning: \(message)")
             case .recovered:
                 Log.app.info("✅ Thermal state recovered")
             case .none:
@@ -217,7 +217,7 @@ class AppCoordinator: ObservableObject {
 
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0 else {
-            Log.app.warning("⚠️ Failed to get network interfaces")
+            Log.app.warning("Failed to get network interfaces")
             return
         }
         defer { freeifaddrs(ifaddr) }
@@ -257,7 +257,7 @@ class AppCoordinator: ObservableObject {
         if let ip = address {
             Log.app.info("📡 Local IP Address: \(ip)")
         } else {
-            Log.app.warning("⚠️ Could not determine local IP address")
+            Log.app.warning("Could not determine local IP address")
         }
     }
 
@@ -282,7 +282,7 @@ class AppCoordinator: ObservableObject {
                 Log.app.info("✅ Preview session initialized and running")
             }
         } catch {
-            Log.app.warning("⚠️ Failed to initialize preview session: \(error)")
+            Log.app.warning("Failed to initialize preview session: \(error)")
         }
     }
 

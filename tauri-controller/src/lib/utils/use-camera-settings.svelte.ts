@@ -83,8 +83,15 @@ export function useCameraSettings(getCamera: () => Camera) {
     if (untrack(() => isOnline)) { debouncedSaveCamera(); } else { debouncedPersistCamera(); }
   });
 
-  async function handleStartStream() { await startStream(camera.id, streamSettings); refreshCameras(); }
-  async function handleStopStream() { await stopStream(camera.id); refreshCameras(); }
+  async function handleStartStream() {
+    await startStream(camera.id, streamSettings);
+    refreshCameras();
+  }
+
+  async function handleStopStream() {
+    await stopStream(camera.id);
+    refreshCameras();
+  }
 
   async function handleMeasureWB() {
     measuring = true;

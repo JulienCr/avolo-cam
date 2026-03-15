@@ -23,45 +23,25 @@ actor TorchController {
     // MARK: - Device-Specific Defaults
 
     /// Get default torch level based on device model
+    ///
+    /// iPhone internal identifiers use "iPhoneNN" where NN is the hardware generation:
+    ///   iPhone17 = iPhone 16 series, iPhone16 = iPhone 15, iPhone15 = iPhone 14,
+    ///   iPhone14 = iPhone 13, iPhone13 = iPhone 12, iPhone12 = iPhone 11,
+    ///   iPhone11 = XS/XR, iPhone10 = X
     private static func getDefaultTorchLevel() -> Float {
         let deviceModel = getDeviceModel()
 
-        // iPhone 16 series
+        // iPhone 16 series has a very dim minimum
         if deviceModel.contains("iPhone17") {
             return 0.01
         }
-        // iPhone 15 series
-        else if deviceModel.contains("iPhone16") {
+        // iPhone 12-15 series (iPhone13 through iPhone16 identifiers)
+        if deviceModel.contains("iPhone16") || deviceModel.contains("iPhone15")
+            || deviceModel.contains("iPhone14") || deviceModel.contains("iPhone13") {
             return 0.02
         }
-        // iPhone 14 series
-        else if deviceModel.contains("iPhone15") {
-            return 0.02
-        }
-        // iPhone 13 series
-        else if deviceModel.contains("iPhone14") {
-            return 0.02
-        }
-        // iPhone 12 series
-        else if deviceModel.contains("iPhone13") {
-            return 0.02
-        }
-        // iPhone 11 series
-        else if deviceModel.contains("iPhone12") {
-            return 0.03
-        }
-        // iPhone XS/XR series (iPhone11,x)
-        else if deviceModel.contains("iPhone11") {
-            return 0.03
-        }
-        // iPhone X series (iPhone10,x)
-        else if deviceModel.contains("iPhone10") {
-            return 0.03
-        }
-        // Default for older/unknown models
-        else {
-            return 0.03
-        }
+        // iPhone X/XS/XR/11 and older (iPhone10-12 identifiers)
+        return 0.03
     }
 
     /// Get device model identifier (e.g., "iPhone14,5")

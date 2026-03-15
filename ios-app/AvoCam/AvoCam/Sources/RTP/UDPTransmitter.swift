@@ -143,11 +143,9 @@ actor UDPTransmitter {
     func disconnect() async {
         guard let conn = connection else { return }
 
-        Log.rtp.info("Disconnecting UDP")
         conn.cancel()
         connection = nil
         connectionState = .cancelled
-
         Log.rtp.info("UDP disconnected")
     }
 

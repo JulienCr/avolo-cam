@@ -94,9 +94,7 @@ actor FlashManager {
     /// Start Flash streaming with the given configuration
     /// - Parameter config: Flash streaming configuration
     func start(config: Configuration) async throws {
-        Log.flash.info("Starting Flash stream: \(config.width)x\(config.height) @ \(config.fps)fps")
-        Log.flash.info("Destination: \(config.destinationHost):\(config.destinationPort)")
-        Log.flash.info("Bitrate: \(config.bitrate / 1_000_000) Mbps, GOP: \(config.gopSize)")
+        Log.flash.info("Starting Flash stream: \(config.width)x\(config.height)@\(config.fps)fps → \(config.destinationHost):\(config.destinationPort), \(config.bitrate / 1_000_000)Mbps, GOP=\(config.gopSize)")
 
         currentConfig = config
 
@@ -148,7 +146,6 @@ actor FlashManager {
         isRunning = true
 
         Log.flash.info("Flash stream started successfully")
-        Log.flash.info("Streaming RTP/H.264 to \(config.destinationHost):\(config.destinationPort)")
     }
 
     /// Send a pixel buffer for encoding and transmission

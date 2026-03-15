@@ -7,7 +7,6 @@
 
 import Foundation
 import AVFoundation
-import os
 
 /// Actor that coordinates the streaming pipeline between capture and output (NDI, SRT, or Flash)
 actor StreamingCoordinator: StreamingService {

@@ -87,8 +87,7 @@ actor SRTManager {
     /// Start SRT streaming with the given configuration
     /// - Parameter config: SRT and encoding configuration
     func start(config: Configuration) async throws {
-        Log.srt.info("Starting SRT stream: \(config.width)x\(config.height) @ \(config.fps)fps")
-        Log.srt.info("SRT Port: \(config.port), Latency: \(config.latency)ms")
+        Log.srt.info("Starting SRT stream: \(config.width)x\(config.height)@\(config.fps)fps, port=\(config.port), latency=\(config.latency)ms")
 
         currentConfig = config
 
@@ -158,8 +157,7 @@ actor SRTManager {
         isRunning = true
 
         // Log connection info
-        Log.srt.info("SRT stream started successfully - waiting for OBS connection on port \(config.port)")
-        Log.srt.info("Connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
+        Log.srt.info("SRT stream started, connect with: srt://<ip>:\(config.port)?mode=caller&transtype=live&latency=\(latencyUs)&rcvlatency=\(rcvLatencyUs)&peerlatency=\(peerLatencyUs)&tlpktdrop=\(tlpktdrop)")
     }
 
     /// Accept incoming SRT connections

@@ -68,26 +68,18 @@ class NDITallyPoller {
         if changes.programChanged {
             let success = await torchController.set(programOn: program)
             if success {
-                if program {
-                    Log.tally.info("🔴 \(source) tally ON → Torch ON")
-                } else {
-                    Log.tally.info("⚫️ \(source) tally OFF → Torch OFF")
-                }
+                Log.tally.info("\(program ? "🔴" : "⚫️") \(source) tally \(program ? "ON → Torch ON" : "OFF → Torch OFF")")
             } else {
                 // Reset lastProgram so next heartbeat/poll retries
                 tallyLock.withLock { state in
                     state.lastProgram = !program
                 }
-                Log.tally.warning("⚠️ Torch operation failed, will retry on next heartbeat")
+                Log.tally.warning("Torch operation failed, will retry on next heartbeat")
             }
         }
 
         if changes.previewChanged {
-            if preview {
-                Log.tally.debug("🟢 \(source) preview tally ON")
-            } else {
-                Log.tally.debug("⚫️ \(source) preview tally OFF")
-            }
+            Log.tally.debug("\(preview ? "🟢" : "⚫️") \(source) preview tally \(preview ? "ON" : "OFF")")
         }
     }
 

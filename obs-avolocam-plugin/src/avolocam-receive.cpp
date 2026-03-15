@@ -147,12 +147,6 @@ void SourceData::push_to_decode_queue(AccessUnit&& au) {
  * Called from receive_loop() on every iteration.
  */
 void SourceData::tick_tally(uint64_t now_ns) {
-    if (!tally_timers.started) {
-        tally_timers.started = true;
-        ALOG(LOG_DEBUG, "Tally polling started (poll=%dms, heartbeat=%dms)",
-             (int)(TALLY_POLL_INTERVAL_NS / 1000000),
-             (int)(TALLY_HEARTBEAT_NS / 1000000));
-    }
     if (now_ns - tally_timers.last_poll_ns >= TALLY_POLL_INTERVAL_NS) {
         send_tally_state();
         tally_timers.last_poll_ns = now_ns;
@@ -180,11 +174,8 @@ void SourceData::send_tally_state() {
     bool is_preview = obs_source_showing(source) && !is_program;
 
     // Only send if state changed
-    if (is_program == tally_program.load() && is_preview == tally_preview.load()) {
-        ALOG(LOG_DEBUG, "Tally poll: no change (program=%s, preview=%s)",
-             is_program ? "true" : "false", is_preview ? "true" : "false");
+    if (is_program == tally_program.load() && is_preview == tally_preview.load())
         return;
-    }
 
     tally_program.store(is_program);
     tally_preview.store(is_preview);
@@ -194,7 +185,7 @@ void SourceData::send_tally_state() {
 
     pipeline.ws_client->send_command(json);
 
-    ALOG(LOG_DEBUG, "Tally sent: program=%s, preview=%s",
+    ALOG(LOG_INFO, "Tally changed: program=%s, preview=%s",
          is_program ? "true" : "false",
          is_preview ? "true" : "false");
 }
@@ -205,13 +196,12 @@ void SourceData::send_tally_heartbeat() {
     if (!pipeline.ws_client || !pipeline.ws_client->is_connected()) return;
     if (!source) return;
 
-    char json[128];
-    format_tally_json(json, sizeof(json), tally_program.load(), tally_preview.load());
-    pipeline.ws_client->send_command(json);
+    bool program = tally_program.load();
+    bool preview = tally_preview.load();
 
-    ALOG(LOG_DEBUG, "Tally heartbeat: program=%s, preview=%s",
-         tally_program.load() ? "true" : "false",
-         tally_preview.load() ? "true" : "false");
+    char json[128];
+    format_tally_json(json, sizeof(json), program, preview);
+    pipeline.ws_client->send_command(json);
 }
 
 // Extract SPS and PPS from Annex B formatted data

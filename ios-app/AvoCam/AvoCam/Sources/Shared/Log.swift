@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import os.log
+import os
 
 struct Log {
     // MARK: - Category Instances
