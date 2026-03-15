@@ -16,7 +16,6 @@ actor TorchController {
     private var currentState: Bool = false
     private var torchLevel: Float
 
-
     // UserDefaults key for persisting custom torch level
     private static let torchLevelKey = "com.avocam.customTorchLevel"
 
@@ -96,12 +95,14 @@ actor TorchController {
             defer { device.unlockForConfiguration() }
 
             if programOn {
-                if device.isTorchModeSupported(.on) {
-                    let level = torchLevel  // Capture for logging
-                    try device.setTorchModeOn(level: level)
-                    currentState = true
-                    Log.torch.info("🔦 Torch ON (program tally) at level \(level)")
+                guard device.isTorchModeSupported(.on) else {
+                    Log.torch.warning("Torch on mode not supported")
+                    return false
                 }
+                let level = torchLevel
+                try device.setTorchModeOn(level: level)
+                currentState = true
+                Log.torch.info("🔦 Torch ON (program tally) at level \(level)")
             } else {
                 device.torchMode = .off
                 currentState = false
@@ -124,8 +125,8 @@ actor TorchController {
 
         do {
             try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
             device.torchMode = .off
-            device.unlockForConfiguration()
             currentState = false
             Log.torch.info("🔦 Torch force OFF")
         } catch {
@@ -145,7 +146,7 @@ actor TorchController {
     /// - Returns: true if level was valid and set, false otherwise
     func setTorchLevel(_ level: Float) -> Bool {
         // Validate level (AVFoundation requires 0.01 - 1.0)
-        guard level >= 0.01 && level <= 1.0 else {
+        guard (0.01...1.0).contains(level) else {
             Log.torch.error("Invalid torch level: \(level). Must be 0.01 - 1.0")
             return false
         }

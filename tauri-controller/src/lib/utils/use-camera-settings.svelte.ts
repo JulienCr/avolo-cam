@@ -13,7 +13,6 @@ import {
   measureWB,
 } from '$lib/utils/camera-controller';
 import { toastError } from '$lib/stores/toast';
-import { refreshCameras } from '$lib/stores/cameras';
 import { onMount, onDestroy, untrack } from 'svelte';
 
 // Accept a getter so $derived/$effect track the live prop, not a stale snapshot.
@@ -83,15 +82,8 @@ export function useCameraSettings(getCamera: () => Camera) {
     if (untrack(() => isOnline)) { debouncedSaveCamera(); } else { debouncedPersistCamera(); }
   });
 
-  async function handleStartStream() {
-    await startStream(camera.id, streamSettings);
-    refreshCameras();
-  }
-
-  async function handleStopStream() {
-    await stopStream(camera.id);
-    refreshCameras();
-  }
+  async function handleStartStream() { await startStream(camera.id, streamSettings); }
+  async function handleStopStream() { await stopStream(camera.id); }
 
   async function handleMeasureWB() {
     measuring = true;
