@@ -88,9 +88,7 @@ export function useCameraSettings(camera: Camera) {
     measuring = true;
     try {
       const { kelvin, tint } = await measureWB(camera.id);
-      cameraSettings.wb_kelvin = kelvin;
-      cameraSettings.wb_tint = tint;
-      cameraSettings.wb_mode = 'manual';
+      Object.assign(cameraSettings, { wb_kelvin: kelvin, wb_tint: tint, wb_mode: 'manual' });
     } catch (e) {
       toastError(`Failed to measure WB: ${e}`);
     } finally {

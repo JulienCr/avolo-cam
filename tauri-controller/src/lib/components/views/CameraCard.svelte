@@ -58,7 +58,6 @@
 
   // Tabs
   let activeTab = $state<'stream' | 'image' | 'lens'>('stream');
-  let hasMultipleTabs = $derived(ctrl.isOnline);
 </script>
 
 <div class="flex flex-col rounded-lg border bg-card overflow-hidden transition-opacity
@@ -153,7 +152,7 @@
   {/if}
 
   <!-- Tabs (skip tab bar if only one tab) -->
-  {#if hasMultipleTabs}
+  {#if ctrl.isOnline}
     <div class="flex border-b border-border">
       {#each [
         { id: 'stream' as const, label: 'Stream' },
