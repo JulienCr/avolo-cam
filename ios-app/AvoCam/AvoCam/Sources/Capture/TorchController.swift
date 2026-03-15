@@ -96,21 +96,20 @@ actor TorchController {
 
     /// Set torch state based on NDI program tally
     /// - Parameter programOn: true if camera is on program, false otherwise
-    func set(programOn: Bool) async {
+    /// - Returns: true if the torch was set successfully (or was already in the requested state)
+    @discardableResult
+    func set(programOn: Bool) async -> Bool {
         // Avoid redundant configuration changes
-        guard programOn != currentState else { return }
+        guard programOn != currentState else { return true }
 
-        currentState = programOn
-
-        // Get video device
         guard let device = AVCaptureDevice.default(for: .video) else {
             logger.warning("No video device available for torch control")
-            return
+            return false
         }
 
         guard device.hasTorch else {
             logger.warning("Device does not support torch")
-            return
+            return false
         }
 
         do {
@@ -118,27 +117,27 @@ actor TorchController {
             defer { device.unlockForConfiguration() }
 
             if programOn {
-                // Turn torch ON at minimum level
                 if device.isTorchModeSupported(.on) {
                     let level = torchLevel  // Capture for logging
                     try device.setTorchModeOn(level: level)
+                    currentState = true
                     logger.info("🔦 Torch ON (program tally) at level \(level)")
                 }
             } else {
-                // Turn torch OFF
                 device.torchMode = .off
+                currentState = false
                 logger.info("🔦 Torch OFF (not on program)")
             }
+            return true
         } catch {
             logger.error("Failed to set torch mode: \(error.localizedDescription)")
+            return false
         }
     }
 
     /// Force torch off (for cleanup/shutdown)
     func forceOff() async {
         guard currentState else { return }
-
-        currentState = false
 
         guard let device = AVCaptureDevice.default(for: .video),
             device.hasTorch
@@ -148,6 +147,7 @@ actor TorchController {
             try device.lockForConfiguration()
             device.torchMode = .off
             device.unlockForConfiguration()
+            currentState = false
             logger.info("🔦 Torch force OFF")
         } catch {
             logger.error("Failed to force torch off: \(error.localizedDescription)")

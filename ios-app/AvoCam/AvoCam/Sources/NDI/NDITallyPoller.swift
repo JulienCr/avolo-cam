@@ -67,20 +67,24 @@ class NDITallyPoller {
     /// Handles torch control and logging after a tally change.
     private func handleTallyChanges(_ changes: (programChanged: Bool, previewChanged: Bool), program: Bool, preview: Bool, source: String) async {
         if changes.programChanged {
-            await torchController.set(programOn: program)
-            if program {
-                logger.info("🔴 \(source) tally ON → Torch ON")
+            let success = await torchController.set(programOn: program)
+            if success {
+                logger.info(program
+                    ? "🔴 \(source) tally ON → Torch ON"
+                    : "⚫️ \(source) tally OFF → Torch OFF")
             } else {
-                logger.info("⚫️ \(source) tally OFF → Torch OFF")
+                // Reset lastProgram so next heartbeat/poll retries
+                tallyLock.withLock { state in
+                    state.lastProgram = !program
+                }
+                logger.warning("⚠️ Torch operation failed, will retry on next heartbeat")
             }
         }
 
         if changes.previewChanged {
-            if preview {
-                logger.debug("🟢 \(source) preview tally ON")
-            } else {
-                logger.debug("⚫️ \(source) preview tally OFF")
-            }
+            logger.debug(preview
+                ? "🟢 \(source) preview tally ON"
+                : "⚫️ \(source) preview tally OFF")
         }
     }
 
