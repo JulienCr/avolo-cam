@@ -107,15 +107,15 @@ class AppCoordinator: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        print("🚀 Starting AvoCam with alias: \(configuration.cameraAlias)")
-        print("🔑 Bearer Token: \(configuration.bearerToken)")
+        Log.app.info("🚀 Starting AvoCam with alias: \(configuration.cameraAlias)")
+        Log.app.info("🔑 Bearer Token: \(configuration.bearerToken)")
 
         // Log torch level at startup
         Task {
             let torchLevel = await tallyPoller.getTorchLevel()
             let defaultLevel = await tallyPoller.getDefaultTorchLevel()
             let deviceModel = await tallyPoller.getDeviceModel()
-            print("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
+            Log.app.debug("🔦 Torch level: \(torchLevel) (default: \(defaultLevel) for \(deviceModel))")
         }
 
         // Detect local IP address
@@ -131,15 +131,15 @@ class AppCoordinator: ObservableObject {
 
         do {
             try networkServer.start()
-            print("✅ Network server started on port \(configuration.serverPort)")
-            print("🔐 Authentication: \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
+            Log.app.info("✅ Network server started on port \(configuration.serverPort)")
+            Log.app.info("🔐 Authentication: \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
         } catch {
             self.error = "Failed to start network server: \(error.localizedDescription)"
-            print("❌ Failed to start network server: \(error)")
+            Log.app.error("❌ Failed to start network server: \(error)")
         }
 
         bonjourService.start()
-        print("✅ Bonjour service started: _avolocam._tcp.local")
+        Log.app.info("✅ Bonjour service started: _avolocam._tcp.local")
 
         // Disable idle timer during app lifetime
         UIApplication.shared.isIdleTimerDisabled = true
@@ -155,7 +155,7 @@ class AppCoordinator: ObservableObject {
     }
 
     func stop() async {
-        print("🛑 Stopping AvoCam")
+        Log.app.info("🛑 Stopping AvoCam")
 
         // Stop streaming first (must complete before tearing down network)
         if isStreaming {
@@ -201,9 +201,9 @@ class AppCoordinator: ObservableObject {
                 await self.stopStreaming()
                 self.error = message
             case .warning(let message):
-                print("⚠️ Thermal warning: \(message)")
+                Log.app.warning("⚠️ Thermal warning: \(message)")
             case .recovered:
-                print("✅ Thermal state recovered")
+                Log.app.info("✅ Thermal state recovered")
             case .none:
                 break
             }
@@ -217,7 +217,7 @@ class AppCoordinator: ObservableObject {
 
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0 else {
-            print("⚠️ Failed to get network interfaces")
+            Log.app.warning("⚠️ Failed to get network interfaces")
             return
         }
         defer { freeifaddrs(ifaddr) }
@@ -255,9 +255,9 @@ class AppCoordinator: ObservableObject {
 
         self.localIPAddress = address
         if let ip = address {
-            print("📡 Local IP Address: \(ip)")
+            Log.app.info("📡 Local IP Address: \(ip)")
         } else {
-            print("⚠️ Could not determine local IP address")
+            Log.app.warning("⚠️ Could not determine local IP address")
         }
     }
 
@@ -279,33 +279,33 @@ class AppCoordinator: ObservableObject {
                     }.value
                 }
 
-                print("✅ Preview session initialized and running")
+                Log.app.info("✅ Preview session initialized and running")
             }
         } catch {
-            print("⚠️ Failed to initialize preview session: \(error)")
+            Log.app.warning("⚠️ Failed to initialize preview session: \(error)")
         }
     }
 
     private func stopPreviewSession() async {
         captureSession?.stopRunning()
         captureSession = nil
-        print("⏹ Preview session stopped")
+        Log.app.debug("⏹ Preview session stopped")
     }
 
     func pausePreview() async {
         guard !isStreaming else {
-            print("⏸ App backgrounded but continuing capture for active stream")
+            Log.app.debug("⏸ App backgrounded but continuing capture for active stream")
             return
         }
 
         captureSession?.stopRunning()
-        print("⏸ Preview paused (app in background)")
+        Log.app.debug("⏸ Preview paused (app in background)")
     }
 
     func resumePreview() async {
         if let session = captureSession, !session.isRunning {
             session.startRunning()
-            print("▶️ Preview resumed (app in foreground)")
+            Log.app.debug("▶️ Preview resumed (app in foreground)")
         }
     }
 
@@ -315,7 +315,7 @@ class AppCoordinator: ObservableObject {
         configuration = configuration.withAuthenticationToggled()
         isAuthenticationEnabled = configuration.isAuthenticationEnabled
         networkServer.setAuthenticationEnabled(configuration.isAuthenticationEnabled)
-        print("🔐 Authentication \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
+        Log.app.info("🔐 Authentication \(configuration.isAuthenticationEnabled ? "enabled" : "disabled")")
     }
 
     // MARK: - Screen Brightness Control
@@ -329,10 +329,10 @@ class AppCoordinator: ObservableObject {
 
         if dimmed {
             UIScreen.main.brightness = 0.01
-            print("🔅 Screen dimmed to save battery")
+            Log.app.debug("🔅 Screen dimmed to save battery")
         } else {
             UIScreen.main.brightness = 0.5
-            print("🔆 Screen brightness restored")
+            Log.app.debug("🔆 Screen brightness restored")
         }
     }
 
@@ -465,7 +465,7 @@ class AppCoordinator: ObservableObject {
 
         // Update configuration
         configuration = configuration.withAlias(newAlias)
-        print("✅ Camera alias updated to: \(newAlias)")
+        Log.app.info("✅ Camera alias updated to: \(newAlias)")
 
         // Note: This requires restarting network services with new NDIManager
         // For now, return requiresRestart = true to signal app restart needed
@@ -479,7 +479,7 @@ class AppCoordinator: ObservableObject {
               let settings = try? JSONDecoder().decode(CurrentSettings.self, from: data) else {
             return createDefaultSettings()
         }
-        print("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
+        Log.app.debug("📥 Loaded persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(settings.zoomFactor)x")
         return settings
     }
 
@@ -487,7 +487,7 @@ class AppCoordinator: ObservableObject {
         if let data = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(data, forKey: "camera_settings")
             let uiZoom = settings.zoomFactor / 2.0
-            print("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
+            Log.app.debug("💾 Persisted camera settings: WB=\(settings.wbMode), Kelvin=\(settings.wbKelvin ?? 0)K, ISO=\(settings.iso), Zoom=\(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", settings.zoomFactor))x)")
         }
     }
 
@@ -618,7 +618,7 @@ extension AppCoordinator: NetworkRequestHandler {
 
         VideoSettingsManager.save(settings)
 
-        print("✅ Video settings updated and saved")
+        Log.app.info("✅ Video settings updated and saved")
     }
 
     func handleScreenBrightness(_ request: ScreenBrightnessRequest) {

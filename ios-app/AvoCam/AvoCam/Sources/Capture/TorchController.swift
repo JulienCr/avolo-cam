@@ -6,7 +6,6 @@
 //
 
 import AVFoundation
-import os.log
 
 /// Actor-based torch controller for safe, concurrent torch management
 /// Uses device-specific minimum torch level to avoid glare and heat
@@ -16,7 +15,7 @@ actor TorchController {
 
     private var currentState: Bool = false
     private var torchLevel: Float
-    private let logger = Logger(subsystem: "com.avocam.torch", category: "TorchController")
+
 
     // UserDefaults key for persisting custom torch level
     private static let torchLevelKey = "com.avocam.customTorchLevel"
@@ -89,7 +88,7 @@ actor TorchController {
 
         let deviceModel = Self.getDeviceModel()
         let level = self.torchLevel  // Capture for logging
-        logger.info("✅ TorchController initialized for \(deviceModel) with level: \(level)")
+        Log.torch.info("✅ TorchController initialized for \(deviceModel) with level: \(level)")
     }
 
     // MARK: - Public API
@@ -103,12 +102,12 @@ actor TorchController {
         guard programOn != currentState else { return true }
 
         guard let device = AVCaptureDevice.default(for: .video) else {
-            logger.warning("No video device available for torch control")
+            Log.torch.warning("No video device available for torch control")
             return false
         }
 
         guard device.hasTorch else {
-            logger.warning("Device does not support torch")
+            Log.torch.warning("Device does not support torch")
             return false
         }
 
@@ -121,16 +120,16 @@ actor TorchController {
                     let level = torchLevel  // Capture for logging
                     try device.setTorchModeOn(level: level)
                     currentState = true
-                    logger.info("🔦 Torch ON (program tally) at level \(level)")
+                    Log.torch.info("🔦 Torch ON (program tally) at level \(level)")
                 }
             } else {
                 device.torchMode = .off
                 currentState = false
-                logger.info("🔦 Torch OFF (not on program)")
+                Log.torch.info("🔦 Torch OFF (not on program)")
             }
             return true
         } catch {
-            logger.error("Failed to set torch mode: \(error.localizedDescription)")
+            Log.torch.error("Failed to set torch mode: \(error.localizedDescription)")
             return false
         }
     }
@@ -148,9 +147,9 @@ actor TorchController {
             device.torchMode = .off
             device.unlockForConfiguration()
             currentState = false
-            logger.info("🔦 Torch force OFF")
+            Log.torch.info("🔦 Torch force OFF")
         } catch {
-            logger.error("Failed to force torch off: \(error.localizedDescription)")
+            Log.torch.error("Failed to force torch off: \(error.localizedDescription)")
         }
     }
 
@@ -167,13 +166,13 @@ actor TorchController {
     func setTorchLevel(_ level: Float) -> Bool {
         // Validate level (AVFoundation requires 0.01 - 1.0)
         guard level >= 0.01 && level <= 1.0 else {
-            logger.error("Invalid torch level: \(level). Must be 0.01 - 1.0")
+            Log.torch.error("Invalid torch level: \(level). Must be 0.01 - 1.0")
             return false
         }
 
         torchLevel = level
         UserDefaults.standard.set(level, forKey: Self.torchLevelKey)
-        logger.info("✅ Torch level set to \(level)")
+        Log.torch.info("✅ Torch level set to \(level)")
 
         return true
     }
@@ -188,7 +187,7 @@ actor TorchController {
         let defaultLevel = Self.getDefaultTorchLevel()
         torchLevel = defaultLevel
         UserDefaults.standard.removeObject(forKey: Self.torchLevelKey)
-        logger.info("✅ Torch level reset to default: \(defaultLevel)")
+        Log.torch.info("✅ Torch level reset to default: \(defaultLevel)")
     }
 
     /// Get device model identifier for debugging/telemetry

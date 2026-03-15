@@ -120,7 +120,7 @@ final class ThermalManager: Sendable {
         case .serious:
             if !state.warningIssued {
                 state.warningIssued = true
-                print("⚠️ Thermal throttle activated: device heating up")
+                Log.thermal.warning("Thermal throttle activated: device heating up")
                 return .warning(message: "Device is heating up. Consider reducing quality or stopping stream.")
             }
             return .none
@@ -128,7 +128,7 @@ final class ThermalManager: Sendable {
         case .critical:
             if !state.criticalStopped {
                 state.criticalStopped = true
-                print("🔥 Thermal state CRITICAL: stopping stream to prevent damage")
+                Log.thermal.error("Thermal state CRITICAL: stopping stream to prevent damage")
                 return .stopStream(message: "Stream stopped: device overheating. Please let it cool down.")
             }
             return .none
@@ -137,7 +137,7 @@ final class ThermalManager: Sendable {
             if state.warningIssued || state.criticalStopped {
                 state.warningIssued = false
                 state.criticalStopped = false
-                print("✅ Thermal state returned to normal")
+                Log.thermal.info("Thermal state returned to normal")
                 return .recovered
             }
             return .none

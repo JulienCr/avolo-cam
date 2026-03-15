@@ -47,13 +47,13 @@ class BonjourService: NSObject {
 
         netService = service
 
-        print("📢 Bonjour service publishing: \(alias) on port \(port)")
+        Log.bonjour.info("Bonjour service publishing: \(alias) on port \(port)")
     }
 
     func stop() {
         netService?.stop()
         netService = nil
-        print("🔇 Bonjour service stopped")
+        Log.bonjour.info("Bonjour service stopped")
     }
 
     // MARK: - TXT Record
@@ -128,7 +128,7 @@ class BonjourService: NSObject {
 
         service.setTXTRecord(NetService.data(fromTXTRecord: baseTXTDictionary()))
 
-        print("Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
+        Log.bonjour.info("Updated Flash UDP port in mDNS: \(port > 0 ? "\(port)" : "cleared")")
     }
 }
 
@@ -136,18 +136,18 @@ class BonjourService: NSObject {
 
 extension BonjourService: NetServiceDelegate {
     func netServiceWillPublish(_ sender: NetService) {
-        print("📢 Bonjour service will publish: \(sender.name)")
+        Log.bonjour.info("Bonjour service will publish: \(sender.name)")
     }
 
     func netServiceDidPublish(_ sender: NetService) {
-        print("✅ Bonjour service published: \(sender.name)")
+        Log.bonjour.info("Bonjour service published: \(sender.name)")
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String : NSNumber]) {
-        print("❌ Bonjour service failed to publish: \(errorDict)")
+        Log.bonjour.error("Bonjour service failed to publish: \(errorDict)")
     }
 
     func netServiceDidStop(_ sender: NetService) {
-        print("⏹ Bonjour service stopped: \(sender.name)")
+        Log.bonjour.info("Bonjour service stopped: \(sender.name)")
     }
 }

@@ -85,7 +85,7 @@ actor CaptureManager: NSObject {
     // MARK: - Configuration
 
     func configure(resolution: String, framerate: Int) async throws {
-        print("📷 Configuring capture: \(resolution) @ \(framerate)fps, position: \(currentCameraPosition == .back ? "back" : "front"), lens: \(currentLens)")
+        Log.capture.debug("Configuring capture: \(resolution) @ \(framerate)fps, position: \(currentCameraPosition == .back ? "back" : "front"), lens: \(currentLens)")
 
         // Check if already configured with same settings
         // NOTE: We DO NOT check camera position or lens here because those are already
@@ -129,8 +129,8 @@ actor CaptureManager: NSObject {
 
                     // Discover device using prioritized list (requested lens first)
                     let deviceTypes = self.prioritizedDeviceTypes(for: self.currentCameraPosition, requestedLens: self.currentLens)
-                    print("🔍 Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
-                    print("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
+                    Log.capture.debug("Looking for device: position=\(self.currentCameraPosition == .back ? "back" : "front"), lens=\(self.currentLens)")
+                    Log.capture.debug("   Prioritized device types: \(deviceTypes.map { $0.rawValue })")
 
                     let discovery = AVCaptureDevice.DiscoverySession(
                         deviceTypes: deviceTypes,
@@ -140,12 +140,12 @@ actor CaptureManager: NSObject {
 
                     guard let device = discovery.devices.first else {
                         session.commitConfiguration()
-                        print("❌ No camera device available!")
+                        Log.capture.error("No camera device available!")
                         continuation.resume(throwing: CaptureError.deviceNotAvailable)
                         return
                     }
 
-                    print("✅ Found camera device: \(device.localizedName)")
+                    Log.capture.info("Found camera device: \(device.localizedName)")
 
                     // Check if using virtual device (can switch lenses via zoom)
                     self.isUsingVirtualDevice = [
@@ -155,8 +155,8 @@ actor CaptureManager: NSObject {
                     ].contains(device.deviceType)
 
                     if self.isUsingVirtualDevice {
-                        print("✅ Using virtual device - lens switching via zoom")
-                        print("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
+                        Log.capture.info("Using virtual device - lens switching via zoom")
+                        Log.capture.info("   Switch factors: \(device.virtualDeviceSwitchOverVideoZoomFactors)")
                     }
 
                     self.videoDevice = device
@@ -204,18 +204,18 @@ actor CaptureManager: NSObject {
                         device.videoZoomFactor = zoomFactor
                         device.unlockForConfiguration()
                         let uiZoom = zoomFactor / 2.0
-                        print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(self.currentLens)'")
+                        Log.capture.info("Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", zoomFactor))x) for lens '\(self.currentLens)'")
                     }
 
                     // Restart session if it was running before reconfiguration
                     if wasRunning {
                         session.startRunning()
-                        print("✅ Restarted capture session after reconfiguration")
+                        Log.capture.info("Restarted capture session after reconfiguration")
                     }
 
                     continuation.resume()
                 } catch {
-                    print("❌ Configuration failed: \(error)")
+                    Log.capture.error("Configuration failed: \(error)")
                     continuation.resume(throwing: error)
                 }
             }
@@ -232,7 +232,7 @@ actor CaptureManager: NSObject {
         let format: AVCaptureDevice.Format
         if let cachedFormat = formatCache[cacheKey] {
             format = cachedFormat
-            print("✅ Using cached format for \(cacheKey)")
+            Log.capture.info("Using cached format for \(cacheKey)")
         } else {
             // Find matching format using best-fit logic
             guard
@@ -244,7 +244,7 @@ actor CaptureManager: NSObject {
             }
             format = foundFormat
             formatCache[cacheKey] = format
-            print("✅ Cached new format for \(cacheKey)")
+            Log.capture.info("Cached new format for \(cacheKey)")
         }
 
         try device.lockForConfiguration()
@@ -258,7 +258,7 @@ actor CaptureManager: NSObject {
         // Force sRGB color space to avoid wide color processing
         if device.activeColorSpace != .sRGB {
             device.activeColorSpace = .sRGB
-            print("✅ Set color space to sRGB")
+            Log.capture.info("Set color space to sRGB")
         }
 
         // PERF: Apply sensor lock optimizations (disable HDR, lock sampling)
@@ -274,7 +274,7 @@ actor CaptureManager: NSObject {
             createPixelBufferPool(width: resolution.width, height: resolution.height)
         }
 
-        print("✅ Configured format: \(format.formatDescription)")
+        Log.capture.info("Configured format: \(format.formatDescription)")
     }
 
     /// Generate cache key for format lookup
@@ -321,9 +321,9 @@ actor CaptureManager: NSObject {
             }
             prewarmBuffers.removeAll()  // Release back to pool
 
-            print("✅ PERF: Pixel buffer pool created and prewarmed (\(poolSize) buffers, \(width)x\(height), IOSurface-backed)")
+            Log.capture.info("PERF: Pixel buffer pool created and prewarmed (\(poolSize) buffers, \(width)x\(height), IOSurface-backed)")
         } else {
-            print("⚠️ Failed to create pixel buffer pool: \(status)")
+            Log.capture.warning("Failed to create pixel buffer pool: \(status)")
         }
     }
 
@@ -334,7 +334,7 @@ actor CaptureManager: NSObject {
         // Disable HDR processing (3-5% GPU overhead even when "off")
         if device.activeFormat.isVideoHDRSupported {
             device.automaticallyAdjustsVideoHDREnabled = false
-            print("✅ PERF: HDR auto-adjust disabled")
+            Log.capture.info("PERF: HDR auto-adjust disabled")
         }
 
         // NOTE: Torch is now managed by TorchController for NDI tally indication
@@ -352,7 +352,7 @@ actor CaptureManager: NSObject {
         // Disable subject area change monitoring (reduces KVO overhead)
         device.isSubjectAreaChangeMonitoringEnabled = false
 
-        print("✅ PERF: Sensor optimizations applied (bias locked, subject monitoring off, torch managed by tally)")
+        Log.capture.info("PERF: Sensor optimizations applied (bias locked, subject monitoring off, torch managed by tally)")
     }
 
     /// Configure connection properties (orientation, stabilization)
@@ -442,9 +442,9 @@ actor CaptureManager: NSObject {
             sessionQueue.async {
                 if !session.isRunning {
                     session.startRunning()
-                    print("▶️ Capture session started")
+                    Log.capture.info("Capture session started")
                 } else {
-                    print("▶️ Frame callback attached (session already running for preview)")
+                    Log.capture.info("Frame callback attached (session already running for preview)")
                 }
                 continuation.resume()
             }
@@ -456,13 +456,13 @@ actor CaptureManager: NSObject {
         frameCallbackLock.withLock {
             _frameCallback = nil
         }
-        print("⏹ Frame callback cleared (session still running for preview)")
+        Log.capture.info("Frame callback cleared (session still running for preview)")
     }
 
     // MARK: - Camera Settings
 
     func updateSettings(_ settings: CameraSettingsRequest) async throws {
-        print("🔧 updateSettings: cam=\(settings.cameraPosition ?? (currentCameraPosition == .back ? "back" : "front")) lens=\(settings.lens ?? currentLens) wb=\(settings.wbMode?.rawValue ?? "-")/\(settings.wbKelvin.map { "\($0)K" } ?? "-") iso=\(settings.isoMode?.rawValue ?? "-")/\(settings.iso?.description ?? "-") shutter=\(settings.shutterMode?.rawValue ?? "-")/\(settings.shutterS.map { String(format: "%.4fs", $0) } ?? "-") zoom=\(settings.zoomFactor.map { String(format: "%.1f", $0) } ?? "-") res=\(currentResolution ?? "-")@\(currentFramerate?.description ?? "-")fps")
+        Log.capture.debug("updateSettings: cam=\(settings.cameraPosition ?? (currentCameraPosition == .back ? "back" : "front")) lens=\(settings.lens ?? currentLens) wb=\(settings.wbMode?.rawValue ?? "-")/\(settings.wbKelvin.map { "\($0)K" } ?? "-") iso=\(settings.isoMode?.rawValue ?? "-")/\(settings.iso?.description ?? "-") shutter=\(settings.shutterMode?.rawValue ?? "-")/\(settings.shutterS.map { String(format: "%.4fs", $0) } ?? "-") zoom=\(settings.zoomFactor.map { String(format: "%.1f", $0) } ?? "-") res=\(currentResolution ?? "-")@\(currentFramerate?.description ?? "-")fps")
 
         // Handle camera position change (requires session reconfiguration)
         var needsReconfigure = false
@@ -472,9 +472,9 @@ actor CaptureManager: NSObject {
             if newPosition != currentCameraPosition {
                 currentCameraPosition = newPosition
                 needsReconfigure = true
-                print("📷 Switching to \(cameraPosition) camera - reconfigure needed")
+                Log.capture.debug("Switching to \(cameraPosition) camera - reconfigure needed")
             } else {
-                print("📷 Camera position unchanged (\(cameraPosition))")
+                Log.capture.debug("Camera position unchanged (\(cameraPosition))")
             }
         }
 
@@ -482,21 +482,21 @@ actor CaptureManager: NSObject {
         if let lens = settings.lens {
             // Guard: front camera only supports wide
             if currentCameraPosition == .front && lens != "wide" {
-                print("⚠️ Front camera only supports 'wide' lens, ignoring request for '\(lens)'")
+                Log.capture.warning("Front camera only supports 'wide' lens, ignoring request for '\(lens)'")
             } else if lens != currentLens {
                 // Check if we can switch via zoom (virtual device) or need reconfiguration
                 if isUsingVirtualDevice {
                     // Switch lens via zoom factor without reconfiguration
                     currentLens = lens
-                    print("📷 Switching to \(lens) lens via zoom")
+                    Log.capture.debug("Switching to \(lens) lens via zoom")
                 } else {
                     // Non-virtual device, need reconfiguration
                     currentLens = lens
                     needsReconfigure = true
-                    print("📷 Switching to \(lens) lens - reconfigure needed")
+                    Log.capture.debug("Switching to \(lens) lens - reconfigure needed")
                 }
             } else {
-                print("📷 Lens unchanged (\(lens))")
+                Log.capture.debug("Lens unchanged (\(lens))")
             }
         }
 
@@ -505,14 +505,14 @@ actor CaptureManager: NSObject {
             let resolution = currentResolution ?? "1920x1080"  // Default to 1080p
             let framerate = currentFramerate ?? 25  // Default to 25fps
 
-            print("🔄 Reconfiguring capture session with \(resolution) @ \(framerate)fps")
+            Log.capture.debug("Reconfiguring capture session with \(resolution) @ \(framerate)fps")
             try await configure(resolution: resolution, framerate: framerate)
-            print("✅ Camera/lens reconfiguration complete")
+            Log.capture.info("Camera/lens reconfiguration complete")
             // Continue to apply remaining settings after reconfiguration
         }
 
         guard let device = videoDevice else {
-            print("❌ No video device available")
+            Log.capture.error("No video device available")
             throw CaptureError.deviceNotAvailable
         }
 
@@ -521,15 +521,15 @@ actor CaptureManager: NSObject {
 
         // White balance
         if let wbMode = settings.wbMode {
-            print("🔧 Applying white balance mode: \(wbMode)")
+            Log.capture.debug("Applying white balance mode: \(wbMode)")
             switch wbMode {
             case .auto:
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
-                    print("✅ White balance set to auto")
+                    Log.capture.info("White balance set to auto")
                 }
             case .manual:
-                print("🔍 WB checks: locked=\(device.isWhiteBalanceModeSupported(.locked)), customGains=\(device.isLockingWhiteBalanceWithCustomDeviceGainsSupported), hasKelvin=\(settings.wbKelvin != nil)")
+                Log.capture.debug("WB checks: locked=\(device.isWhiteBalanceModeSupported(.locked)), customGains=\(device.isLockingWhiteBalanceWithCustomDeviceGainsSupported), hasKelvin=\(settings.wbKelvin != nil)")
 
                 if device.isWhiteBalanceModeSupported(.locked),
                     device.isLockingWhiteBalanceWithCustomDeviceGainsSupported,
@@ -554,18 +554,18 @@ actor CaptureManager: NSObject {
 
                     // Debug round-trip to verify applied values
                     let rt = device.temperatureAndTintValues(for: gains)
-                    print("✅ WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
-                    print("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
-                    print("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+                    Log.capture.info("WB locked to \(clampedCCT)K (Scene CCT), tint \(String(format: "%.1f", tint))")
+                    Log.capture.info("   Applied: SceneCCT \(Int(rt.temperature))K, tint \(String(format: "%.1f", rt.tint))")
+                    Log.capture.info("   Gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
                 } else {
                     if !device.isWhiteBalanceModeSupported(.locked) {
-                        print("❌ Device does not support locked white balance mode")
+                        Log.capture.error("Device does not support locked white balance mode")
                     }
                     if !device.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
-                        print("❌ Device does not support locking white balance with custom gains")
+                        Log.capture.error("Device does not support locking white balance with custom gains")
                     }
                     if settings.wbKelvin == nil {
-                        print("❌ No white balance kelvin value provided")
+                        Log.capture.error("No white balance kelvin value provided")
                     }
                 }
             }
@@ -578,12 +578,12 @@ actor CaptureManager: NSObject {
 
         // Check if ISO mode/value changed
         if let isoMode = settings.isoMode {
-            print("🔧 ISO mode change requested: \(isoMode)")
+            Log.capture.debug("ISO mode change requested: \(isoMode)")
             currentISOMode = isoMode  // Update tracked mode
             needsExposureUpdate = true
         }
         if let iso = settings.iso, currentISOMode == .manual {
-            print("🔧 ISO value change requested: \(iso)")
+            Log.capture.debug("ISO value change requested: \(iso)")
             currentISO = Float(iso)
             targetISO = min(max(currentISO, device.activeFormat.minISO), device.activeFormat.maxISO)
             needsExposureUpdate = true
@@ -591,12 +591,12 @@ actor CaptureManager: NSObject {
 
         // Check if shutter mode/value changed
         if let shutterMode = settings.shutterMode {
-            print("🔧 Shutter mode change requested: \(shutterMode)")
+            Log.capture.debug("Shutter mode change requested: \(shutterMode)")
             currentShutterMode = shutterMode  // Update tracked mode
             needsExposureUpdate = true
         }
         if let shutterS = settings.shutterS, currentShutterMode == .manual {
-            print("🔧 Shutter speed change requested: \(shutterS)s")
+            Log.capture.debug("Shutter speed change requested: \(shutterS)s")
             currentShutterS = shutterS
             let minD = device.activeFormat.minExposureDuration
             let maxD = device.activeFormat.maxExposureDuration
@@ -612,7 +612,7 @@ actor CaptureManager: NSObject {
 
         // Apply exposure settings based on mode combination
         if needsExposureUpdate {
-            print("🔧 Applying exposure update: ISO=\(currentISOMode.rawValue)(\(Int(targetISO))), Shutter=\(currentShutterMode.rawValue)")
+            Log.capture.debug("Applying exposure update: ISO=\(currentISOMode.rawValue)(\(Int(targetISO))), Shutter=\(currentShutterMode.rawValue)")
             applyExposureSettings(
                 device: device,
                 isoMode: currentISOMode,
@@ -621,7 +621,7 @@ actor CaptureManager: NSObject {
                 targetDuration: targetDuration
             )
         } else {
-            print("🔧 No exposure update needed")
+            Log.capture.debug("No exposure update needed")
         }
 
         // Focus
@@ -632,7 +632,7 @@ actor CaptureManager: NSObject {
                 if device.isFocusModeSupported(.continuousAutoFocus) {
                     device.focusMode = .continuousAutoFocus
                     currentFocusDistance = nil
-                    print("✅ Focus mode set to continuous autofocus")
+                    Log.capture.info("Focus mode set to continuous autofocus")
                 }
             case .manual:
                 if device.isFocusModeSupported(.locked) {
@@ -641,18 +641,18 @@ actor CaptureManager: NSObject {
                         let clampedDistance = min(max(Float(focusDistance), 0.0), 1.0)
                         if device.isLockingFocusWithCustomLensPositionSupported {
                             device.setFocusModeLocked(lensPosition: clampedDistance) { _ in
-                                print("✅ Focus locked at distance: \(clampedDistance) (0.0=near, 1.0=far)")
+                                Log.capture.info("Focus locked at distance: \(clampedDistance) (0.0=near, 1.0=far)")
                             }
                             currentFocusDistance = Double(clampedDistance)
                         } else {
                             device.focusMode = .locked
                             currentFocusDistance = Double(device.lensPosition)
-                            print("⚠️ Device doesn't support custom lens position, locked at current position")
+                            Log.capture.warning("Device doesn't support custom lens position, locked at current position")
                         }
                     } else {
                         device.focusMode = .locked
                         currentFocusDistance = Double(device.lensPosition)
-                        print("✅ Focus mode locked at current position")
+                        Log.capture.info("Focus mode locked at current position")
                     }
                 }
             }
@@ -662,7 +662,7 @@ actor CaptureManager: NSObject {
                 let clampedDistance = min(max(Float(focusDistance), 0.0), 1.0)
                 if device.isLockingFocusWithCustomLensPositionSupported {
                     device.setFocusModeLocked(lensPosition: clampedDistance) { _ in
-                        print("✅ Focus distance updated: \(clampedDistance)")
+                        Log.capture.info("Focus distance updated: \(clampedDistance)")
                     }
                     currentFocusDistance = Double(clampedDistance)
                 }
@@ -677,7 +677,7 @@ actor CaptureManager: NSObject {
             let baseZoom: CGFloat = 1.0
             let clampedZoom = min(max(baseZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
-            print("✅ Physical lens '\(currentLens)' at base zoom \(String(format: "%.1f", clampedZoom))x (no digital zoom)")
+            Log.capture.info("Physical lens '\(currentLens)' at base zoom \(String(format: "%.1f", clampedZoom))x (no digital zoom)")
         } else if let zoomFactor = settings.zoomFactor {
             // Explicit zoom factor requested (for virtual devices or fine-tuning physical cameras)
             let clampedZoom = min(max(zoomFactor, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
@@ -689,22 +689,22 @@ actor CaptureManager: NSObject {
                 let detectedLens = lensForZoomFactor(clampedZoom, device: device)
                 if detectedLens != currentLens {
                     currentLens = detectedLens
-                    print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x), auto-detected lens: '\(currentLens)'")
+                    Log.capture.info("Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x), auto-detected lens: '\(currentLens)'")
                 } else {
-                    print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) (lens: '\(currentLens)')")
+                    Log.capture.info("Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) (lens: '\(currentLens)')")
                 }
             } else {
-                print("✅ Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x)")
+                Log.capture.info("Applied zoom \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x)")
             }
         } else if settings.lens != nil, isUsingVirtualDevice, let lensZoom = zoomFactorForLens(currentLens, device: device) {
             // Lens changed, apply appropriate zoom for virtual device
             let clampedZoom = min(max(lensZoom, device.minAvailableVideoZoomFactor), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = clampedZoom
             let uiZoom = clampedZoom / 2.0
-            print("✅ Applied lens-based zoom: \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) for lens '\(currentLens)'")
+            Log.capture.info("Applied lens-based zoom: \(String(format: "%.1f", uiZoom))x UI (device: \(String(format: "%.1f", clampedZoom))x) for lens '\(currentLens)'")
         }
 
-        print("✅ Camera settings updated")
+        Log.capture.info("Camera settings updated")
     }
 
     // MARK: - Exposure Control
@@ -716,16 +716,16 @@ actor CaptureManager: NSObject {
         shutterMode: ExposureMode,
         targetDuration: CMTime
     ) {
-        print("🔍 applyExposureSettings: mode=(\(isoMode), \(shutterMode)), custom supported=\(device.isExposureModeSupported(.custom))")
+        Log.capture.debug("applyExposureSettings: mode=(\(isoMode), \(shutterMode)), custom supported=\(device.isExposureModeSupported(.custom))")
 
         switch (isoMode, shutterMode) {
         case (.auto, .auto):
             // Both auto - use continuous auto exposure
             if device.isExposureModeSupported(.continuousAutoExposure) {
                 device.exposureMode = .continuousAutoExposure
-                print("✅ Exposure: Both auto (continuous)")
+                Log.capture.info("Exposure: Both auto (continuous)")
             } else {
-                print("❌ Device does not support continuous auto exposure")
+                Log.capture.error("Device does not support continuous auto exposure")
             }
 
         case (.manual, .auto):
@@ -736,9 +736,9 @@ actor CaptureManager: NSObject {
                 let autoShutter = CMTime(value: 1, timescale: CMTimeScale(framerate * 2))
                 device.setExposureModeCustom(
                     duration: autoShutter, iso: targetISO, completionHandler: nil)
-                print("✅ Exposure: Manual ISO (\(Int(targetISO))), auto shutter (1/\(framerate * 2))")
+                Log.capture.info("Exposure: Manual ISO (\(Int(targetISO))), auto shutter (1/\(framerate * 2))")
             } else {
-                print("❌ Device does not support custom exposure mode")
+                Log.capture.error("Device does not support custom exposure mode")
             }
 
         case (.auto, .manual):
@@ -750,9 +750,9 @@ actor CaptureManager: NSObject {
                 let shutterDisplay = targetDuration.seconds >= 1
                     ? String(format: "%.3fs", targetDuration.seconds)
                     : "1/\(Int(1.0 / targetDuration.seconds))"
-                print("✅ Exposure: Auto ISO (\(Int(currentDeviceISO))), manual shutter (\(shutterDisplay))")
+                Log.capture.info("Exposure: Auto ISO (\(Int(currentDeviceISO))), manual shutter (\(shutterDisplay))")
             } else {
-                print("❌ Device does not support custom exposure mode")
+                Log.capture.error("Device does not support custom exposure mode")
             }
 
         case (.manual, .manual):
@@ -763,9 +763,9 @@ actor CaptureManager: NSObject {
                 let shutterDisplay = targetDuration.seconds >= 1
                     ? String(format: "%.3fs", targetDuration.seconds)
                     : "1/\(Int(1.0 / targetDuration.seconds))"
-                print("✅ Exposure: Manual ISO (\(Int(targetISO))), manual shutter (\(shutterDisplay))")
+                Log.capture.info("Exposure: Manual ISO (\(Int(targetISO))), manual shutter (\(shutterDisplay))")
             } else {
-                print("❌ Device does not support custom exposure mode")
+                Log.capture.error("Device does not support custom exposure mode")
             }
         }
     }
@@ -778,7 +778,7 @@ actor CaptureManager: NSObject {
             throw CaptureError.deviceNotAvailable
         }
 
-        print("📸 Measuring white balance (auto mode for 2 seconds)...")
+        Log.capture.debug("Measuring white balance (auto mode for 2 seconds)...")
 
         // Enable auto white balance
         try device.lockForConfiguration()
@@ -803,8 +803,8 @@ actor CaptureManager: NSObject {
         let sceneCCT_K = Int(tempTint.temperature)
         let tint = Double(tempTint.tint)
 
-        print("📊 Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
-        print("✅ Measured WB: SceneCCT_K = \(sceneCCT_K)K (physical scene illumination), Tint = \(String(format: "%.1f", tint))")
+        Log.capture.debug("Measured WB gains: R=\(String(format: "%.3f", gains.redGain)) G=\(String(format: "%.3f", gains.greenGain)) B=\(String(format: "%.3f", gains.blueGain))")
+        Log.capture.info("Measured WB: SceneCCT_K = \(sceneCCT_K)K (physical scene illumination), Tint = \(String(format: "%.1f", tint))")
 
         // Return physical scene CCT
         return (sceneCCT_K: sceneCCT_K, tint: tint)
@@ -947,7 +947,7 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
         // Log every 30 drops to avoid spam
         if count == 1 || count % 30 == 0 {
-            print("⚠️ AVFoundation dropped frames: \(count) total")
+            Log.capture.warning("AVFoundation dropped frames: \(count) total")
         }
     }
 
@@ -987,7 +987,7 @@ extension CaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
             }
 
-            print("📷 Requesting \(requestedLens) lens first, fallbacks: \(types.map { $0.rawValue })")
+            Log.capture.debug("Requesting \(requestedLens) lens first, fallbacks: \(types.map { $0.rawValue })")
             return types
         } else {
             // Front camera: typically only wide available

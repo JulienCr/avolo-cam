@@ -300,9 +300,9 @@ struct CameraSettingsPanel: View {
 
             do {
                 try await coordinator.updateCameraSettings(request)
-                print("✅ Settings applied")
+                Log.ui.info("Settings applied")
             } catch {
-                print("❌ Failed to apply settings: \(error)")
+                Log.ui.error("Failed to apply settings: \(error)")
             }
         }
     }

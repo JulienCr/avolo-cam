@@ -112,7 +112,11 @@ class PreviewUIView: UIView {
         // This stops the layer from rendering while keeping the capture session running
         if let connection = previewLayer.connection {
             connection.isEnabled = !hidden
-            print(hidden ? "🙈 Preview disabled (streaming mode)" : "👁 Preview enabled")
+            if hidden {
+                Log.ui.info("🙈 Preview disabled (streaming mode)")
+            } else {
+                Log.ui.info("👁 Preview enabled")
+            }
         }
         // Also hide the view for UI purposes
         self.isHidden = hidden

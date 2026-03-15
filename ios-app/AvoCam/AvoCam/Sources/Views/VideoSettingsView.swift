@@ -322,7 +322,7 @@ class VideoSettingsViewModel: ObservableObject {
         settings.flashJitterMode = flashJitterMode
 
         VideoSettingsManager.save(settings)
-        print("✅ Video settings saved (mode: \(streamingMode.rawValue), latency: \(srtLatency)ms, GOP: \(srtGopSize), tlpktdrop: \(srtTlPktDrop))")
+        Log.ui.info("Video settings saved (mode: \(streamingMode.rawValue), latency: \(srtLatency)ms, GOP: \(srtGopSize), tlpktdrop: \(srtTlPktDrop))")
     }
 }
 
