@@ -23,18 +23,16 @@
     onAliasUpdated: (alias: string) => void;
   } = $props();
 
-  let isOnline = $derived(camera.status !== null);
-  let isStreaming = $derived(camera.status?.ndi_state === 'streaming');
+  const ctrl = useCameraSettings(camera);
+
   let streamingMode = $derived(camera.status?.current?.streaming_mode || 'ndi');
   let telemetry = $derived(camera.status?.telemetry);
 
   let badgeStatus = $derived(
-    isStreaming ? 'live' as const :
-    isOnline ? 'ready' as const :
+    ctrl.isStreaming ? 'live' as const :
+    ctrl.isOnline ? 'ready' as const :
     'offline' as const
   );
-
-  const ctrl = useCameraSettings(camera);
 
   // Alias editing
   let isEditingAlias = $state(false);
@@ -170,7 +168,7 @@
 
     <StatusBadge status={badgeStatus} />
 
-    {#if isStreaming}
+    {#if ctrl.isStreaming}
       <span class="mode-badge {streamingMode === 'ndi' ? 'mode-badge-ndi' : streamingMode === 'flash' ? 'mode-badge-flash' : 'mode-badge-srt'}">
         {streamingMode === 'ndi' ? 'NDI' : streamingMode === 'flash' ? 'FLASH' : 'SRT'}
       </span>
@@ -211,9 +209,9 @@
     <!-- Left: Stream + Camera settings -->
     <div class="flex-[3] overflow-y-auto flex flex-col gap-2">
       <!-- Quick Actions -->
-      {#if isOnline}
+      {#if ctrl.isOnline}
         <div class="flex gap-1">
-          {#if isStreaming}
+          {#if ctrl.isStreaming}
             <button
               onclick={ctrl.handleStopStream}
               class="flex-1 h-7 text-[11px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
@@ -232,8 +230,8 @@
           bind:settings={ctrl.streamSettings}
           onStart={ctrl.handleStartStream}
           onStop={ctrl.handleStopStream}
-          {isStreaming}
-          {isOnline}
+          isStreaming={ctrl.isStreaming}
+          isOnline={ctrl.isOnline}
           compact={false}
           hideActions={true}
         />
@@ -244,7 +242,7 @@
           bind:settings={ctrl.cameraSettings}
           onMeasureWB={ctrl.handleMeasureWB}
           measuring={ctrl.measuring}
-          {isOnline}
+          isOnline={ctrl.isOnline}
           compact={false}
         />
       </div>
@@ -285,7 +283,7 @@
           {#each Object.entries($allPresets) as [key, preset]}
             <button
               onclick={() => applyPreset(key)}
-              disabled={!isOnline}
+              disabled={!ctrl.isOnline}
               class="relative group h-6 text-[10px] font-medium rounded-sm bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 transition-colors truncate"
             >
               {preset.label}
@@ -324,7 +322,7 @@
             </select>
             <button
               onclick={matchMainCam}
-              disabled={!matchSourceId || !isOnline}
+              disabled={!matchSourceId || !ctrl.isOnline}
               class="h-5 px-2 text-[10px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-opacity"
             >Match</button>
           </div>

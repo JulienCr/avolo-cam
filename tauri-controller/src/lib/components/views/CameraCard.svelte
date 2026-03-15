@@ -19,19 +19,17 @@
     onAliasUpdated: (alias: string) => void;
   } = $props();
 
-  let isOnline = $derived(camera.status !== null);
-  let isStreaming = $derived(camera.status?.ndi_state === 'streaming');
+  const ctrl = useCameraSettings(camera);
+
   let telemetry = $derived(camera.status?.telemetry);
   let streamingMode = $derived(camera.status?.current?.streaming_mode || 'ndi');
   let selected = $derived($selectedCameraIds.has(camera.id));
 
   let badgeStatus = $derived(
-    isStreaming ? 'live' as const :
-    isOnline ? 'ready' as const :
+    ctrl.isStreaming ? 'live' as const :
+    ctrl.isOnline ? 'ready' as const :
     'offline' as const
   );
-
-  const ctrl = useCameraSettings(camera);
 
   // Alias editing
   let isEditingAlias = $state(false);
@@ -60,11 +58,11 @@
 
   // Tabs
   let activeTab = $state<'stream' | 'image' | 'lens'>('stream');
-  let hasMultipleTabs = $derived(isOnline);
+  let hasMultipleTabs = $derived(ctrl.isOnline);
 </script>
 
 <div class="flex flex-col rounded-lg border bg-card overflow-hidden transition-opacity
-  {!isOnline ? 'opacity-60 border-dashed' : 'border-border'}">
+  {!ctrl.isOnline ? 'opacity-60 border-dashed' : 'border-border'}">
 
   <!-- Header -->
   <div class="flex items-center gap-2 px-3 py-2 border-b border-border">
@@ -97,7 +95,7 @@
 
     <StatusBadge status={badgeStatus} />
 
-    {#if isStreaming}
+    {#if ctrl.isStreaming}
       <span class="mode-badge {streamingMode === 'ndi' ? 'mode-badge-ndi' : streamingMode === 'flash' ? 'mode-badge-flash' : 'mode-badge-srt'}">
         {streamingMode === 'ndi' ? 'NDI' : streamingMode === 'flash' ? 'FLASH' : 'SRT'}
       </span>
@@ -121,7 +119,7 @@
   </div>
 
   <!-- Telemetry band (inline) -->
-  {#if isOnline && telemetry}
+  {#if ctrl.isOnline && telemetry}
     <div class="flex items-center gap-3 px-3 py-1.5 border-b border-border">
       <TelemetryBadge label="BAT" value={formatBattery(telemetry.battery)} />
       <TelemetryBadge label="TEMP" value={formatTemperature(telemetry.temp_c)} warn={telemetry.temp_c > 40} />
@@ -131,16 +129,16 @@
         <TelemetryBadge label="DROP" value={String(telemetry.dropped_frames)} warn={true} />
       {/if}
     </div>
-  {:else if !isOnline}
+  {:else if !ctrl.isOnline}
     <div class="flex items-center gap-2 px-3 py-1.5 border-b border-border">
       <span class="text-[10px] text-muted-foreground italic">Changes apply on reconnect</span>
     </div>
   {/if}
 
   <!-- Start/Stop Stream — primary action, prominent -->
-  {#if isOnline}
+  {#if ctrl.isOnline}
     <div class="px-3 py-1.5 border-b border-border">
-      {#if isStreaming}
+      {#if ctrl.isStreaming}
         <button
           onclick={ctrl.handleStopStream}
           class="w-full h-7 text-[11px] font-semibold rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
@@ -178,25 +176,25 @@
         bind:settings={ctrl.streamSettings}
         onStart={ctrl.handleStartStream}
         onStop={ctrl.handleStopStream}
-        {isStreaming}
-        {isOnline}
+        isStreaming={ctrl.isStreaming}
+        isOnline={ctrl.isOnline}
         compact={true}
       />
-    {:else if activeTab === 'image' && isOnline}
+    {:else if activeTab === 'image' && ctrl.isOnline}
       <CameraSection
         bind:settings={ctrl.cameraSettings}
         onMeasureWB={ctrl.handleMeasureWB}
         measuring={ctrl.measuring}
-        {isOnline}
+        isOnline={ctrl.isOnline}
         compact={true}
         showSections={['wb', 'exposure']}
       />
-    {:else if activeTab === 'lens' && isOnline}
+    {:else if activeTab === 'lens' && ctrl.isOnline}
       <CameraSection
         bind:settings={ctrl.cameraSettings}
         onMeasureWB={ctrl.handleMeasureWB}
         measuring={ctrl.measuring}
-        {isOnline}
+        isOnline={ctrl.isOnline}
         compact={true}
         showSections={['focus', 'lens', 'torch']}
       />

@@ -39,12 +39,9 @@ function buildCameraPayload(cs: CameraSettings): Record<string, any> {
   return payload;
 }
 
-export async function measureWB(
-  cameraId: string,
-  applyResult: (kelvin: number, tint: number) => void
-): Promise<void> {
+export async function measureWB(cameraId: string) {
   const result = await api.measureWhiteBalance(cameraId);
-  applyResult(result.scene_cct_k, Math.round(result.tint));
+  return { kelvin: result.scene_cct_k, tint: Math.round(result.tint) };
 }
 
 export function initStreamSettings(camera: Camera): StreamSettings {

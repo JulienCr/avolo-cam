@@ -13,7 +13,7 @@ import {
   measureWB,
 } from '$lib/utils/camera-controller';
 import { toastError } from '$lib/stores/toast';
-import { onMount } from 'svelte';
+import { onMount, onDestroy, untrack } from 'svelte';
 
 export function useCameraSettings(camera: Camera) {
   let streamSettings = $state<StreamSettings>(initStreamSettings(camera));
@@ -21,6 +21,7 @@ export function useCameraSettings(camera: Camera) {
   let measuring = $state(false);
 
   const isOnline = $derived(camera.status !== null);
+  const isStreaming = $derived(camera.status?.ndi_state === 'streaming');
 
   onMount(async () => {
     const [persistedCam, persistedStream] = await Promise.all([
@@ -34,6 +35,12 @@ export function useCameraSettings(camera: Camera) {
   const debouncedSaveStream = createDebouncedSaveStream(camera.id, () => streamSettings);
   const debouncedSaveCamera = createDebouncedSaveCamera(camera.id, () => cameraSettings);
   const debouncedPersistCamera = createDebouncedPersistCamera(camera.id, () => cameraSettings);
+
+  onDestroy(() => {
+    debouncedSaveStream.cancel();
+    debouncedSaveCamera.cancel();
+    debouncedPersistCamera.cancel();
+  });
 
   let streamInitialized = false;
   let cameraInitialized = false;
@@ -58,7 +65,7 @@ export function useCameraSettings(camera: Camera) {
       cameraSettings.torch_mode, cameraSettings.torch_level,
     ];
     if (!cameraInitialized) { cameraInitialized = true; return; }
-    if (isOnline) { debouncedSaveCamera(); } else { debouncedPersistCamera(); }
+    if (untrack(() => isOnline)) { debouncedSaveCamera(); } else { debouncedPersistCamera(); }
   });
 
   async function handleStartStream() { await startStream(camera.id, streamSettings); }
@@ -67,11 +74,10 @@ export function useCameraSettings(camera: Camera) {
   async function handleMeasureWB() {
     measuring = true;
     try {
-      await measureWB(camera.id, (kelvin, tint) => {
-        cameraSettings.wb_kelvin = kelvin;
-        cameraSettings.wb_tint = tint;
-        cameraSettings.wb_mode = 'manual';
-      });
+      const { kelvin, tint } = await measureWB(camera.id);
+      cameraSettings.wb_kelvin = kelvin;
+      cameraSettings.wb_tint = tint;
+      cameraSettings.wb_mode = 'manual';
     } catch (e) {
       toastError(`Failed to measure WB: ${e}`);
     } finally {
@@ -85,6 +91,8 @@ export function useCameraSettings(camera: Camera) {
     get cameraSettings() { return cameraSettings; },
     set cameraSettings(v: CameraSettings) { cameraSettings = v; },
     get measuring() { return measuring; },
+    get isOnline() { return isOnline; },
+    get isStreaming() { return isStreaming; },
     handleStartStream,
     handleStopStream,
     handleMeasureWB,
