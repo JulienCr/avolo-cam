@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+
   let {
     label,
     confirmLabel = 'Confirm?',
@@ -26,6 +28,8 @@
       timeout = setTimeout(() => { confirming = false; }, 3000);
     }
   }
+
+  onDestroy(() => { if (timeout) clearTimeout(timeout); });
 
   const variantClasses = {
     primary: 'bg-primary text-primary-foreground',

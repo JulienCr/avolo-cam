@@ -73,56 +73,126 @@
   let localIP = $derived(get(detectedLocalIP) || '');
 </script>
 
+<!-- Shared core fields: Mode, Res, FPS+Codec, Bitrate -->
+{#snippet coreFields()}
+  <!-- Mode -->
+  <div class="flex items-center gap-1">
+    <label class="text-[10px] text-muted-foreground w-12 shrink-0">Mode</label>
+    <select bind:value={settings.streaming_mode} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+      {#each modeOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- Resolution -->
+  <div class="flex items-center gap-1">
+    <label class="text-[10px] text-muted-foreground w-12 shrink-0">Res</label>
+    <select bind:value={settings.resolution} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+      {#each resolutionOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- FPS + Codec row -->
+  <div class="flex items-center gap-1">
+    <label class="text-[10px] text-muted-foreground w-12 shrink-0">FPS</label>
+    <select bind:value={settings.framerate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+      {#each framerateOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+    <select bind:value={settings.codec} class="w-14 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+      {#each codecOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- Bitrate -->
+  <div class="flex items-center gap-1">
+    <label class="text-[10px] text-muted-foreground w-12 shrink-0">Bitrate</label>
+    <select bind:value={settings.bitrate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+      {#each bitrateOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+  </div>
+{/snippet}
+
+<!-- Mode-specific settings (SRT / Flash) -->
+{#snippet modeSpecificFields()}
+  {#if settings.streaming_mode === 'srt'}
+    <div class="border-t border-border pt-1.5 mt-0.5 flex flex-col gap-1.5">
+      <div class="flex items-center gap-1">
+        <label class="text-[10px] text-muted-foreground w-12 shrink-0">Port</label>
+        <span class="text-[10px] text-foreground font-mono">{settings.srt_port ?? 9000}</span>
+      </div>
+      <SliderField label="Latency" bind:value={settings.srt_latency} min={20} max={500} step={10} display="{settings.srt_latency ?? 80}ms" labelWidth="w-12" />
+      <SliderField label="GOP" bind:value={settings.srt_gop_size} min={2} max={30} step={1} display="{settings.srt_gop_size ?? 3}f ~{gopLatencyMs}ms" labelWidth="w-12" />
+    </div>
+  {/if}
+
+  {#if settings.streaming_mode === 'flash'}
+    <div class="border-t border-border pt-1.5 mt-0.5 flex flex-col gap-1.5">
+      <div class="flex items-center gap-1">
+        <label class="text-[10px] text-muted-foreground w-12 shrink-0">Host</label>
+        <input
+          type="text"
+          bind:value={settings.flash_destination_host}
+          placeholder={localIP || 'Auto-detect'}
+          class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
+        />
+      </div>
+      <div class="flex items-center gap-1">
+        <label class="text-[10px] text-muted-foreground w-12 shrink-0">Port</label>
+        <input
+          type="number"
+          bind:value={settings.flash_destination_port}
+          placeholder="5000"
+          min={1024}
+          max={65535}
+          class="w-16 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
+        />
+      </div>
+      <div class="flex items-center gap-1">
+        <label class="text-[10px] text-muted-foreground w-12 shrink-0">Jitter</label>
+        <select bind:value={settings.flash_jitter_mode} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
+          {#each flashJitterOptions as opt}
+            <option value={opt.value}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
+      <SliderField label="GOP" bind:value={settings.srt_gop_size} min={1} max={60} step={1} display="{settings.srt_gop_size ?? 25}f" labelWidth="w-12" />
+    </div>
+  {/if}
+{/snippet}
+
+<!-- Start/Stop button -->
+{#snippet actionButton()}
+  {#if isOnline && !hideActions}
+    <div class="mt-1">
+      {#if isStreaming}
+        <button
+          onclick={onStop}
+          class="w-full h-6 text-[10px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
+        >Stop Stream</button>
+      {:else}
+        <button
+          onclick={onStart}
+          class="w-full h-6 text-[10px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+        >Start Stream</button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 {#if compact}
-  <!-- Compact mode: no outer section wrapper, just fields -->
   <div class="flex flex-col gap-1.5">
-    <!-- Mode -->
-    <div class="flex items-center gap-1">
-      <label class="text-[10px] text-muted-foreground w-12 shrink-0">Mode</label>
-      <select bind:value={settings.streaming_mode} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-        {#each modeOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
-    </div>
-
-    <!-- Resolution -->
-    <div class="flex items-center gap-1">
-      <label class="text-[10px] text-muted-foreground w-12 shrink-0">Res</label>
-      <select bind:value={settings.resolution} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-        {#each resolutionOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
-    </div>
-
-    <!-- FPS + Codec row -->
-    <div class="flex items-center gap-1">
-      <label class="text-[10px] text-muted-foreground w-12 shrink-0">FPS</label>
-      <select bind:value={settings.framerate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-        {#each framerateOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
-      <select bind:value={settings.codec} class="w-14 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-        {#each codecOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
-    </div>
-
-    <!-- Bitrate -->
-    <div class="flex items-center gap-1">
-      <label class="text-[10px] text-muted-foreground w-12 shrink-0">Bitrate</label>
-      <select bind:value={settings.bitrate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-        {#each bitrateOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
-    </div>
+    {@render coreFields()}
   </div>
 {:else}
-  <!-- Full mode: section wrapper with collapsible header -->
   <div class="border-b border-border">
     <button
       onclick={() => open = !open}
@@ -136,114 +206,9 @@
 
     {#if open}
       <div class="px-2 pb-2 flex flex-col gap-1.5">
-        <!-- Mode -->
-        <div class="flex items-center gap-1">
-          <label class="text-[10px] text-muted-foreground w-12 shrink-0">Mode</label>
-          <select bind:value={settings.streaming_mode} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-            {#each modeOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </div>
-
-        <!-- Resolution -->
-        <div class="flex items-center gap-1">
-          <label class="text-[10px] text-muted-foreground w-12 shrink-0">Res</label>
-          <select bind:value={settings.resolution} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-            {#each resolutionOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </div>
-
-        <!-- FPS + Codec row -->
-        <div class="flex items-center gap-1">
-          <label class="text-[10px] text-muted-foreground w-12 shrink-0">FPS</label>
-          <select bind:value={settings.framerate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-            {#each framerateOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-          <select bind:value={settings.codec} class="w-14 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-            {#each codecOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </div>
-
-        <!-- Bitrate -->
-        <div class="flex items-center gap-1">
-          <label class="text-[10px] text-muted-foreground w-12 shrink-0">Bitrate</label>
-          <select bind:value={settings.bitrate} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-            {#each bitrateOptions as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </div>
-
-        <!-- SRT settings -->
-        {#if settings.streaming_mode === 'srt'}
-          <div class="border-t border-border pt-1.5 mt-0.5 flex flex-col gap-1.5">
-            <div class="flex items-center gap-1">
-              <label class="text-[10px] text-muted-foreground w-12 shrink-0">Port</label>
-              <span class="text-[10px] text-foreground font-mono">{settings.srt_port ?? 9000}</span>
-            </div>
-            <SliderField label="Latency" bind:value={settings.srt_latency} min={20} max={500} step={10} display="{settings.srt_latency ?? 80}ms" labelWidth="w-12" />
-            <SliderField label="GOP" bind:value={settings.srt_gop_size} min={2} max={30} step={1} display="{settings.srt_gop_size ?? 3}f ~{gopLatencyMs}ms" labelWidth="w-12" />
-          </div>
-        {/if}
-
-        <!-- Flash settings -->
-        {#if settings.streaming_mode === 'flash'}
-          <div class="border-t border-border pt-1.5 mt-0.5 flex flex-col gap-1.5">
-            <div class="flex items-center gap-1">
-              <label class="text-[10px] text-muted-foreground w-12 shrink-0">Host</label>
-              <input
-                type="text"
-                bind:value={settings.flash_destination_host}
-                placeholder={localIP || 'Auto-detect'}
-                class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
-              />
-            </div>
-            <div class="flex items-center gap-1">
-              <label class="text-[10px] text-muted-foreground w-12 shrink-0">Port</label>
-              <input
-                type="number"
-                bind:value={settings.flash_destination_port}
-                placeholder="5000"
-                min={1024}
-                max={65535}
-                class="w-16 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground font-mono placeholder:text-muted-foreground"
-              />
-            </div>
-            <div class="flex items-center gap-1">
-              <label class="text-[10px] text-muted-foreground w-12 shrink-0">Jitter</label>
-              <select bind:value={settings.flash_jitter_mode} class="flex-1 h-5 text-[10px] px-1 rounded-sm bg-input border border-border text-foreground">
-                {#each flashJitterOptions as opt}
-                  <option value={opt.value}>{opt.label}</option>
-                {/each}
-              </select>
-            </div>
-            <SliderField label="GOP" bind:value={settings.srt_gop_size} min={1} max={60} step={1} display="{settings.srt_gop_size ?? 25}f" labelWidth="w-12" />
-          </div>
-        {/if}
-
-        <!-- Start/Stop button -->
-        {#if isOnline && !hideActions}
-          <div class="mt-1">
-            {#if isStreaming}
-              <button
-                onclick={onStop}
-                class="w-full h-6 text-[10px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
-              >Stop Stream</button>
-            {:else}
-              <button
-                onclick={onStart}
-                class="w-full h-6 text-[10px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
-              >Start Stream</button>
-            {/if}
-          </div>
-        {/if}
+        {@render coreFields()}
+        {@render modeSpecificFields()}
+        {@render actionButton()}
       </div>
     {/if}
   </div>
