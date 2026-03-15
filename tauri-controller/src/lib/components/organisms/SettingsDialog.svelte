@@ -24,6 +24,7 @@
   let notificationPermissionGranted = $state(false);
   let checkingPermission = $state(true);
   let requestingPermission = $state(false);
+  let dataDirectory = $state('');
 
   const tabs = [
     { id: 'display', label: 'Display' },
@@ -36,6 +37,7 @@
     try {
       checkingPermission = true;
       notificationPermissionGranted = await invoke<boolean>('check_notification_permission');
+      dataDirectory = await invoke<string>('get_data_directory');
     } catch { /* ignore */ } finally {
       checkingPermission = false;
     }
@@ -195,13 +197,21 @@
       {/if}
 
       {#if activeTab === 'data'}
-        <div class="flex flex-col gap-2">
-          <span class="text-[10px] font-medium text-foreground">Delete Camera Data</span>
-          <span class="text-[9px] text-muted-foreground">Remove all saved cameras. App will rediscover on network.</span>
-          <button onclick={handleDeleteCameras}
-            class="h-6 px-2 text-[10px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 w-fit">
-            Delete cameras.json
-          </button>
+        <div class="flex flex-col gap-3">
+          {#if dataDirectory}
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-medium text-foreground">Data Location</span>
+              <code class="text-[9px] text-muted-foreground bg-secondary px-1.5 py-1 rounded-sm break-all select-all">{dataDirectory}</code>
+            </div>
+          {/if}
+          <div class="flex flex-col gap-1">
+            <span class="text-[10px] font-medium text-foreground">Delete Camera Data</span>
+            <span class="text-[9px] text-muted-foreground">Remove all saved cameras. App will rediscover on network.</span>
+            <button onclick={handleDeleteCameras}
+              class="h-6 px-2 text-[10px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 w-fit">
+              Delete cameras.json
+            </button>
+          </div>
         </div>
       {/if}
     </div>

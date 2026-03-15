@@ -63,6 +63,7 @@ export function useCameraSettings(camera: Camera) {
       streamSettings.streaming_mode, streamSettings.resolution,
       streamSettings.framerate, streamSettings.bitrate, streamSettings.codec,
       streamSettings.srt_latency, streamSettings.srt_gop_size, streamSettings.flash_jitter_mode,
+      streamSettings.flash_destination_port, streamSettings.flash_destination_host,
     ];
     if (!streamInitialized) { streamInitialized = true; return; }
     debouncedSaveStream();

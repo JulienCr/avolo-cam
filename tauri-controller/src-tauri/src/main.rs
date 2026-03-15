@@ -772,6 +772,13 @@ async fn delete_cameras_data(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn get_data_directory(app: AppHandle) -> Result<String, String> {
+    app.path().app_data_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())
+}
+
 // Notification permission commands
 
 #[tauri::command]
@@ -984,6 +991,7 @@ fn main() {
             start_midi_learn_mode,
             cancel_midi_learn_mode,
             get_local_ip,
+            get_data_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
