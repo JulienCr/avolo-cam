@@ -37,12 +37,12 @@ impl PersistedCamera {
         info: &CameraInfo,
         fallback: Option<&(Option<StreamStartRequest>, Option<CameraSettingsRequest>)>,
     ) -> Self {
-        // Extract current settings from status if available
-        let fallback_stream = fallback.and_then(|(s, _)| s.as_ref());
-        let (stream_settings, camera_settings) = if let Some(ref status) = info.status {
-            // Merge: use status.current for fields the camera reports,
-            // but prefer persisted_settings (fallback) for controller-local fields
-            // that the camera doesn't know about (destination host/port, jitter mode, GOP, etc.)
+        // persisted_settings is the source of truth for stream/camera settings.
+        // Only fall back to status.current when no persisted settings exist yet.
+        let (stream_settings, camera_settings) = if let Some((stream, camera)) = fallback {
+            (stream.clone(), camera.clone())
+        } else if let Some(ref status) = info.status {
+            // No persisted settings — seed from camera's live status
             let stream = StreamStartRequest {
                 resolution: status.current.resolution.clone(),
                 framerate: status.current.fps,
@@ -51,15 +51,13 @@ impl PersistedCamera {
                 streaming_mode: status.current.streaming_mode,
                 srt_port: status.current.srt_port,
                 srt_latency: status.current.srt_latency,
-                srt_rcv_latency: fallback_stream.and_then(|f| f.srt_rcv_latency),
-                srt_peer_latency: fallback_stream.and_then(|f| f.srt_peer_latency),
-                srt_tlpktdrop: fallback_stream.and_then(|f| f.srt_tlpktdrop),
-                srt_gop_size: fallback_stream.and_then(|f| f.srt_gop_size),
-                flash_destination_host: fallback_stream.and_then(|f| f.flash_destination_host.clone())
-                    .or_else(|| status.current.flash_destination_host.clone()),
-                flash_destination_port: fallback_stream.and_then(|f| f.flash_destination_port)
-                    .or(status.current.flash_destination_port),
-                flash_jitter_mode: fallback_stream.and_then(|f| f.flash_jitter_mode.clone()),
+                srt_rcv_latency: None,
+                srt_peer_latency: None,
+                srt_tlpktdrop: None,
+                srt_gop_size: None,
+                flash_destination_host: status.current.flash_destination_host.clone(),
+                flash_destination_port: status.current.flash_destination_port,
+                flash_jitter_mode: None,
             };
 
             let camera = CameraSettingsRequest {
@@ -76,15 +74,12 @@ impl PersistedCamera {
                 lens: Some(status.current.lens.clone()),
                 camera_position: Some(status.current.camera_position.clone()),
                 orientation_lock: None,
-                torch_level: None, // Not stored in CurrentSettings
+                torch_level: None,
             };
 
             (Some(stream), Some(camera))
         } else {
-            // Camera offline: use fallback from persisted_settings
-            let stream = fallback_stream.cloned();
-            let camera = fallback.and_then(|(_, c)| c.clone());
-            (stream, camera)
+            (None, None)
         };
 
         Self {
