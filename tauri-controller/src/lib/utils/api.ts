@@ -116,6 +116,23 @@ export async function getPersistedStreamSettings(
   return invoke('get_persisted_stream_settings', { cameraId });
 }
 
+export async function updateAlias(
+  cameraId: string,
+  ip: string,
+  port: number,
+  alias: string
+): Promise<string> {
+  const response = await fetch(`http://${ip}:${port}/api/v1/settings/alias`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alias })
+  });
+  if (!response.ok) throw new Error('Failed to update alias');
+  const result = await response.json();
+  await invoke('update_camera_alias', { cameraId, alias: result.alias });
+  return result.alias;
+}
+
 // Group Operations
 export async function groupStartStream(
   cameraIds: string[],

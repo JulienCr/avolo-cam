@@ -109,5 +109,3 @@ export function createPresetFromSettings(label: string, settings: CameraSettings
   };
 }
 
-// For backwards compat — re-export as CAMERA_PRESETS (initial value)
-export const CAMERA_PRESETS = { ...BUILTIN_PRESETS, ...loadCustomPresets() };

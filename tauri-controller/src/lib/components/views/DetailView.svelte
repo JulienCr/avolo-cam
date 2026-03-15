@@ -1,28 +1,16 @@
 <script lang="ts">
   import type { Camera } from '$lib/types/camera';
-  import type { StreamSettings, CameraSettings } from '$lib/types/settings';
   import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
   import StreamSection from '$lib/components/sections/StreamSection.svelte';
   import CameraSection from '$lib/components/sections/CameraSection.svelte';
   import TelemetryPanel from './TelemetryPanel.svelte';
   import SectionBar from '$lib/components/ui/SectionBar.svelte';
-  import {
-    initStreamSettings,
-    initCameraSettings,
-    loadPersistedSettings,
-    loadPersistedStreamSettings,
-    createDebouncedSaveStream,
-    createDebouncedSaveCamera,
-    createDebouncedPersistCamera,
-    startStream,
-    stopStream,
-  } from '$lib/utils/camera-controller';
+  import { useCameraSettings } from '$lib/utils/use-camera-settings.svelte';
   import { allPresets, saveCustomPreset, deleteCustomPreset, createPresetFromSettings } from '$lib/utils/presets';
   import { backToOverview } from '$lib/stores/ui';
   import { cameras } from '$lib/stores/cameras';
   import * as api from '$lib/utils/api';
-  import { toastError, toastSuccess } from '$lib/stores/toast';
-  import { onMount } from 'svelte';
+  import { toastSuccess } from '$lib/stores/toast';
   import { cameraStreamSettings } from '$lib/stores/settings';
 
   let {
@@ -46,66 +34,7 @@
     'offline' as const
   );
 
-  // Settings
-  let streamSettings = $state<StreamSettings>(initStreamSettings(camera));
-  let cameraSettings = $state<CameraSettings>(initCameraSettings(camera));
-
-  onMount(async () => {
-    const [persistedCam, persistedStream] = await Promise.all([
-      loadPersistedSettings(camera),
-      loadPersistedStreamSettings(camera),
-    ]);
-    if (persistedCam) cameraSettings = persistedCam;
-    if (persistedStream) streamSettings = persistedStream;
-  });
-
-  const debouncedSaveStream = createDebouncedSaveStream(camera.id, () => streamSettings);
-  const debouncedSaveCamera = createDebouncedSaveCamera(camera.id, () => cameraSettings);
-  const debouncedPersistCamera = createDebouncedPersistCamera(camera.id, () => cameraSettings);
-
-  let streamInitialized = false;
-  let cameraInitialized = false;
-
-  $effect(() => {
-    const _ = [
-      streamSettings.streaming_mode, streamSettings.resolution,
-      streamSettings.framerate, streamSettings.bitrate, streamSettings.codec,
-      streamSettings.srt_latency, streamSettings.srt_gop_size, streamSettings.flash_jitter_mode,
-    ];
-    if (!streamInitialized) { streamInitialized = true; return; }
-    debouncedSaveStream();
-  });
-
-  $effect(() => {
-    const _ = [
-      cameraSettings.wb_mode, cameraSettings.wb_kelvin, cameraSettings.wb_tint,
-      cameraSettings.iso_mode, cameraSettings.iso,
-      cameraSettings.shutter_mode, cameraSettings.shutter_s,
-      cameraSettings.focus_mode, cameraSettings.focus_distance,
-      cameraSettings.zoom_factor, cameraSettings.lens, cameraSettings.camera_position,
-      cameraSettings.torch_mode, cameraSettings.torch_level,
-    ];
-    if (!cameraInitialized) { cameraInitialized = true; return; }
-    if (isOnline) { debouncedSaveCamera(); } else { debouncedPersistCamera(); }
-  });
-
-  async function handleStartStream() { await startStream(camera.id, streamSettings); }
-  async function handleStopStream() { await stopStream(camera.id); }
-
-  let measuring = $state(false);
-  async function handleMeasureWB() {
-    try {
-      measuring = true;
-      const result = await api.measureWhiteBalance(camera.id);
-      cameraSettings.wb_kelvin = result.scene_cct_k;
-      cameraSettings.wb_tint = Math.round(result.tint);
-      cameraSettings.wb_mode = 'manual';
-    } catch (e) {
-      toastError(`Failed to measure WB: ${e}`);
-    } finally {
-      measuring = false;
-    }
-  }
+  const ctrl = useCameraSettings(camera);
 
   // Alias editing
   let isEditingAlias = $state(false);
@@ -117,16 +46,8 @@
     if (!trimmed || trimmed.length > 64) return;
     aliasSaving = true;
     try {
-      const response = await fetch(`http://${camera.ip}:${camera.port}/api/v1/settings/alias`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias: trimmed })
-      });
-      if (!response.ok) throw new Error('Failed to update alias');
-      const result = await response.json();
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('update_camera_alias', { cameraId: camera.id, alias: result.alias });
-      onAliasUpdated(result.alias);
+      const alias = await api.updateAlias(camera.id, camera.ip, camera.port, trimmed);
+      onAliasUpdated(alias);
       isEditingAlias = false;
     } catch (e) {
       console.error('Failed to update alias:', e);
@@ -142,7 +63,7 @@
   function applyPreset(presetKey: string) {
     const preset = $allPresets[presetKey];
     if (!preset) return;
-    Object.assign(cameraSettings, preset.settings);
+    Object.assign(ctrl.cameraSettings, preset.settings);
     toastSuccess(`Preset "${preset.label}" applied`);
   }
 
@@ -150,7 +71,7 @@
     const name = newPresetName.trim();
     if (!name) return;
     const key = name.toLowerCase().replace(/\s+/g, '_');
-    saveCustomPreset(key, createPresetFromSettings(name, cameraSettings));
+    saveCustomPreset(key, createPresetFromSettings(name, ctrl.cameraSettings));
     toastSuccess(`Preset "${name}" saved`);
     newPresetName = '';
     showPresetSave = false;
@@ -167,15 +88,15 @@
     const source = $cameras.find(c => c.id === matchSourceId);
     if (!source?.status?.current) return;
     const s = source.status.current;
-    if (s.wb_mode) cameraSettings.wb_mode = s.wb_mode;
-    if (s.wb_kelvin) cameraSettings.wb_kelvin = s.wb_kelvin;
-    if (s.wb_tint !== undefined) cameraSettings.wb_tint = s.wb_tint;
-    if (s.iso_mode) cameraSettings.iso_mode = s.iso_mode;
-    if (s.iso) cameraSettings.iso = s.iso;
-    if (s.shutter_mode) cameraSettings.shutter_mode = s.shutter_mode;
-    if (s.shutter_s) cameraSettings.shutter_s = s.shutter_s;
-    if (s.zoom_factor) cameraSettings.zoom_factor = s.zoom_factor;
-    if (s.lens) cameraSettings.lens = s.lens;
+    if (s.wb_mode) ctrl.cameraSettings.wb_mode = s.wb_mode;
+    if (s.wb_kelvin) ctrl.cameraSettings.wb_kelvin = s.wb_kelvin;
+    if (s.wb_tint !== undefined) ctrl.cameraSettings.wb_tint = s.wb_tint;
+    if (s.iso_mode) ctrl.cameraSettings.iso_mode = s.iso_mode;
+    if (s.iso) ctrl.cameraSettings.iso = s.iso;
+    if (s.shutter_mode) ctrl.cameraSettings.shutter_mode = s.shutter_mode;
+    if (s.shutter_s) ctrl.cameraSettings.shutter_s = s.shutter_s;
+    if (s.zoom_factor) ctrl.cameraSettings.zoom_factor = s.zoom_factor;
+    if (s.lens) ctrl.cameraSettings.lens = s.lens;
     toastSuccess(`Matched settings from "${source.alias}"`);
   }
 
@@ -294,12 +215,12 @@
         <div class="flex gap-1">
           {#if isStreaming}
             <button
-              onclick={handleStopStream}
+              onclick={ctrl.handleStopStream}
               class="flex-1 h-7 text-[11px] font-medium rounded-sm bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
             >Stop Stream</button>
           {:else}
             <button
-              onclick={handleStartStream}
+              onclick={ctrl.handleStartStream}
               class="flex-1 h-7 text-[11px] font-medium rounded-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
             >Start Stream</button>
           {/if}
@@ -308,9 +229,9 @@
 
       <div class="rounded-lg border border-border bg-card overflow-hidden">
         <StreamSection
-          bind:settings={streamSettings}
-          onStart={handleStartStream}
-          onStop={handleStopStream}
+          bind:settings={ctrl.streamSettings}
+          onStart={ctrl.handleStartStream}
+          onStop={ctrl.handleStopStream}
           {isStreaming}
           {isOnline}
           compact={false}
@@ -320,9 +241,9 @@
 
       <div class="rounded-lg border border-border bg-card overflow-hidden">
         <CameraSection
-          bind:settings={cameraSettings}
-          onMeasureWB={handleMeasureWB}
-          {measuring}
+          bind:settings={ctrl.cameraSettings}
+          onMeasureWB={ctrl.handleMeasureWB}
+          measuring={ctrl.measuring}
           {isOnline}
           compact={false}
         />

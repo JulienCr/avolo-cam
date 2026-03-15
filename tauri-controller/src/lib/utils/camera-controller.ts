@@ -39,19 +39,12 @@ function buildCameraPayload(cs: CameraSettings): Record<string, any> {
   return payload;
 }
 
-export interface CameraController {
-  streamSettings: StreamSettings;
-  cameraSettings: CameraSettings;
-  measuring: boolean;
-  isOnline: boolean;
-  isStreaming: boolean;
-  debouncedSaveStreamSettings: () => void;
-  debouncedSaveCameraSettings: () => void;
-  debouncedPersistCameraSettings: () => void;
-  handleStartStream: () => Promise<void>;
-  handleStopStream: () => Promise<void>;
-  handleMeasureWB: () => Promise<void>;
-  buildCameraPayload: () => Record<string, any>;
+export async function measureWB(
+  cameraId: string,
+  applyResult: (kelvin: number, tint: number) => void
+): Promise<void> {
+  const result = await api.measureWhiteBalance(cameraId);
+  applyResult(result.scene_cct_k, Math.round(result.tint));
 }
 
 export function initStreamSettings(camera: Camera): StreamSettings {
