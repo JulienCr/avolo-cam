@@ -733,6 +733,15 @@ async fn get_persisted_camera_settings(
     Ok(manager.get_persisted_camera_settings(&camera_id))
 }
 
+#[tauri::command]
+async fn get_persisted_stream_settings(
+    state: State<'_, AppState>,
+    camera_id: String,
+) -> Result<Option<StreamStartRequest>, String> {
+    let manager = state.camera_manager.read().await;
+    Ok(manager.get_persisted_stream_settings(&camera_id))
+}
+
 // App settings commands
 
 #[tauri::command]
@@ -955,6 +964,7 @@ fn main() {
             apply_profile,
             persist_camera_settings,
             get_persisted_camera_settings,
+            get_persisted_stream_settings,
             get_app_settings,
             save_app_settings,
             delete_cameras_data,

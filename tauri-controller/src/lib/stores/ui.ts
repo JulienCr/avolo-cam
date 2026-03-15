@@ -5,6 +5,20 @@ export const showAddDialog = writable(false);
 export const showProfileDialog = writable(false);
 export const showAppSettingsDialog = writable(false);
 
+// View mode
+export const viewMode = writable<'overview' | 'detail'>('overview');
+export const detailCameraId = writable<string | null>(null);
+
+export function openDetail(cameraId: string) {
+  detailCameraId.set(cameraId);
+  viewMode.set('detail');
+}
+
+export function backToOverview() {
+  viewMode.set('overview');
+  detailCameraId.set(null);
+}
+
 // Camera selection (for group operations)
 export const selectedCameraIds = writable<Set<string>>(new Set());
 
