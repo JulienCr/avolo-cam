@@ -44,7 +44,7 @@
     if (!trimmed || trimmed.length > 64) return;
     aliasSaving = true;
     try {
-      const alias = await api.updateAlias(camera.id, camera.ip, camera.port, trimmed);
+      const alias = await api.updateAlias(camera.id, trimmed);
       onAliasUpdated(alias);
       isEditingAlias = false;
     } catch (e) {

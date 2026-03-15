@@ -73,6 +73,21 @@ impl CameraClient {
             .context("HTTP POST request failed")
     }
 
+    async fn put<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response> {
+        let mut request = self.http_client
+            .put(format!("{}{}", self.base_url, path))
+            .json(body);
+
+        if !self.token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+
+        request
+            .send()
+            .await
+            .context("HTTP PUT request failed")
+    }
+
     // MARK: - API Methods
 
     pub async fn get_status(&self) -> Result<StatusResponse> {
@@ -148,6 +163,21 @@ impl CameraClient {
 
         response.json().await
             .context("Failed to parse white balance measure response")
+    }
+
+    pub async fn update_alias(&self, alias: &str) -> Result<String> {
+        let body = AliasRequest { alias: alias.to_string() };
+        let response = self.put("/api/v1/settings/alias", &body).await?;
+
+        if !response.status().is_success() {
+            let error: ErrorResponse = response.json().await
+                .context("Failed to parse error response")?;
+            anyhow::bail!("{}: {}", error.code, error.message);
+        }
+
+        let result: AliasResponse = response.json().await
+            .context("Failed to parse alias response")?;
+        Ok(result.alias)
     }
 
     // MARK: - WebSocket

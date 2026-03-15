@@ -488,7 +488,7 @@ async fn update_camera_alias(
     state: State<'_, AppState>,
     camera_id: String,
     alias: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut manager = state.camera_manager.write().await;
     manager.update_camera_alias(&camera_id, alias).await
         .map_err(|e| e.to_string())

@@ -251,6 +251,16 @@ pub struct ErrorResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AliasRequest {
+    pub alias: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AliasResponse {
+    pub alias: String,
+}
+
 // MARK: - Camera Info
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -30,13 +30,9 @@
   );
   let totalBandwidthStr = $derived(formatBitrate(totalBandwidth));
 
-  let counts = $derived(cameras.reduce((acc, c) => {
-    if (c.status !== null) acc.online++;
-    if (c.status?.ndi_state === 'streaming') acc.live++;
-    return acc;
-  }, { live: 0, online: 0 }));
-  let liveCount = $derived(counts.live);
-  let offlineCount = $derived(cameras.length - counts.online);
+  let liveCount = $derived(cameras.filter(c => c.status?.ndi_state === 'streaming').length);
+  let onlineCount = $derived(cameras.filter(c => c.status !== null).length);
+  let offlineCount = $derived(cameras.length - onlineCount);
 </script>
 
 <header class="flex items-center justify-between h-10 px-3 border-b border-border bg-card shrink-0 select-none">

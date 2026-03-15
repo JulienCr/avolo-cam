@@ -15,6 +15,8 @@ import {
 import { toastError } from '$lib/stores/toast';
 import { onMount, onDestroy, untrack } from 'svelte';
 
+// camera prop is a stable object reference with reactive fields from $props(),
+// so $derived expressions accessing camera.status track correctly in Svelte 5.
 export function useCameraSettings(camera: Camera) {
   let streamSettings = $state<StreamSettings>(initStreamSettings(camera));
   let cameraSettings = $state<CameraSettings>(initCameraSettings(camera));
@@ -22,6 +24,7 @@ export function useCameraSettings(camera: Camera) {
 
   const isOnline = $derived(camera.status !== null);
   const isStreaming = $derived(camera.status?.ndi_state === 'streaming');
+  let wasOnline = false;
 
   onMount(async () => {
     const [persistedCam, persistedStream] = await Promise.all([
@@ -44,6 +47,16 @@ export function useCameraSettings(camera: Camera) {
 
   let streamInitialized = false;
   let cameraInitialized = false;
+
+  // When camera comes online, flush any pending offline edits to the live API
+  $effect(() => {
+    const online = isOnline;
+    if (online && !wasOnline && cameraInitialized) {
+      debouncedPersistCamera.cancel();
+      debouncedSaveCamera();
+    }
+    wasOnline = online;
+  });
 
   $effect(() => {
     const _ = [
