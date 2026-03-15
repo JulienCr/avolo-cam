@@ -15,9 +15,9 @@ import {
 import { toastError } from '$lib/stores/toast';
 import { onMount, onDestroy, untrack } from 'svelte';
 
-// camera prop is a stable object reference with reactive fields from $props(),
-// so $derived expressions accessing camera.status track correctly in Svelte 5.
-export function useCameraSettings(camera: Camera) {
+// Accept a getter so $derived/$effect track the live prop, not a stale snapshot.
+export function useCameraSettings(getCamera: () => Camera) {
+  const camera = $derived(getCamera());
   let streamSettings = $state<StreamSettings>(initStreamSettings(camera));
   let cameraSettings = $state<CameraSettings>(initCameraSettings(camera));
   let measuring = $state(false);
