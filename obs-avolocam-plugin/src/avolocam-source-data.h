@@ -174,6 +174,7 @@ struct SourceData {
     struct TallyTimers {
         uint64_t last_poll_ns = 0;
         uint64_t last_heartbeat_ns = 0;
+        bool started = false;
     };
     TallyTimers tally_timers;
 

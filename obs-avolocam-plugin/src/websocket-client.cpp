@@ -325,7 +325,12 @@ void WebSocketClient::request_idr()
 
 void WebSocketClient::send_command(const std::string &command)
 {
-    if (!is_connected()) return;
+    if (!is_connected()) {
+        if (command.find("tally") != std::string::npos) {
+            ALOG_WS(LOG_DEBUG, "Tally command dropped (WS not connected)");
+        }
+        return;
+    }
     send_text(command);
 }
 
