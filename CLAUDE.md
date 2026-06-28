@@ -27,9 +27,9 @@ cd obs-avolocam-plugin && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --b
 Three components — see [README.md](README.md) for full details.
 
 ```
-ios-app/AvoCam/     Swift iOS app — capture, encode, stream, control API
-obs-avolocam-plugin/ C++ OBS plugin — Flash mode RTP receiver + HW decode
-tauri-controller/    Rust+Svelte desktop controller — discovery, telemetry, group control
+ios-app/AvoCam/      Swift / AVFoundation / VideoToolbox — capture, H.264 encode, stream, control API (SwiftNIO HTTP/WS)
+obs-avolocam-plugin/ C++17 OBS plugin — Flash RTP receiver + HW decode (FFmpeg D3D11VA, GPU NV12→RGBA)
+tauri-controller/    Rust+Tokio backend + Svelte 5 frontend — mDNS discovery, telemetry, group control
 ```
 
 ### Streaming Modes
@@ -40,13 +40,21 @@ The iOS app supports 3 transport modes, selectable via `POST /api/v1/stream/star
 |------|-----------|-----------------|---------|
 | `ndi` | NDI\|HX (SDK) | Standard OBS NDI Source plugin | ~100-150ms |
 | `srt` | SRT/UDP + MPEG-TS | OBS Media Source | Configurable |
-| `flash` | RTP/UDP RFC 6184 (FU-A) | Custom `obs-avolocam-plugin` | ~40-80ms |
+| `flash` | RTP/UDP RFC 6184 (FU-A) | Custom `obs-avolocam-plugin` (source: "AvoCam Flash Source", id `avolocam_source`) | ~40-80ms |
+
+- **SRT**: iOS listens (`srt://0.0.0.0:<port>`, MPEG-TS); OBS connects as caller via a Media Source.
+- **Flash**: dynamic UDP port starting at **5000** (5001 for the 2nd camera on the same PC, etc.), advertised via mDNS TXT `flash_udp_port` and `GET /api/v1/status`.
 
 ### Control Plane
 
-- HTTP REST API on port **8888** (Bearer token auth)
+- HTTP REST API on port **8888** (Bearer token auth, SwiftNIO server)
 - WebSocket `ws://<ip>:8888/ws` for telemetry (1Hz) and bidirectional commands
-- mDNS `_avolocam._tcp.local` with TXT records (alias, protocol, flash_udp_port, etc.)
+- `GET /` serves an embedded web UI for standalone control
+- mDNS `_avolocam._tcp.local.` with TXT records (`alias`, `protocol`, `token`, `ws_port`, `flash_udp_port`, stream info); token in TXT is by design for LAN-only zero-config auth
+
+### Ecosystem
+
+The Flash plugin's OBS source instances (named e.g. `Flash - Cam Main` in OBS scenes) must match the scene/source naming used by `xtouch-gw-v3` and the `obs-manager` collections. The plugin source *type* is "AvoCam Flash Source" (id `avolocam_source`); per-instance scene names are operator-chosen and shared with those tools. (`xtouch-gw-v3`/`obs-manager` live in separate repos — exact names not verifiable here.)
 
 ## Key Technical Constraints
 
@@ -75,16 +83,23 @@ The iOS app supports 3 transport modes, selectable via `POST /api/v1/stream/star
 
 ## API Quick Reference
 
-All endpoints require Bearer token. Port 8888.
+All endpoints require Bearer token. Port 8888. Routes registered in `NetworkServer.swift`.
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/v1/status` | GET | Parameters + telemetry + capabilities |
-| `/api/v1/capabilities` | GET | Supported resolutions/FPS per lens |
-| `/api/v1/stream/start` | POST | Start stream (`{mode, resolution, framerate, bitrate, codec}`) |
+| `/api/v1/capabilities` | GET | Supported resolutions/FPS/codecs per lens |
+| `/api/v1/video/settings` | GET / PUT | Read / update video settings |
+| `/api/v1/stream/start` | POST | Start stream (`{streaming_mode, resolution, framerate, bitrate, codec, ...}`) |
 | `/api/v1/stream/stop` | POST | Stop stream |
 | `/api/v1/camera` | POST | Camera settings (WB, ISO, shutter, focus, zoom) |
-| `/api/v1/encoder/force_keyframe` | POST | Force IDR frame for clean cuts |
+| `/api/v1/camera/wb/measure` | POST | Grey-card white-balance measurement |
+| `/api/v1/screen/brightness` | POST | Screen dim control |
+| `/api/v1/settings/alias` | PUT | Rename camera (alias) |
+| `/api/v1/torch/level` | GET / PUT | Torch level (tally feedback) |
+| `/api/v1/logs.zip` | GET | Download rotating logs |
+
+> `POST /api/v1/encoder/force_keyframe` is documented in `ios-app/SWIFTNIO_SERVER_TESTING.md` but **not currently registered** in `NetworkServer.swift`. Flag before relying on it.
 
 Full API contracts and payloads: [docs/specs.md](docs/specs.md)
 
